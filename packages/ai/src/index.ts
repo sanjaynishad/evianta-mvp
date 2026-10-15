@@ -1,13 +1,8 @@
+import { aiProvider, type AiProvider } from "@evianta/env";
 import { googleAI, vertexAI } from "@genkit-ai/google-genai";
 import { genkit } from "genkit";
 
-export type AiProvider = "googleai" | "vertexai";
-
-export function resolveProvider(): AiProvider {
-  return process.env.EVIANTA_AI_PROVIDER === "vertexai" ? "vertexai" : "googleai";
-}
-
-export function createAi(provider: AiProvider = resolveProvider()) {
+export function createAi(provider: AiProvider = aiProvider) {
   if (provider === "vertexai") {
     return genkit({ plugins: [vertexAI()] });
   }

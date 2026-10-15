@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@evianta/core": "workspace:*",
+    "@evianta/env": "workspace:*",
     "@genkit-ai/google-genai": "^1.42.0",
     "genkit": "^1.42.0"
   },

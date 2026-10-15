@@ -21,6 +21,7 @@ apps/
   web/   frontend placeholder (scaffold pending design)
 packages/
   config/  shared TypeScript config
+  env/     environment variables as typed constants
   core/    domain model and Zod schemas
   ai/      Genkit setup and Gemini/Gemma provider selection
   agents/  coordinator, specialist, and verification agents

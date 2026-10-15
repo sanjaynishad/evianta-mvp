@@ -1,8 +1,8 @@
 import { agentRoles } from "@evianta/agents";
+import { port } from "@evianta/env";
 import express from "express";
 
 const app = express();
-const port = Number(process.env.PORT ?? 8080);
 
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", service: "evianta-api" });

@@ -25,6 +25,7 @@
 - `apps/api` - HTTP service deployed to Cloud Run (Express + Genkit entry point).
 - `apps/web` - frontend placeholder; full framework scaffold is deferred until design is ready.
 - `packages/config` - shared `tsconfig.base.json` extended by every package.
+- `packages/env` - single source for environment variables, exported as typed constants.
 - `packages/core` - domain model and Zod schemas (`Case`, `Task`, `Finding`, `Evidence`, `Deliverable`, `AgentRole`). No runtime side effects.
 - `packages/ai` - Genkit initialization and Gemini/Gemma provider selection.
 - `packages/agents` - coordinator, specialist, and verification agent definitions.
@@ -35,6 +36,7 @@ Where new code goes:
 - Shared types and schemas belong in `packages/core`; depend on it instead of redefining shapes.
 - Agent and orchestration logic belongs in `packages/agents`; model access goes through `packages/ai`.
 - Persistence belongs in `packages/store`; do not call Firestore directly from apps.
+- Read environment variables only through `packages/env`; do not use `process.env` elsewhere.
 - Workspace packages are named `@evianta/<name>` and reference each other with `workspace:*`.
 
 ## Commands
