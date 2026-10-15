@@ -9,7 +9,7 @@ WORKDIR /app
 FROM base AS build
 COPY . .
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @evianta/api build
+RUN pnpm --filter "@evianta/api..." build
 RUN pnpm --filter @evianta/api deploy --prod /app/out
 
 FROM base AS runner
