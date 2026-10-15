@@ -1,0 +1,27 @@
+{
+  "name": "@evianta/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@evianta/agents": "workspace:*",
+    "@evianta/core": "workspace:*",
+    "@evianta/env": "workspace:*",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@evianta/config": "workspace:*",
+    "@types/express": "^4.17.21",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}
