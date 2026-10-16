@@ -18,7 +18,7 @@ pnpm test
 ```
 apps/
   api/   HTTP service for Cloud Run (Express + Genkit)
-  web/   frontend placeholder (scaffold pending design)
+  web/   Next.js workspace UI with the Evidence Atlas design system
 packages/
   config/  shared TypeScript config
   env/     environment variables as typed constants
@@ -33,6 +33,7 @@ packages/
 - `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm build`, `pnpm test`
 - Scope to one package: `pnpm --filter @evianta/core test`
 - `pnpm test:emulators` runs the `*.emulator.test.ts` suites against the Firestore and Storage emulators (needs Java 21; uses the `demo-evianta` project, so no cloud resources are touched)
+- Run the web app locally: `pnpm --filter @evianta/web dev`, then open `/design` for the component gallery
 
 ## Configuration
 
