@@ -54,4 +54,25 @@ describe("column roles", () => {
     expect(roles.amount).toMatchObject({ name: "Figure", role: "amount" });
     expect(roles.categories).toEqual([]);
   });
+
+  it("keeps unit prices and numeric ids out of the amount even with amount words", () => {
+    const data = table(
+      ["Sales ID", "Sales Order No", "Net Unit Price", "Total Price", "Invoice Amount"],
+      [
+        [1001, 7001, 10, 30, 30],
+        [1002, 7002, 12, 24, 24],
+        [1003, 7003, 11, 44, 44],
+      ],
+    );
+    const { columns } = profileColumns(data, [0, 1, 2]);
+
+    expect(columns.map((column) => column.role)).toEqual([
+      "identifier",
+      "identifier",
+      "unit-price",
+      "amount",
+      "amount",
+    ]);
+    expect(selectRoles(columns).amount?.name).toBe("Invoice Amount");
+  });
 });

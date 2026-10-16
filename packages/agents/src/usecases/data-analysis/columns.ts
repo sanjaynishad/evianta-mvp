@@ -43,7 +43,11 @@ const AMOUNT_NAME =
   /\b(amount|amt|revenue|sales|net|gross|value|total|turnover|gmv|billing|billed)\b/;
 const PRIMARY_AMOUNT_NAME = /\b(revenue|sales|net|amount|amt)\b/;
 const QUANTITY_NAME = /\b(qty|quantity|units?|volume|pcs|pieces)\b/;
-const PRICE_NAME = /\b(price|rate|mrp|unit cost)\b/;
+const UNIT_PRICE_NAME = /\bunit (price|cost|rate)\b|\b(rate|mrp|per unit)\b/;
+const PRICE_NAME = /\bprice\b/;
+const LINE_TOTAL_NAME = /\b(total|amount|value|line)\b/;
+// Headers that end in an identifier word, such as "Sales Order No", hold ids even when numeric.
+const IDENTIFIER_SUFFIX = /\b(id|no|number|code|ref|reference)$/;
 const IDENTIFIER_NAME = /\b(id|no|number|code|ref|reference|invoice|order|sku|txn|transaction)\b/;
 const CATEGORY_NAME =
   /\b(region|zone|state|city|country|territory|product|item|category|segment|channel|customer|client|store|branch|brand|department|team|rep|salesperson|market|type)\b/;
@@ -77,7 +81,11 @@ function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): Colu
   }
 
   if (numericShare >= TYPE_SHARE) {
-    if (PRICE_NAME.test(name) && !PRIMARY_AMOUNT_NAME.test(name)) {
+    if (IDENTIFIER_SUFFIX.test(name)) {
+      return "identifier";
+    }
+
+    if (UNIT_PRICE_NAME.test(name) || (PRICE_NAME.test(name) && !LINE_TOTAL_NAME.test(name))) {
       return "unit-price";
     }
 
