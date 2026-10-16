@@ -76,7 +76,7 @@ function ComparisonTable({
       <TableCell
         key={header}
         numeric={table.numericColumns[index]}
-        className={cn(index === 0 && "font-medium")}
+        className={cn(index === 0 && "whitespace-nowrap font-medium")}
       >
         {cells[index] || (table.numericColumns[index] ? "-" : "")}
       </TableCell>

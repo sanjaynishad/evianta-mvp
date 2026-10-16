@@ -71,7 +71,6 @@ export function CaseOutline({
   findingCount,
 }: CaseOutlineProps) {
   const review = useReview();
-  const tasksById = new Map(progress.tasks.map((task) => [task.id, task]));
   const doneCount = progress.tasks.filter((task) => task.status === "completed").length;
   const total = progress.tasks.length;
   const openQuestions = questions.filter((item) => item.question.status === "open");
@@ -92,7 +91,7 @@ export function CaseOutline({
             id="outline-progress-heading"
             className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
           >
-            Progress
+            Run status
           </h2>
           <StatusBadge status={runWorkStatus} label={runStatusLabels[progress.status]} />
         </div>
@@ -177,15 +176,13 @@ export function CaseOutline({
           {group.tasks.length > 0 ? (
             <ul aria-label={`${group.label} steps`} className="flex flex-col gap-1 pl-2">
               {group.tasks.map((task) => {
-                const live = tasksById.get(task.id);
-                const status = live?.status ?? task.status;
-                const meta = taskIcons[status];
+                const meta = taskIcons[task.status];
                 const Icon = meta.icon;
-                const cost = live?.costEstimate ?? task.costEstimate;
                 return (
                   <li
                     key={task.id}
                     data-outline-task={task.id}
+                    data-task-status={task.status}
                     className="flex items-start gap-2 text-xs text-muted-foreground"
                   >
                     <Icon aria-hidden className={cn("mt-0.5 size-3.5 shrink-0", meta.className)} />
@@ -196,7 +193,9 @@ export function CaseOutline({
                         <span className="sr-only">, {meta.label}</span>
                       </span>
                     </span>
-                    {cost !== undefined ? <span className="figures">{formatUsd(cost)}</span> : null}
+                    {task.costEstimate !== undefined ? (
+                      <span className="figures">{formatUsd(task.costEstimate)}</span>
+                    ) : null}
                   </li>
                 );
               })}

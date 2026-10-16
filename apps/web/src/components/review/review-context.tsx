@@ -6,6 +6,7 @@ import { useMotionSafe } from "@/hooks/use-motion-safe";
 import type { EvidenceEntry } from "@/lib/evidence";
 import { motionDurationMs } from "@/lib/motion";
 import { findingDomId, sectionDomId } from "@/lib/review";
+import { scrollIntoPane } from "@/lib/scroll";
 
 export type ReviewPanel = "evidence" | "ask";
 
@@ -117,7 +118,7 @@ export function ReviewProvider({
           return;
         }
 
-        element.scrollIntoView?.({ block: "start", behavior: reduced ? "auto" : "smooth" });
+        scrollIntoPane(element, { block: "start", behavior: reduced ? "auto" : "smooth" });
         element.focus({ preventScroll: true });
       };
 

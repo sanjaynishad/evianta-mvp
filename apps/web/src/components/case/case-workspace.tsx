@@ -239,7 +239,10 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
   const uploadWaitId = useId();
 
   const evidenceIndex = useMemo(() => (state ? buildEvidenceIndex(state) : new Map()), [state]);
-  const outline = useMemo(() => (state ? buildOutline(state) : []), [state]);
+  const outline = useMemo(
+    () => (state && progress ? buildOutline(state.deliverables, progress.tasks) : []),
+    [state, progress],
+  );
   const questions = useMemo(() => (state ? collectOpenQuestions(state.findings) : []), [state]);
   const approvalSummary = useMemo(() => (state ? summarizeForApproval(state) : undefined), [state]);
   const sectionsByEvidence = useMemo(

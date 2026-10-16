@@ -178,146 +178,164 @@ export function AskPanel({ useCase, documents, localNotes }: AskPanelProps) {
         ) : null}
       </div>
 
-      <div
-        ref={listRef}
-        role="log"
-        aria-label="Conversation"
-        className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto"
-      >
-        {exchanges.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Ask anything about the work record, or start with a suggestion below.
+      <div ref={listRef} className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-muted-foreground">
+            {exchanges.length === 0
+              ? "Ask anything about the work record, or start with a suggestion."
+              : "Suggested questions"}
           </p>
-        ) : null}
-        {exchanges.map((exchange) => {
-          const result = exchange.result;
-          const citations = result ? citationEntries(result) : [];
-          const findingIds = result
-            ? result.findingIds.length > 0
-              ? result.findingIds
-              : result.retrievedFindingIds
-            : [];
-          const findings = findingIds
-            .map((findingId) => review.findingsById.get(findingId))
-            .filter((finding) => finding !== undefined);
-          return (
-            <div key={exchange.id} className="flex flex-col gap-3" data-ask-exchange={exchange.id}>
-              <ChatBubble role="user" timestamp={exchange.askedAt}>
-                {exchange.question}
-              </ChatBubble>
-              <ChatBubble
-                role="assistant"
-                citations={
-                  citations.length > 0
-                    ? citations.map((entry) => (
-                        <EvidenceHoverChip
-                          key={entry.evidence.id}
-                          entry={entry}
-                          onOpen={review.openEvidence}
-                          selected={review.isEvidenceHighlighted(entry.evidence.id)}
-                        />
-                      ))
-                    : undefined
-                }
-              >
-                <div
-                  className="flex flex-col gap-2"
-                  data-answer-status={exchange.status}
-                  aria-busy={exchange.status === "streaming" || undefined}
+          <ul aria-label="Suggested questions" className="flex flex-wrap gap-1.5">
+            {suggestions.map((suggestion) => (
+              <li key={suggestion}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-auto whitespace-normal py-1 text-left"
+                  disabled={streaming}
+                  onClick={() => void askAsync(suggestion)}
                 >
-                  {exchange.status === "not-supported" ? (
-                    <p className="flex items-start gap-1.5">
-                      <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
-                      <span>{exchange.text}</span>
-                    </p>
-                  ) : exchange.status === "error" ? (
-                    <p className="flex items-start gap-1.5 text-danger">
-                      <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-                      <span>{exchange.error}</span>
-                    </p>
-                  ) : (
-                    <p className="whitespace-pre-line" data-testid="answer-text">
-                      {exchange.text}
-                      {exchange.status === "streaming" ? (
-                        <span
-                          aria-hidden
-                          className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-primary align-text-bottom motion-reduce:animate-none"
-                        />
-                      ) : null}
-                    </p>
-                  )}
-                  {exchange.status === "streaming" && !exchange.text ? (
-                    <span className="text-xs text-muted-foreground">
-                      Looking through the work record
-                    </span>
-                  ) : null}
-                  {findings.length > 0 ? (
-                    <div className="flex flex-col gap-1 border-t pt-2">
-                      <p className="text-xs font-medium text-muted-foreground">Findings used</p>
-                      <ul aria-label="Findings used" className="flex flex-col gap-1">
-                        {findings.map((finding) => (
-                          <li key={finding.id}>
-                            <button
-                              type="button"
-                              onClick={() => review.focusFinding(finding.id)}
-                              className="rounded-sm text-left text-xs underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            >
-                              {finding.summary}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                  {exchange.status === "not-supported" &&
-                  result?.status === "not-supported" &&
-                  result.canFlagForReview ? (
-                    exchange.flaggedNoteId ? (
-                      <p className="text-xs text-success">
-                        Flagged. It is in{" "}
-                        <button
-                          type="button"
-                          className="underline underline-offset-4"
-                          onClick={() => review.focusElement(openQuestionsDomId)}
-                        >
-                          Open questions
-                        </button>{" "}
-                        as a note saved in this browser.
+                  {suggestion}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div role="log" aria-label="Conversation" className="flex flex-col gap-4">
+          {exchanges.map((exchange) => {
+            const result = exchange.result;
+            const citations = result ? citationEntries(result) : [];
+            const findingIds = result
+              ? result.findingIds.length > 0
+                ? result.findingIds
+                : result.retrievedFindingIds
+              : [];
+            const findings = findingIds
+              .map((findingId) => review.findingsById.get(findingId))
+              .filter((finding) => finding !== undefined);
+            return (
+              <div
+                key={exchange.id}
+                className="flex flex-col gap-3"
+                data-ask-exchange={exchange.id}
+              >
+                <ChatBubble role="user" timestamp={exchange.askedAt}>
+                  {exchange.question}
+                </ChatBubble>
+                <ChatBubble
+                  role="assistant"
+                  citations={
+                    citations.length > 0
+                      ? citations.map((entry) => (
+                          <EvidenceHoverChip
+                            key={entry.evidence.id}
+                            entry={entry}
+                            onOpen={review.openEvidence}
+                            selected={review.isEvidenceHighlighted(entry.evidence.id)}
+                          />
+                        ))
+                      : undefined
+                  }
+                >
+                  <div
+                    className="flex flex-col gap-2"
+                    data-answer-status={exchange.status}
+                    aria-busy={exchange.status === "streaming" || undefined}
+                  >
+                    {exchange.status === "not-supported" ? (
+                      <p className="flex items-start gap-1.5">
+                        <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+                        <span>{exchange.text}</span>
+                      </p>
+                    ) : exchange.status === "error" ? (
+                      <p className="flex items-start gap-1.5 text-danger">
+                        <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                        <span>{exchange.error}</span>
                       </p>
                     ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-fit"
-                        onClick={() => flagForReview(exchange)}
-                      >
-                        <Flag aria-hidden />
-                        Flag for review
-                      </Button>
-                    )
-                  ) : null}
-                  {exchange.status === "answered" ? (
-                    exchange.flaggedNoteId ? (
-                      <Badge variant="success" className="w-fit">
-                        Added to open questions
-                      </Badge>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="w-fit"
-                        onClick={() => flagForReview(exchange)}
-                      >
-                        <ListPlus aria-hidden />
-                        Add as open question
-                      </Button>
-                    )
-                  ) : null}
-                </div>
-              </ChatBubble>
-            </div>
-          );
-        })}
+                      <p className="whitespace-pre-line" data-testid="answer-text">
+                        {exchange.text}
+                        {exchange.status === "streaming" ? (
+                          <span
+                            aria-hidden
+                            className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-primary align-text-bottom motion-reduce:animate-none"
+                          />
+                        ) : null}
+                      </p>
+                    )}
+                    {exchange.status === "streaming" && !exchange.text ? (
+                      <span className="text-xs text-muted-foreground">
+                        Looking through the work record
+                      </span>
+                    ) : null}
+                    {findings.length > 0 ? (
+                      <div className="flex flex-col gap-1 border-t pt-2">
+                        <p className="text-xs font-medium text-muted-foreground">Findings used</p>
+                        <ul aria-label="Findings used" className="flex flex-col gap-1">
+                          {findings.map((finding) => (
+                            <li key={finding.id}>
+                              <button
+                                type="button"
+                                onClick={() => review.focusFinding(finding.id)}
+                                className="rounded-sm text-left text-xs underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                {finding.summary}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {exchange.status === "not-supported" &&
+                    result?.status === "not-supported" &&
+                    result.canFlagForReview ? (
+                      exchange.flaggedNoteId ? (
+                        <p className="text-xs text-success">
+                          Flagged. It is in{" "}
+                          <button
+                            type="button"
+                            className="underline underline-offset-4"
+                            onClick={() => review.focusElement(openQuestionsDomId)}
+                          >
+                            Open questions
+                          </button>{" "}
+                          as a note saved in this browser.
+                        </p>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-fit"
+                          onClick={() => flagForReview(exchange)}
+                        >
+                          <Flag aria-hidden />
+                          Flag for review
+                        </Button>
+                      )
+                    ) : null}
+                    {exchange.status === "answered" ? (
+                      exchange.flaggedNoteId ? (
+                        <Badge variant="success" className="w-fit">
+                          Added to open questions
+                        </Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="w-fit"
+                          onClick={() => flagForReview(exchange)}
+                        >
+                          <ListPlus aria-hidden />
+                          Add as open question
+                        </Button>
+                      )
+                    ) : null}
+                  </div>
+                </ChatBubble>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <p className="sr-only" aria-live="polite" data-testid="ask-announcer">
@@ -325,21 +343,6 @@ export function AskPanel({ useCase, documents, localNotes }: AskPanelProps) {
       </p>
 
       <div className="flex flex-col gap-2 border-t pt-3">
-        <ul aria-label="Suggested questions" className="flex flex-wrap gap-1.5">
-          {suggestions.map((suggestion) => (
-            <li key={suggestion}>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-auto whitespace-normal py-1 text-left"
-                disabled={streaming}
-                onClick={() => void askAsync(suggestion)}
-              >
-                {suggestion}
-              </Button>
-            </li>
-          ))}
-        </ul>
         <form onSubmit={handleSubmit} className="flex flex-col gap-2">
           <label htmlFor={inputId} className="text-xs font-medium text-muted-foreground">
             Ask a question about this case

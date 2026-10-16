@@ -1,5 +1,6 @@
 import type { ReactElement } from "react";
 import { render } from "@testing-library/react";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { DataSourceProvider } from "@/lib/data/data-source-context";
 import {
   createFixtureDataSource,
@@ -24,7 +25,11 @@ export function renderWithDataSource(
 ) {
   return {
     dataSource,
-    ...render(<DataSourceProvider dataSource={dataSource}>{ui}</DataSourceProvider>),
+    ...render(
+      <DataSourceProvider dataSource={dataSource}>
+        <TooltipProvider>{ui}</TooltipProvider>
+      </DataSourceProvider>,
+    ),
   };
 }
 

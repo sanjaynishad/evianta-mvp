@@ -18,6 +18,7 @@ export interface PdfPageViewProps {
   onDocumentLoad: (pageCount: number) => void;
   onError: (error: Error) => void;
   onTextLayerReady?: (page: HTMLElement) => void;
+  onPageRender?: () => void;
   overlay?: ReactNode;
 }
 
@@ -32,6 +33,7 @@ export default function PdfPageView({
   onDocumentLoad,
   onError,
   onTextLayerReady,
+  onPageRender,
   overlay,
 }: PdfPageViewProps) {
   const pageRef = useRef<HTMLDivElement>(null);
@@ -55,6 +57,7 @@ export default function PdfPageView({
           renderAnnotationLayer={false}
           renderTextLayer
           loading={<PageSkeleton width={width} />}
+          onRenderSuccess={() => onPageRender?.()}
           onRenderTextLayerSuccess={() => {
             if (pageRef.current) {
               onTextLayerReady?.(pageRef.current);

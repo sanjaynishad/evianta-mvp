@@ -2,6 +2,7 @@ import type {
   AgentRole,
   CaseState,
   ConfidenceLevel,
+  Deliverable,
   DeliverableSection,
   Finding,
   OpenQuestion,
@@ -192,21 +193,23 @@ export interface OutlineSection {
   deliverableId: string;
 }
 
+export type OutlineTask = Pick<Task, "id" | "title" | "assignedRole" | "status" | "costEstimate">;
+
 export interface OutlineGroup {
   id: OutlineGroupId;
   label: string;
   sections: OutlineSection[];
-  tasks: Task[];
+  tasks: OutlineTask[];
 }
 
-export function buildOutline(state: CaseState): OutlineGroup[] {
+export function buildOutline(deliverables: Deliverable[], tasks: OutlineTask[]): OutlineGroup[] {
   const groups = new Map<OutlineGroupId, OutlineGroup>(
     outlineGroupOrder.map((id) => [
       id,
       { id, label: outlineGroupLabels[id], sections: [], tasks: [] },
     ]),
   );
-  for (const deliverable of state.deliverables) {
+  for (const deliverable of deliverables) {
     for (const section of deliverable.sections) {
       groups.get(outlineGroupFor(section))?.sections.push({
         section,
@@ -215,7 +218,7 @@ export function buildOutline(state: CaseState): OutlineGroup[] {
     }
   }
 
-  for (const task of state.tasks) {
+  for (const task of tasks) {
     if (task.assignedRole !== "coordinator") {
       groups.get(roleGroups[task.assignedRole])?.tasks.push(task);
     }

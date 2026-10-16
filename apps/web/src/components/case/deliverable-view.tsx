@@ -54,7 +54,12 @@ export function DeliverableView({
         </Badge>
         {actions ? <div className="print:hidden">{actions}</div> : null}
       </header>
-      <div className={cn("grid gap-4", isDashboard && "xl:grid-cols-2")}>
+      <div
+        className={cn(
+          "grid grid-cols-[minmax(0,1fr)] gap-4",
+          isDashboard && "xl:grid-cols-[repeat(2,minmax(0,1fr))]",
+        )}
+      >
         {deliverable.sections.map((section) => (
           <SectionReview
             key={section.id}

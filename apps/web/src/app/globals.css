@@ -236,4 +236,20 @@
   main {
     overflow: visible;
   }
+
+  #review-outline,
+  #review-side,
+  [data-slot="resizable-handle"] {
+    display: none !important;
+  }
+
+  [data-slot="resizable-panel-group"],
+  #review-content,
+  [data-review-pane="content"] {
+    display: block !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+    flex: none !important;
+  }
 }

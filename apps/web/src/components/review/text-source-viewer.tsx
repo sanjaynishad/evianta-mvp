@@ -78,7 +78,7 @@ export function TextSourceViewer({
       <pre
         data-slot="text-source-viewer"
         style={{ fontSize: `${0.75 * zoom}rem` }}
-        className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-card p-3 leading-relaxed"
+        className="relative max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-card p-3 leading-relaxed"
       >
         {highlightQuote(current.text, quote)}
       </pre>

@@ -19,6 +19,7 @@ import {
 } from "@/lib/evidence-location";
 import { evidenceForRow } from "@/lib/evidence-regions";
 import { formatNumber } from "@/lib/format";
+import { scrollIntoPane } from "@/lib/scroll";
 import { cn } from "@/lib/utils";
 
 export interface SpreadsheetViewerProps {
@@ -114,7 +115,9 @@ export function SpreadsheetViewer({
 
   useEffect(() => {
     const row = scrollRef.current?.querySelector<HTMLElement>("[data-focus-row]");
-    row?.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" });
+    if (row) {
+      scrollIntoPane(row, { block: "center", behavior: reduced ? "auto" : "smooth" });
+    }
   }, [requestId, reduced, table?.name]);
 
   if (!table || !layout) {
@@ -178,7 +181,7 @@ export function SpreadsheetViewer({
       <div
         ref={scrollRef}
         data-slot="spreadsheet-viewer"
-        className="max-h-[60vh] overflow-auto rounded-md border bg-card"
+        className="relative max-h-[60vh] overflow-auto rounded-md border bg-card"
       >
         <table
           aria-label={`${documentName}, sheet ${sheetName}`}
@@ -254,7 +257,7 @@ export function SpreadsheetViewer({
                         className={cn(
                           "max-w-64 truncate border-r px-2 py-1",
                           typeof value === "number" && "figures text-right",
-                          highlighted && "bg-highlight-subtle font-medium text-foreground",
+                          highlighted && "bg-highlight/15 font-medium text-foreground",
                         )}
                       >
                         {formatCell(value)}

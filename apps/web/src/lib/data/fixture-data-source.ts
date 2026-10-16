@@ -641,8 +641,8 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
       );
 
       async function streamAsync(text: string) {
-        const chunks = text.match(/\S+\s*/g) ?? [text];
         const delayMs = Math.min(35, replayIntervalMs / 12);
+        const chunks = delayMs > 0 ? (text.match(/\S+\s*/g) ?? [text]) : [text];
         for (const chunk of chunks) {
           if (askOptions.signal?.aborted) {
             throw new DOMException("The question was cancelled.", "AbortError");

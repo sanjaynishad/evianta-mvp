@@ -10,6 +10,7 @@ import { useElementWidth } from "@/hooks/use-element-width";
 import { useMotionSafe } from "@/hooks/use-motion-safe";
 import type { EvidenceEntry } from "@/lib/evidence";
 import { regionForEntry, regionsForPage, type EvidenceRegion } from "@/lib/evidence-regions";
+import { scrollIntoPane } from "@/lib/scroll";
 import { findQuoteInTextLayer } from "@/lib/text-layer";
 import { HighlightOverlay, type OverlayRegion } from "./highlight-overlay";
 import { ViewerToolbar } from "./viewer-toolbar";
@@ -73,7 +74,7 @@ function buildPageRegions(
 
 function useScrollToFocus(
   containerRef: RefObject<HTMLElement | null>,
-  requestId: number,
+  scrollKey: string,
   ready: boolean,
 ) {
   const { reduced } = useMotionSafe();
@@ -85,8 +86,10 @@ function useScrollToFocus(
     const target = containerRef.current?.querySelector<HTMLElement>(
       "[data-evidence-region][data-focused], [data-page-highlight]",
     );
-    target?.scrollIntoView?.({ block: "center", behavior: reduced ? "auto" : "smooth" });
-  }, [containerRef, requestId, ready, reduced]);
+    if (target) {
+      scrollIntoPane(target, { block: "center", behavior: reduced ? "auto" : "smooth" });
+    }
+  }, [containerRef, scrollKey, ready, reduced]);
 }
 
 // Page navigation that jumps to the evidence page whenever a new evidence request arrives.
@@ -120,6 +123,7 @@ export function PdfViewer({
   const [zoom, setZoom] = useState(1);
   const [error, setError] = useState<Error>();
   const [textLayerMatch, setTextLayerMatch] = useState<{ key: string; boxes?: BoundingBox[] }>();
+  const [renderCount, setRenderCount] = useState(0);
   const knownPageCount = pageCount ?? (extraction?.pages.length || undefined);
   const focusEntry = entries.find((entry) => entry.evidence.id === focusEvidenceId);
   const focusPage = focusEntry
@@ -140,7 +144,11 @@ export function PdfViewer({
   );
   const pageWidth = Math.max(240, Math.round(((width ?? 560) - 16) * zoom));
 
-  useScrollToFocus(containerRef, requestId, overlayRegions.length > 0 || Boolean(pageHighlight));
+  useScrollToFocus(
+    containerRef,
+    `${requestId}:${renderCount}:${textLayerMatch?.key ?? ""}`,
+    overlayRegions.length > 0 || Boolean(pageHighlight),
+  );
 
   if (error) {
     return (
@@ -164,7 +172,7 @@ export function PdfViewer({
       <div
         ref={containerRef}
         data-slot="pdf-viewer"
-        className="overflow-auto rounded-md border bg-muted/40 p-2"
+        className="relative overflow-auto rounded-md border bg-muted/40 p-2"
       >
         <PdfPageView
           fileUrl={fileUrl}
@@ -172,6 +180,7 @@ export function PdfViewer({
           width={pageWidth}
           onDocumentLoad={setPageCount}
           onError={setError}
+          onPageRender={() => setRenderCount((count) => count + 1)}
           onTextLayerReady={(pageElement) => {
             if (needsTextLayer && quote && textLayerMatch?.key !== matchKey) {
               setTextLayerMatch({ key: matchKey, boxes: findQuoteInTextLayer(pageElement, quote) });
@@ -211,6 +220,7 @@ export function ImageViewer({
   const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [failed, setFailed] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const pageRegions = regionsForPage(entries, extraction, 1, 1);
   const { overlayRegions, pageHighlight } = buildPageRegions(
     pageRegions,
@@ -219,7 +229,11 @@ export function ImageViewer({
     undefined,
   );
 
-  useScrollToFocus(containerRef, requestId, overlayRegions.length > 0 || Boolean(pageHighlight));
+  useScrollToFocus(
+    containerRef,
+    `${requestId}:${loaded}`,
+    loaded && (overlayRegions.length > 0 || Boolean(pageHighlight)),
+  );
 
   if (failed) {
     return (
@@ -236,7 +250,7 @@ export function ImageViewer({
       <div
         ref={containerRef}
         data-slot="image-viewer"
-        className="overflow-auto rounded-md border bg-muted/40 p-2"
+        className="relative overflow-auto rounded-md border bg-muted/40 p-2"
       >
         <div className="relative mx-auto" style={{ width: `${zoom * 100}%` }}>
           <img
@@ -244,6 +258,7 @@ export function ImageViewer({
             alt={alt}
             className="block h-auto w-full"
             onError={() => setFailed(true)}
+            onLoad={() => setLoaded(true)}
           />
           <HighlightOverlay
             regions={overlayRegions}

@@ -128,7 +128,7 @@ export function ReviewLayout({
   }
 
   const paneClassName =
-    "h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+    "relative h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
   if (!wide) {
     return (
@@ -184,7 +184,7 @@ export function ReviewLayout({
     <div
       ref={rootRef}
       className={cn(
-        "flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background",
+        "flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background print:overflow-visible print:border-0",
         className,
       )}
       onKeyDown={handleKeyDown}
