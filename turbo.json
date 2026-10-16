@@ -11,6 +11,7 @@
     "test": {
       "dependsOn": ["^build"],
       "passThroughEnv": [
+        "EVIANTA_AI_PROVIDER",
         "GCS_BUCKET",
         "EVIANTA_USAGE_VIEW_PATH",
         "FIRESTORE_EMULATOR_HOST",
