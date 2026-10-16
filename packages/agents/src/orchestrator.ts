@@ -6,7 +6,6 @@ import type {
   DocumentMetadata,
   ExtractedDocument,
   Finding,
-  NewRunEvent,
   Task,
   TaskStatus,
   TokenUsage,
@@ -24,9 +23,14 @@ import { assembleDeliverables } from "./deliverables.js";
 import { describeTaskError, OrchestratorError } from "./errors.js";
 import { createRunEventBus, createRunEventEmitter, type RunEventBus } from "./events.js";
 import type { DeliverableSpec } from "./findings.js";
-import type { TaskExecutionContext, TaskHandlerRegistry, TaskOutput } from "./handlers.js";
+import type {
+  TaskExecutionContext,
+  TaskHandlerRegistry,
+  TaskOutput,
+  UpstreamSection,
+} from "./handlers.js";
 import { referencePlanFor } from "./plans.js";
-import { buildTaskRecord, type PlannedSection } from "./record.js";
+import { activeFindings, buildTaskRecord, type PlannedSection, type TaskRecord } from "./record.js";
 import { createAgentRegistry, createDefaultTaskHandlers, type AgentRegistry } from "./registry.js";
 import { DEFAULT_DOCUMENT_TOKEN_BUDGET, sliceDocuments } from "./slices.js";
 
@@ -145,7 +149,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     return metadata.map((item, index) => ({ metadata: item, extraction: extractions[index] }));
   }
 
-  async function planAndPersistAsync(caseRecord: Case): Promise<PlanResult> {
+  async function planAndPersistAsync(
+    caseRecord: Case,
+    chargeUsage: (usage: TokenUsage, cost: Cost) => void,
+  ): Promise<PlanResult> {
     const existing = await store.tasks.getTasksForCaseAsync(caseRecord.id);
 
     if (existing.length > 0) {
@@ -167,6 +174,9 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       agent: agents.get("coordinator") as CoordinatorAgent | undefined,
       logger,
     });
+
+    chargeUsage(planning.usage, planning.cost);
+
     const { plan } = planning;
     const idsByRole = new Map(plan.tasks.map((task) => [task.assignedRole, newId()]));
     const firstRole = plan.tasks[0]?.assignedRole;
@@ -180,9 +190,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       }
     }
 
-    const tasks: Task[] = [];
-
-    for (const draft of plan.tasks) {
+    const taskInputs = plan.tasks.map((draft) => {
       const questions = questionsByRole.get(draft.assignedRole) ?? [];
       const questionText = questions.map((question) => `- ${question.text}`).join("\n");
       const instructions = [
@@ -192,20 +200,18 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         .filter(Boolean)
         .join("\n\n");
 
-      tasks.push(
-        await store.tasks.createTaskAsync({
-          id: idsByRole.get(draft.assignedRole) as string,
-          caseId: caseRecord.id,
-          title: draft.title,
-          assignedRole: draft.assignedRole,
-          ...(instructions ? { instructions } : {}),
-          status: "pending",
-          dependsOn: draft.dependsOn.map((role) => idsByRole.get(role) as string),
-          attempts: 0,
-        }),
-      );
-    }
-
+      return {
+        id: idsByRole.get(draft.assignedRole) as string,
+        caseId: caseRecord.id,
+        title: draft.title,
+        assignedRole: draft.assignedRole,
+        ...(instructions ? { instructions } : {}),
+        status: "pending" as const,
+        dependsOn: draft.dependsOn.map((role) => idsByRole.get(role) as string),
+        attempts: 0,
+      };
+    });
+    const tasks = await store.tasks.createTasksAsync(caseRecord.id, taskInputs);
     const planningFindings: Finding[] = [];
 
     for (const task of tasks) {
@@ -216,21 +222,30 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         continue;
       }
 
-      planningFindings.push(
-        await store.findings.addFindingAsync(caseRecord.id, {
-          id: newId(),
-          taskId: task.id,
-          summary: "Coordinator planning notes",
-          ...(notes ? { detail: notes } : {}),
-          severity: "info",
-          confidence: "unassessed",
-          openQuestions: questions.map((question) => ({
+      // The questions are already in the task instructions, so a failed note write is not fatal.
+      try {
+        planningFindings.push(
+          await store.findings.addFindingAsync(caseRecord.id, {
             id: newId(),
-            text: question.text,
-            severity: question.severity,
-          })),
-        }),
-      );
+            taskId: task.id,
+            summary: "Coordinator planning notes",
+            ...(notes ? { detail: notes } : {}),
+            severity: "info",
+            confidence: "unassessed",
+            openQuestions: questions.map((question) => ({
+              id: newId(),
+              text: question.text,
+              severity: question.severity,
+            })),
+          }),
+        );
+      } catch (error) {
+        logger.warn("Could not save coordinator planning notes.", {
+          caseId: caseRecord.id,
+          taskId: task.id,
+          error: messageOf(error),
+        });
+      }
     }
 
     if (plan.issues.length > 0) {
@@ -248,7 +263,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     };
   }
 
-  async function executeRunAsync(caseId: string, mode: RunMode): Promise<RunResult> {
+  async function withCaseLockAsync<T>(caseId: string, workAsync: () => Promise<T>): Promise<T> {
     if (activeCases.has(caseId)) {
       throw new OrchestratorError(
         "run-in-progress",
@@ -259,7 +274,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     activeCases.add(caseId);
 
     try {
-      return await runLockedAsync(caseId, mode);
+      return await workAsync();
     } finally {
       activeCases.delete(caseId);
     }
@@ -293,8 +308,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     const completedTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
     const blockedTaskIds: string[] = [];
-    const producedByTask = new Map<string, PlannedSection[]>();
-    const specs: DeliverableSpec[] = [];
+    let deliverableQueue: Promise<unknown> = Promise.resolve();
     let plan: PlanResult | undefined;
     let runError: string | undefined;
     let selectedIds: string[] = [];
@@ -304,9 +318,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     try {
       if (tasks.length === 0) {
         caseRecord = await store.cases.updateCaseStatusAsync(caseId, "planning");
-        plan = await planAndPersistAsync(caseRecord);
+        plan = await planAndPersistAsync(caseRecord, addRunUsage);
         tasks = plan.tasks;
-        addRunUsage(plan.usage, plan.costEstimate);
       }
 
       selectedIds = tasks
@@ -344,6 +357,9 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       }
 
       const orderedTasks = topologicalOrder(tasks);
+      const primaryDeliverable = referencePlanFor(
+        caseRecord.useCase ?? "data-analysis",
+      ).deliverable;
       const documentSources = await loadDocumentSourcesAsync(caseId);
       const documentsById = new Map<string, DocumentMetadata>(
         documentSources.map((source) => [source.metadata.id, source.metadata]),
@@ -390,10 +406,13 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         task: Task,
         attempt: number,
       ): Promise<TaskExecutionContext> => {
-        const allFindings = await store.findings.getFindingsForCaseAsync(caseId);
+        const [storedFindings, deliverables] = await Promise.all([
+          store.findings.getFindingsForCaseAsync(caseId),
+          store.deliverables.getDeliverablesForCaseAsync(caseId),
+        ]);
         const findingsByTask = new Map<string, Finding[]>();
 
-        for (const finding of allFindings) {
+        for (const finding of activeFindings(storedFindings, currentTasks())) {
           findingsByTask.set(finding.taskId, [
             ...(findingsByTask.get(finding.taskId) ?? []),
             finding,
@@ -401,6 +420,21 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         }
 
         const ancestors = collectAncestors(orderedTasks, task.id);
+        const upstreamTasks = currentTasks().filter((candidate) => ancestors.has(candidate.id));
+        const upstreamSections: UpstreamSection[] = upstreamTasks.flatMap((upstream) =>
+          deliverables.flatMap((deliverable) =>
+            deliverable.sections
+              .filter((section) => section.id.startsWith(`${upstream.id}-section-`))
+              .map((section) => ({
+                taskId: upstream.id,
+                taskTitle: upstream.title,
+                role: upstream.assignedRole,
+                deliverableId: deliverable.id,
+                title: section.title,
+                content: section.editedContent ?? section.content,
+              })),
+          ),
+        );
         const query = [task.title, task.instructions, caseRecord.description]
           .filter(Boolean)
           .join(" ");
@@ -415,9 +449,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             task: taskById.get(id) as Task,
             findings: findingsByTask.get(id) ?? [],
           })),
-          upstreamFindings: orderedTasks
-            .filter((candidate) => ancestors.has(candidate.id))
-            .flatMap((candidate) => findingsByTask.get(candidate.id) ?? []),
+          upstreamFindings: upstreamTasks.flatMap(
+            (upstream) => findingsByTask.get(upstream.id) ?? [],
+          ),
+          upstreamSections,
           documents: sliceDocuments(documentSources, { query, tokenBudget: documentTokenBudget }),
           documentMetadata: documentSources.map((source) => source.metadata),
           async loadExtractionAsync(documentId) {
@@ -430,10 +465,49 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         };
       };
 
-      const persistOutputAsync = async (task: Task, output: TaskOutput) => {
+      // Serialized so concurrent tasks do not overwrite each other's sections.
+      const saveSectionsAsync = (
+        taskId: string,
+        sections: PlannedSection[],
+        specs: readonly DeliverableSpec[],
+      ): Promise<void> => {
+        const saved = deliverableQueue.then(async () => {
+          const assembled = assembleDeliverables({
+            caseId,
+            orderedTasks,
+            existing: await store.deliverables.getDeliverablesForCaseAsync(caseId),
+            producedByTask: new Map([[taskId, sections]]),
+            primary: primaryDeliverable,
+            specs,
+          });
+
+          for (const deliverable of assembled) {
+            await store.deliverables.saveDeliverableAsync(deliverable);
+          }
+        });
+
+        deliverableQueue = saved.catch(() => undefined);
+
+        return saved;
+      };
+
+      const persistOutputAsync = async (
+        task: Task,
+        output: TaskOutput,
+        attempt: number,
+        upstreamFindings: readonly Finding[],
+      ): Promise<TaskRecord> => {
         const record = buildTaskRecord(
           output,
-          { caseId, task, documentsById, extractionsById, newId },
+          {
+            caseId,
+            task,
+            attempt,
+            documentsById,
+            extractionsById,
+            upstreamEvidence: upstreamFindings.flatMap((finding) => finding.evidence),
+            newId,
+          },
           task.assignedRole,
           output.modelTier ?? agents.get(task.assignedRole)?.modelTier,
         );
@@ -453,8 +527,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           await store.findings.addFindingAsync(caseId, finding);
         }
 
-        producedByTask.set(task.id, record.sections);
-        specs.push(...(output.deliverables ?? []));
+        await saveSectionsAsync(task.id, record.sections, output.deliverables ?? []);
 
         return record;
       };
@@ -487,6 +560,13 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           logger.warn("Could not start a task.", { taskId: task.id, error: messageOf(error) });
         }
 
+        let attemptUsage = emptyUsage();
+        let attemptCost = 0;
+        let charged = false;
+        let record: TaskRecord;
+        let tokenUsage: TokenUsage;
+        let costEstimate: Cost;
+
         try {
           const handler = handlers.get(task.assignedRole);
 
@@ -494,14 +574,19 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             throw new Error(`No task handler is registered for role "${task.assignedRole}".`);
           }
 
-          const output = await handler.executeAsync(await buildContextAsync(task, attempt));
-          const record = await persistOutputAsync(task, output);
-          const tokenUsage = addUsage(task.tokenUsage ?? emptyUsage(), output.usage);
-          const costEstimate = roundCost((task.costEstimate ?? 0) + output.cost);
+          const context = await buildContextAsync(task, attempt);
+          const output = await handler.executeAsync(context);
 
+          attemptUsage = output.usage;
+          attemptCost = output.cost;
+          charged = true;
           addRunUsage(output.usage, output.cost);
+          record = await persistOutputAsync(task, output, attempt, context.upstreamFindings);
+          tokenUsage = addUsage(task.tokenUsage ?? emptyUsage(), attemptUsage);
+          costEstimate = roundCost((task.costEstimate ?? 0) + attemptCost);
           task = await store.tasks.updateTaskAsync(caseId, task.id, {
             status: "completed",
+            attempts: attempt,
             tokenUsage,
             costEstimate,
             lastError: null,
@@ -509,7 +594,62 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           taskById.set(task.id, task);
           status.set(task.id, "completed");
           completedTaskIds.push(task.id);
+        } catch (error) {
+          const lastError = describeTaskError(error);
 
+          if (!charged && error instanceof AiError) {
+            attemptUsage = error.usage;
+            attemptCost = error.cost;
+            addRunUsage(attemptUsage, attemptCost);
+          }
+
+          logger.warn("Task failed.", { taskId: task.id, error: messageOf(error) });
+          status.set(task.id, "failed");
+          failedTaskIds.push(task.id);
+
+          try {
+            task = await store.tasks.updateTaskAsync(caseId, task.id, {
+              status: "failed",
+              attempts: attempt,
+              tokenUsage: addUsage(task.tokenUsage ?? emptyUsage(), attemptUsage),
+              costEstimate: roundCost((task.costEstimate ?? 0) + attemptCost),
+              lastError,
+            });
+            taskById.set(task.id, task);
+
+            const blocked = await blockDependentsAsync(task);
+
+            await emitAsync({
+              type: "task-failed",
+              runId,
+              taskId: task.id,
+              error: lastError,
+              blockedTaskIds: blocked,
+            });
+
+            if (attemptCost > 0) {
+              const totals = caseTotals();
+
+              await emitAsync({
+                type: "cost-updated",
+                runId,
+                taskId: task.id,
+                totalTokenUsage: totals.usage,
+                totalCostEstimate: totals.cost,
+              });
+            }
+          } catch (persistError) {
+            logger.warn("Could not record a task failure.", {
+              taskId: task.id,
+              error: messageOf(persistError),
+            });
+          }
+
+          return;
+        }
+
+        // The task is durably completed; a failed event write must not turn it into a failure.
+        try {
           for (const finding of record.findings) {
             await emitAsync({
               type: "finding-added",
@@ -540,51 +680,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             totalCostEstimate: totals.cost,
           });
         } catch (error) {
-          const lastError = describeTaskError(error);
-          const failedUsage = error instanceof AiError ? error.usage : emptyUsage();
-          const failedCost = error instanceof AiError ? error.cost : 0;
-
-          logger.warn("Task failed.", { taskId: task.id, error: messageOf(error) });
-          addRunUsage(failedUsage, failedCost);
-          status.set(task.id, "failed");
-          failedTaskIds.push(task.id);
-
-          try {
-            task = await store.tasks.updateTaskAsync(caseId, task.id, {
-              status: "failed",
-              tokenUsage: addUsage(task.tokenUsage ?? emptyUsage(), failedUsage),
-              costEstimate: roundCost((task.costEstimate ?? 0) + failedCost),
-              lastError,
-            });
-            taskById.set(task.id, task);
-
-            const blocked = await blockDependentsAsync(task);
-
-            await emitAsync({
-              type: "task-failed",
-              runId,
-              taskId: task.id,
-              error: lastError,
-              blockedTaskIds: blocked,
-            });
-
-            if (failedCost > 0) {
-              const totals = caseTotals();
-
-              await emitAsync({
-                type: "cost-updated",
-                runId,
-                taskId: task.id,
-                totalTokenUsage: totals.usage,
-                totalCostEstimate: totals.cost,
-              });
-            }
-          } catch (persistError) {
-            logger.warn("Could not record a task failure.", {
-              taskId: task.id,
-              error: messageOf(persistError),
-            });
-          }
+          logger.warn("Could not publish task completion.", {
+            taskId: task.id,
+            error: messageOf(error),
+          });
         }
       };
 
@@ -629,26 +728,9 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         await Promise.race(inFlight.values());
       }
 
-      const existingDeliverables = await store.deliverables.getDeliverablesForCaseAsync(caseId);
-      const assembled = assembleDeliverables({
-        caseId,
-        orderedTasks,
-        existing: existingDeliverables,
-        producedByTask,
-        primary: referencePlanFor(caseRecord.useCase ?? "data-analysis").deliverable,
-        specs,
-      });
-
-      for (const deliverable of assembled) {
-        await store.deliverables.saveDeliverableAsync(deliverable);
-      }
-
-      deliverableIds = [
-        ...new Set([
-          ...existingDeliverables.map((deliverable) => deliverable.id),
-          ...assembled.map((deliverable) => deliverable.id),
-        ]),
-      ];
+      deliverableIds = (await store.deliverables.getDeliverablesForCaseAsync(caseId)).map(
+        (deliverable) => deliverable.id,
+      );
 
       if (failedTaskIds.length > 0 || blockedTaskIds.length > 0) {
         const failedTitles = failedTaskIds.map((id) => `"${taskById.get(id)?.title ?? id}"`);
@@ -665,12 +747,72 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
     const totals = caseTotals();
     const finishedAt = now().toISOString();
-    const result: RunResult = {
+    const recordingErrors: string[] = [];
+    const recordAsync = async (step: string, workAsync: () => Promise<unknown>) => {
+      try {
+        await workAsync();
+      } catch (error) {
+        recordingErrors.push(`${step}: ${messageOf(error)}`);
+        logger.warn("Could not record the end of the run.", {
+          caseId,
+          runId,
+          step,
+          error: messageOf(error),
+        });
+      }
+    };
+
+    const finalError = () =>
+      [runError, ...recordingErrors.map((message) => `Could not record ${message}.`)]
+        .filter(Boolean)
+        .join(" ") || undefined;
+
+    await recordAsync("case usage", () =>
+      store.cases.updateCaseUsageAsync(caseId, {
+        inputTokens: runUsage.input,
+        outputTokens: runUsage.output,
+        costEstimate: runCost,
+        runCount: 1,
+        lastRunAt: finishedAt,
+      }),
+    );
+    await recordAsync("case status", () =>
+      store.cases.updateCaseStatusAsync(caseId, finalError() ? "failed" : "completed"),
+    );
+
+    const statusError = finalError();
+
+    await recordAsync("the terminal event", () =>
+      emitAsync(
+        statusError
+          ? {
+              type: "run-failed",
+              runId,
+              error: statusError,
+              failedTaskIds,
+              totalTokenUsage: totals.usage,
+              totalCostEstimate: totals.cost,
+              timestamp: finishedAt,
+            }
+          : {
+              type: "run-completed",
+              runId,
+              deliverableIds,
+              totalTokenUsage: totals.usage,
+              totalCostEstimate: totals.cost,
+              timestamp: finishedAt,
+            },
+      ),
+    );
+
+    const error = finalError();
+
+    return {
       runId,
       caseId,
       mode,
-      status: runError ? "failed" : "completed",
-      ...(runError ? { error: runError } : {}),
+      status: error ? "failed" : "completed",
+      ...(error ? { error } : {}),
       ...(plan?.plan ? { plan: { source: plan.plan.source, issues: plan.plan.issues } } : {}),
       completedTaskIds,
       failedTaskIds,
@@ -682,46 +824,6 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       caseUsage: totals.usage,
       caseCostEstimate: totals.cost,
     };
-
-    try {
-      await store.cases.updateCaseUsageAsync(caseId, {
-        inputTokens: runUsage.input,
-        outputTokens: runUsage.output,
-        costEstimate: runCost,
-        runCount: 1,
-        lastRunAt: finishedAt,
-      });
-      await store.cases.updateCaseStatusAsync(caseId, runError ? "failed" : "completed");
-
-      const terminal: NewRunEvent = runError
-        ? {
-            type: "run-failed",
-            runId,
-            error: runError,
-            failedTaskIds,
-            totalTokenUsage: totals.usage,
-            totalCostEstimate: totals.cost,
-            timestamp: finishedAt,
-          }
-        : {
-            type: "run-completed",
-            runId,
-            deliverableIds,
-            totalTokenUsage: totals.usage,
-            totalCostEstimate: totals.cost,
-            timestamp: finishedAt,
-          };
-
-      await emitAsync(terminal);
-    } catch (error) {
-      logger.warn("Could not record the end of the run.", {
-        caseId,
-        runId,
-        error: messageOf(error),
-      });
-    }
-
-    return result;
   }
 
   return {
@@ -729,31 +831,32 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     agents,
     handlers,
     async planCaseAsync(caseId) {
-      if (activeCases.has(caseId)) {
-        throw new OrchestratorError(
-          "run-in-progress",
-          `Case "${caseId}" already has a run in progress.`,
-        );
-      }
+      return withCaseLockAsync(caseId, async () => {
+        const caseRecord = await getCaseOrThrowAsync(caseId);
+        let usage = emptyUsage();
+        let cost = 0;
 
-      const caseRecord = await getCaseOrThrowAsync(caseId);
-      const result = await planAndPersistAsync(caseRecord);
-
-      if (result.planned && (result.usage.total > 0 || result.costEstimate > 0)) {
-        await store.cases.updateCaseUsageAsync(caseId, {
-          inputTokens: result.usage.input,
-          outputTokens: result.usage.output,
-          costEstimate: result.costEstimate,
-        });
-      }
-
-      return result;
+        try {
+          return await planAndPersistAsync(caseRecord, (planningUsage, planningCost) => {
+            usage = addUsage(usage, planningUsage);
+            cost = roundCost(cost + planningCost);
+          });
+        } finally {
+          if (usage.total > 0 || cost > 0) {
+            await store.cases.updateCaseUsageAsync(caseId, {
+              inputTokens: usage.input,
+              outputTokens: usage.output,
+              costEstimate: cost,
+            });
+          }
+        }
+      });
     },
     runCaseAsync(caseId) {
-      return executeRunAsync(caseId, "run");
+      return withCaseLockAsync(caseId, () => runLockedAsync(caseId, "run"));
     },
     retryFailedAsync(caseId) {
-      return executeRunAsync(caseId, "retry");
+      return withCaseLockAsync(caseId, () => runLockedAsync(caseId, "retry"));
     },
     isRunning(caseId) {
       return activeCases.has(caseId);

@@ -66,6 +66,8 @@ export const findingSchema = z.object({
   openQuestions: z.array(openQuestionSchema).default([]),
   figures: z.array(findingFigureSchema).optional(),
   dates: z.array(findingDateSchema).optional(),
+  // Attempt of the producing task; readers use only the task's latest completed attempt.
+  attempt: z.number().int().positive().optional(),
 });
 
 export type Finding = z.infer<typeof findingSchema>;

@@ -484,6 +484,7 @@ describe("orchestrator", () => {
     ]);
     expect(reviewerCall?.tier).toBe("high");
     expect(reviewerCall?.prompt).toContain("components add up to 12,400");
+    expect(reviewerCall?.prompt).toContain("Dear Sir,");
     expect(reviewFindings[0]?.summary).toMatch(/found 1 issue/);
     expect(reviewFindings[0]?.openQuestions[0]).toMatchObject({ severity: "high", status: "open" });
     expect(reviewFindings.at(-1)?.openQuestions[0]?.text).toContain("interest demand");
@@ -571,5 +572,171 @@ describe("orchestrator", () => {
     await expect(orchestrator.runCaseAsync("missing")).rejects.toMatchObject({
       code: "case-not-found",
     });
+  });
+
+  it("holds the case lock while planning", async () => {
+    const { store, orchestrator } = createHarness({
+      coordinator: { output: { tasks: [], openQuestions: [] } },
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    const planning = orchestrator.planCaseAsync(caseRecord.id);
+
+    expect(orchestrator.isRunning(caseRecord.id)).toBe(true);
+    await expect(orchestrator.planCaseAsync(caseRecord.id)).rejects.toMatchObject({
+      code: "run-in-progress",
+    });
+    await expect(orchestrator.runCaseAsync(caseRecord.id)).rejects.toMatchObject({
+      code: "run-in-progress",
+    });
+
+    const plan = await planning;
+
+    expect(plan.planned).toBe(true);
+    expect(await store.tasks.getTasksForCaseAsync(caseRecord.id)).toHaveLength(plan.tasks.length);
+    expect(orchestrator.isRunning(caseRecord.id)).toBe(false);
+  });
+
+  it("writes a generated plan atomically and charges planning when the write fails", async () => {
+    const { store, orchestrator } = createHarness({
+      coordinator: { output: { tasks: [], openQuestions: [] } },
+      "case-analysis": specialistStep(),
+      reconciliation: specialistStep(),
+      "tax-research": specialistStep(),
+      "response-preparation": specialistStep(),
+      "independent-review": specialistStep({ findings: [] }),
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    vi.spyOn(store.tasks, "createTasksAsync").mockRejectedValueOnce(new Error("Write failed"));
+
+    const failed = await orchestrator.runCaseAsync(caseRecord.id);
+    const caseAfterFailure = await store.cases.getCaseAsync(caseRecord.id);
+
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toContain("Write failed");
+    expect(failed.costEstimate).toBeGreaterThan(0);
+    expect(await store.tasks.getTasksForCaseAsync(caseRecord.id)).toEqual([]);
+    expect(caseAfterFailure?.usage?.costEstimate).toBeCloseTo(failed.costEstimate, 10);
+
+    const rerun = await orchestrator.runCaseAsync(caseRecord.id);
+
+    expect(rerun.status).toBe("completed");
+    expect(rerun.completedTaskIds).toHaveLength(5);
+  });
+
+  it("keeps a task retryable until its deliverable sections are saved", async () => {
+    const { store, orchestrator } = createHarness({
+      "case-analysis": specialistStep({
+        section: { title: "Analysis", kind: "text", content: "Demand explained." },
+      }),
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    vi.spyOn(store.deliverables, "saveDeliverableAsync").mockRejectedValueOnce(
+      new Error("Deliverable write failed"),
+    );
+
+    const first = await orchestrator.runCaseAsync(caseRecord.id);
+    const [taskAfterFailure] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(first.status).toBe("failed");
+    expect(taskAfterFailure).toMatchObject({ status: "failed", attempts: 1 });
+    expect(await store.deliverables.getDeliverablesForCaseAsync(caseRecord.id)).toEqual([]);
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const [deliverable] = await store.deliverables.getDeliverablesForCaseAsync(caseRecord.id);
+
+    expect(retry.status).toBe("completed");
+    expect(retry.deliverableIds).toEqual(["deliverable-primary"]);
+    expect(deliverable?.sections.map((section) => section.content)).toEqual(["Demand explained."]);
+  });
+
+  it("reports failure and emits run-failed when run finalization cannot be recorded", async () => {
+    const { store, orchestrator } = createHarness({ "case-analysis": specialistStep() });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    vi.spyOn(store.cases, "updateCaseUsageAsync").mockRejectedValueOnce(
+      new Error("Usage write failed"),
+    );
+
+    const result = await orchestrator.runCaseAsync(caseRecord.id);
+    const events = await store.events.listEventsAsync(caseRecord.id);
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("Usage write failed");
+    expect(result.completedTaskIds).toEqual(["a"]);
+    expect(events.at(-1)).toMatchObject({
+      type: "run-failed",
+      error: expect.stringContaining("Usage write failed"),
+    });
+    expect((await store.cases.getCaseAsync(caseRecord.id))?.status).toBe("failed");
+  });
+
+  it("charges usage when output persistence fails and reads only the retried output", async () => {
+    const { store, ai, orchestrator } = createHarness({
+      reconciliation: [
+        specialistStep({ findings: [finding("Old mismatch of Rs. 100"), finding("Old note")] }),
+        specialistStep({ findings: [finding("Corrected mismatch of Rs. 120")] }),
+      ],
+      "response-preparation": specialistStep(),
+    });
+    const caseRecord = await createCaseAsync(store);
+    const addFindingAsync = store.findings.addFindingAsync.bind(store.findings);
+    let findingWrites = 0;
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "rec", role: "reconciliation" },
+      { id: "draft", role: "response-preparation", dependsOn: ["rec"] },
+    ]);
+    vi.spyOn(store.findings, "addFindingAsync").mockImplementation(async (caseId, input) => {
+      findingWrites += 1;
+
+      if (findingWrites === 2) {
+        throw new Error("Finding write failed");
+      }
+
+      return addFindingAsync(caseId, input);
+    });
+
+    const first = await orchestrator.runCaseAsync(caseRecord.id);
+    const [failedTask] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(first.failedTaskIds).toEqual(["rec"]);
+    expect(first.costEstimate).toBeGreaterThan(0);
+    expect(failedTask?.costEstimate).toBeCloseTo(first.costEstimate, 10);
+    expect((await store.cases.getCaseAsync(caseRecord.id))?.usage?.costEstimate).toBeCloseTo(
+      first.costEstimate,
+      10,
+    );
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const draftPrompt = ai.calls.find((call) => call.key === "response-preparation")?.prompt;
+
+    expect(retry.status).toBe("completed");
+    expect(draftPrompt).toContain("Corrected mismatch of Rs. 120");
+    expect(draftPrompt).not.toContain("Old mismatch of Rs. 100");
+  });
+
+  it("passes upstream open questions to downstream tasks", async () => {
+    const { store, ai, orchestrator } = createHarness({
+      "case-analysis": specialistStep({
+        openQuestions: [{ text: "Is Form 16 available?", severity: "high" }],
+      }),
+      reconciliation: specialistStep(),
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "a", role: "case-analysis" },
+      { id: "b", role: "reconciliation", dependsOn: ["a"] },
+    ]);
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const reconciliationPrompt = ai.calls.find((call) => call.key === "reconciliation")?.prompt;
+
+    expect(reconciliationPrompt).toContain("Is Form 16 available?");
   });
 });

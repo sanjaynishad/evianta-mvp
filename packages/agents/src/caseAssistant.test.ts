@@ -1,4 +1,4 @@
-import { createMockAi } from "@evianta/ai";
+import { AiNonTransientError, createMockAi } from "@evianta/ai";
 import { createInMemoryStore } from "@evianta/store";
 import { describe, expect, it } from "vitest";
 
@@ -170,5 +170,70 @@ describe("askCaseAsync", () => {
     expect(unsupported.status).toBe("not-supported");
     expect(unsupported.usage.total).toBeGreaterThan(0);
     expect(invented.status).toBe("not-supported");
+  });
+
+  it("returns not-supported when the provider declines, and rethrows other failures", async () => {
+    const store = await seedRecordAsync();
+    const ai = createMockAi({
+      [CASE_ASSISTANT_KEY]: [
+        {
+          error: new AiNonTransientError("Response blocked", {
+            reason: "blocked",
+            usage: { input: 300, output: 0, total: 300 },
+          }),
+        },
+        { error: "non-transient", message: "Model misconfigured" },
+      ],
+    });
+    const question = { caseId: "case-1", question: "Why is the TDS mismatch 12,400?" };
+
+    const declined = await askCaseAsync(question, { store, ai });
+
+    expect(declined).toMatchObject({
+      status: "not-supported",
+      retrievedFindingIds: ["f-tds"],
+      usage: { input: 300 },
+    });
+    await expect(askCaseAsync(question, { store, ai })).rejects.toThrow(/Model misconfigured/);
+  });
+
+  it("ignores findings left by superseded or unfinished task attempts", async () => {
+    const store = await seedRecordAsync();
+
+    await store.tasks.createTaskAsync({
+      id: "retried",
+      caseId: "case-1",
+      title: "Reconcile again",
+      assignedRole: "reconciliation",
+      status: "completed",
+      attempts: 2,
+    });
+    await store.findings.addFindingAsync("case-1", {
+      id: "f-stale",
+      taskId: "retried",
+      attempt: 1,
+      summary: "TDS mismatch of Rs. 9,999",
+      severity: "high",
+    });
+    await store.findings.addFindingAsync("case-1", {
+      id: "f-current",
+      taskId: "retried",
+      attempt: 2,
+      summary: "TDS mismatch of Rs. 12,400 confirmed",
+      severity: "high",
+    });
+
+    const ai = createMockAi({
+      [CASE_ASSISTANT_KEY]: {
+        output: { supported: false, answer: "", evidenceIds: [], findingIds: [] },
+      },
+    });
+    const result = await askCaseAsync(
+      { caseId: "case-1", question: "What is the TDS mismatch?" },
+      { store, ai },
+    );
+
+    expect(result.retrievedFindingIds).toContain("f-current");
+    expect(result.retrievedFindingIds).not.toContain("f-stale");
   });
 });

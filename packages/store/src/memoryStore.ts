@@ -227,6 +227,24 @@ export function createInMemoryStore(): Store {
 
         return tasks.create(task.caseId, task.id, task);
       },
+      async createTasksAsync(caseId, inputs) {
+        const parsed = inputs.map((input) => taskSchema.parse(input));
+        const seen = new Set<string>();
+
+        for (const task of parsed) {
+          if (task.caseId !== caseId) {
+            throw new Error(`Task "${task.id}" does not belong to case "${caseId}".`);
+          }
+
+          if (seen.has(task.id) || tasks.get(caseId, task.id) !== undefined) {
+            throw new StoreConflictError("task", task.id);
+          }
+
+          seen.add(task.id);
+        }
+
+        return parsed.map((task) => tasks.create(caseId, task.id, task));
+      },
       async getTasksForCaseAsync(caseId) {
         return tasks.list(caseId);
       },

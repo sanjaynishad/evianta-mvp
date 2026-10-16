@@ -469,6 +469,42 @@ export function describeStoreContract(
         expect(await store.tasks.getTasksForCaseAsync("case-2")).toEqual([]);
       });
 
+      it("creates a batch of tasks atomically", async () => {
+        await store.tasks.createTaskAsync({
+          id: "task-existing",
+          caseId: "case-1",
+          title: "Existing",
+          assignedRole: "case-analysis",
+        });
+
+        const created = await store.tasks.createTasksAsync("case-2", [
+          { id: "task-a", caseId: "case-2", title: "A", assignedRole: "case-analysis" },
+          {
+            id: "task-b",
+            caseId: "case-2",
+            title: "B",
+            assignedRole: "reconciliation",
+            dependsOn: ["task-a"],
+          },
+        ]);
+
+        expect(created.map((task) => task.status)).toEqual(["pending", "pending"]);
+        expect((await store.tasks.getTasksForCaseAsync("case-2")).map((task) => task.id)).toEqual([
+          "task-a",
+          "task-b",
+        ]);
+
+        await expect(
+          store.tasks.createTasksAsync("case-1", [
+            { id: "task-new", caseId: "case-1", title: "New", assignedRole: "reconciliation" },
+            { id: "task-existing", caseId: "case-1", title: "Dup", assignedRole: "case-analysis" },
+          ]),
+        ).rejects.toThrow(StoreConflictError);
+        expect((await store.tasks.getTasksForCaseAsync("case-1")).map((task) => task.id)).toEqual([
+          "task-existing",
+        ]);
+      });
+
       it("persists usage, attempts, and errors, and clears the error", async () => {
         await store.tasks.createTaskAsync({
           id: "task-1",

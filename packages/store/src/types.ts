@@ -105,6 +105,8 @@ export interface CaseRepo {
 
 export interface TaskRepo {
   createTaskAsync(task: TaskInput): Promise<Task>;
+  /** Creates every task of one case atomically: all are stored, or none are. */
+  createTasksAsync(caseId: string, tasks: readonly TaskInput[]): Promise<Task[]>;
   getTasksForCaseAsync(caseId: string): Promise<Task[]>;
   updateTaskAsync(caseId: string, taskId: string, update: TaskUpdate): Promise<Task>;
 }

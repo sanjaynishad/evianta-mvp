@@ -1,8 +1,9 @@
-import { emptyUsage, type AiClient, type Cost } from "@evianta/ai";
+import { AiNonTransientError, emptyUsage, type AiClient, type Cost } from "@evianta/ai";
 import type { Evidence, Finding, ModelTier, TokenUsage } from "@evianta/core";
 import type { Store } from "@evianta/store";
 import { z } from "zod";
 
+import { activeFindings } from "./record.js";
 import { countMatchingTerms, truncate, uniqueTerms } from "./text.js";
 
 export const CASE_ASSISTANT_KEY = "case-assistant";
@@ -60,7 +61,7 @@ export interface AskCaseRequest {
 }
 
 export interface AskCaseDependencies {
-  store: Pick<Store, "findings" | "evidence">;
+  store: Pick<Store, "findings" | "evidence" | "tasks">;
   ai: AiClient;
   tier?: ModelTier;
   /** Maximum findings sent to the model. */
@@ -175,10 +176,12 @@ export async function askCaseAsync(
     return notSupported(emptyUsage(), 0, []);
   }
 
-  const [findings, evidence] = await Promise.all([
+  const [storedFindings, evidence, tasks] = await Promise.all([
     store.findings.getFindingsForCaseAsync(request.caseId),
     store.evidence.getEvidenceForCaseAsync(request.caseId),
+    store.tasks.getTasksForCaseAsync(request.caseId),
   ]);
+  const findings = activeFindings(storedFindings, tasks);
   const retrieved = retrieveRelevantFindings(
     question,
     findings,
@@ -223,16 +226,27 @@ export async function askCaseAsync(
         : {}),
     })),
   };
-  const result = await ai.runStructuredAsync({
-    tier,
-    key: CASE_ASSISTANT_KEY,
-    inputSchema: caseAssistantInputSchema,
-    outputSchema: caseAssistantOutputSchema,
-    system: CASE_ASSISTANT_SYSTEM_PROMPT,
-    input,
-    maxOutputTokens: 1024,
-    temperature: 0,
-  });
+  let result;
+
+  try {
+    result = await ai.runStructuredAsync({
+      tier,
+      key: CASE_ASSISTANT_KEY,
+      inputSchema: caseAssistantInputSchema,
+      outputSchema: caseAssistantOutputSchema,
+      system: CASE_ASSISTANT_SYSTEM_PROMPT,
+      input,
+      maxOutputTokens: 1024,
+      temperature: 0,
+    });
+  } catch (error) {
+    if (error instanceof AiNonTransientError && error.reason === "blocked") {
+      return notSupported(error.usage, error.cost, retrievedFindingIds);
+    }
+
+    throw error;
+  }
+
   const output = result.output;
   const answer = output.answer.trim();
 

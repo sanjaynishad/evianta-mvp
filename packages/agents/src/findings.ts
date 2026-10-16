@@ -10,7 +10,9 @@ import {
 import { z } from "zod";
 
 export const evidenceReferenceSchema = z.object({
-  /** Id of an uploaded case document. Either documentId or url is required. */
+  /** Id of evidence on a prior finding, to reuse an already validated source. */
+  evidenceId: z.string().optional(),
+  /** Id of an uploaded case document. */
   documentId: z.string().optional(),
   /** Source URL from grounding citations, for research agents. */
   url: z.string().optional(),

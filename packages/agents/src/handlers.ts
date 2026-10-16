@@ -33,6 +33,15 @@ export interface DependencyResult {
   findings: Finding[];
 }
 
+export interface UpstreamSection {
+  taskId: string;
+  taskTitle: string;
+  role: AgentRole;
+  deliverableId: string;
+  title: string;
+  content: string;
+}
+
 export interface TaskExecutionContext {
   ai: AiClient;
   case: Case;
@@ -44,6 +53,8 @@ export interface TaskExecutionContext {
   dependencies: readonly DependencyResult[];
   /** Findings of every upstream task, direct or transitive, in plan order. */
   upstreamFindings: readonly Finding[];
+  /** Deliverable sections drafted by upstream tasks, in plan order, with reviewer edits applied. */
+  upstreamSections: readonly UpstreamSection[];
   /** Relevant document slices within the task's token budget. */
   documents: readonly DocumentSlice[];
   documentMetadata: readonly DocumentMetadata[];
@@ -137,6 +148,15 @@ export function toPriorFindings(ctx: TaskExecutionContext): PriorFinding[] {
       ...(finding.severity ? { severity: finding.severity } : {}),
       ...(finding.figures ? { figures: finding.figures } : {}),
       ...(finding.dates ? { dates: finding.dates } : {}),
+      ...(finding.openQuestions.length > 0
+        ? {
+            openQuestions: finding.openQuestions.slice(0, 10).map((question) => ({
+              text: truncate(question.text, 400),
+              severity: question.severity,
+              status: question.status,
+            })),
+          }
+        : {}),
       evidence: finding.evidence.slice(0, 5).map((item) => ({
         evidenceId: item.id,
         sourceRef: item.sourceRef,

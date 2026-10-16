@@ -4,6 +4,8 @@ import {
   findingDateSchema,
   findingFigureSchema,
   findingSeveritySchema,
+  openQuestionSeveritySchema,
+  openQuestionStatusSchema,
   useCaseSchema,
   type AgentProfile,
   type AgentRole,
@@ -56,6 +58,15 @@ export const priorFindingSchema = z.object({
   severity: findingSeveritySchema.optional(),
   figures: z.array(findingFigureSchema).optional(),
   dates: z.array(findingDateSchema).optional(),
+  openQuestions: z
+    .array(
+      z.object({
+        text: z.string(),
+        severity: openQuestionSeveritySchema,
+        status: openQuestionStatusSchema,
+      }),
+    )
+    .optional(),
   evidence: z
     .array(
       z.object({
@@ -295,6 +306,7 @@ export function specialistSystemPrompt(role: AgentRole, focus: string, grounding
     `Your focus: ${focus}`,
     "Use only the provided documents, prior findings, and context. Never invent documents, figures, or dates.",
     citation,
+    "To rely on a source already cited by a prior finding, add an evidence entry with its evidenceId.",
     "Every material finding (severity high or medium) needs at least one evidence entry.",
     "Report figures exactly as sourced. When a figure is a total or a difference, list its components (negative values for deductions) so it can be recomputed. Reuse the same figure key for the same quantity across findings.",
     "Record dates as ISO yyyy-mm-dd with a stable key.",

@@ -1,5 +1,6 @@
 import {
   agentProfileSchema,
+  agentRoleSchema,
   openQuestionSeveritySchema,
   useCaseSchema,
   type FindingSeverity,
@@ -20,12 +21,15 @@ import {
   type TaskHandler,
   type TaskOutput,
 } from "../handlers.js";
+import { truncate } from "../text.js";
 import {
   runDeterministicChecks,
   type DeterministicCheckOptions,
   type VerificationReport,
 } from "../verification.js";
 import { priorFindingSchema } from "./specialist.js";
+
+export const MAX_REVIEW_SECTION_CHARS = 4000;
 
 export const reviewInputSchema = z.object({
   case: z.object({
@@ -35,6 +39,16 @@ export const reviewInputSchema = z.object({
   }),
   task: z.object({ title: z.string(), instructions: z.string().optional() }),
   findings: z.array(priorFindingSchema),
+  sections: z
+    .array(
+      z.object({
+        taskTitle: z.string(),
+        role: agentRoleSchema,
+        title: z.string(),
+        content: z.string(),
+      }),
+    )
+    .default([]),
   deterministicChecks: z.object({
     passed: z.boolean(),
     issues: z.array(
@@ -78,6 +92,7 @@ export const REVIEWER_SYSTEM_PROMPT = [
   "You are the independent reviewer in a professional workspace. The work is prepared for human approval.",
   "Deterministic checks have already verified arithmetic, evidence presence, and figure and date consistency; their results are in deterministicChecks. Do not repeat or recompute them.",
   "Review only what they cannot: narrative soundness, missing requirements, unsupported or overstated claims, and risky wording.",
+  "The drafted deliverable sections are in sections; review their wording and claims against the findings.",
   "Return findings only for review observations, citing evidence by documentId when a finding relies on a source.",
   "Put every unresolved item in openQuestions with a severity (high when it could change the outcome).",
   "Return a short section summarizing the review for the deliverable.",
@@ -152,6 +167,12 @@ export function createReviewTaskHandler(options: ReviewTaskHandlerOptions = {}):
           ...(ctx.task.instructions ? { instructions: ctx.task.instructions } : {}),
         },
         findings: toPriorFindings(ctx),
+        sections: ctx.upstreamSections.map((section) => ({
+          taskTitle: section.taskTitle,
+          role: section.role,
+          title: section.title,
+          content: truncate(section.content, MAX_REVIEW_SECTION_CHARS),
+        })),
         deterministicChecks: {
           passed: report.passed,
           issues: report.issues.map(({ check, severity, message }) => ({

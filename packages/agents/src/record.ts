@@ -25,8 +25,12 @@ import type { TaskOutput } from "./handlers.js";
 export interface RecordContext {
   caseId: string;
   task: Task;
+  /** Attempt that produced the output; stored on each finding. */
+  attempt?: number;
   documentsById: ReadonlyMap<string, DocumentMetadata>;
   extractionsById: ReadonlyMap<string, ExtractedDocument | undefined>;
+  /** Evidence already validated on upstream findings, which references may reuse. */
+  upstreamEvidence?: readonly Evidence[];
   newId: () => string;
 }
 
@@ -133,6 +137,20 @@ export function toEvidence(
 ): Evidence | DroppedEvidence {
   const location = locationOf(reference);
 
+  if (reference.evidenceId) {
+    const upstream = ctx.upstreamEvidence?.find((item) => item.id === reference.evidenceId);
+
+    if (!upstream) {
+      return { reference, reason: `Unknown evidence "${reference.evidenceId}".` };
+    }
+
+    return {
+      ...upstream,
+      id: ctx.newId(),
+      description: reference.description || upstream.description,
+    };
+  }
+
   if (reference.documentId) {
     const metadata = ctx.documentsById.get(reference.documentId);
 
@@ -149,7 +167,7 @@ export function toEvidence(
       ...(location?.textQuote ? { excerpt: location.textQuote } : {}),
       documentId: metadata.id,
       ...(location ? { location } : {}),
-      confidence: reference.confidence ?? documentConfidence(extraction, location?.page),
+      confidence: documentConfidence(extraction, location?.page),
     };
   }
 
@@ -157,7 +175,24 @@ export function toEvidence(
     const citation = citations.find((item) => item.url === reference.url);
 
     if (!citation) {
-      return { reference, reason: `URL "${reference.url}" is not among the grounding citations.` };
+      const upstream = ctx.upstreamEvidence?.find(
+        (item) => !item.documentId && item.sourceRef === reference.url,
+      );
+
+      if (upstream) {
+        return {
+          ...upstream,
+          id: ctx.newId(),
+          description: reference.description || upstream.description,
+          ...(location ? { location } : {}),
+          ...(location?.textQuote ? { excerpt: location.textQuote } : {}),
+        };
+      }
+
+      return {
+        reference,
+        reason: `URL "${reference.url}" is not among the grounding citations or upstream evidence.`,
+      };
     }
 
     const excerpt = location?.textQuote ?? (citation.snippet || undefined);
@@ -172,7 +207,7 @@ export function toEvidence(
     };
   }
 
-  return { reference, reason: "Evidence reference has neither a documentId nor a url." };
+  return { reference, reason: "Evidence reference has no evidenceId, documentId, or url." };
 }
 
 function isDropped(value: Evidence | DroppedEvidence): value is DroppedEvidence {
@@ -211,6 +246,24 @@ export function renderFindingsMarkdown(findings: readonly Finding[]): string {
 
 export function sectionIdFor(taskId: string, index: number): string {
   return `${taskId}-section-${index + 1}`;
+}
+
+/**
+ * Keeps findings from each task's latest completed attempt, dropping output left by superseded or
+ * unfinished attempts. Findings without an attempt, such as coordinator notes, are always kept.
+ */
+export function activeFindings(findings: readonly Finding[], tasks: readonly Task[]): Finding[] {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+
+  return findings.filter((finding) => {
+    if (finding.attempt === undefined) {
+      return true;
+    }
+
+    const task = tasksById.get(finding.taskId);
+
+    return task?.status === "completed" && task.attempts === finding.attempt;
+  });
 }
 
 /** Turns a handler's output into persisted-shape findings, evidence, and deliverable sections. */
@@ -252,6 +305,7 @@ export function buildTaskRecord(
       openQuestions: toOpenQuestions(parsed.openQuestions, ctx.newId),
       ...(parsed.figures ? { figures: parsed.figures } : {}),
       ...(parsed.dates ? { dates: parsed.dates } : {}),
+      ...(ctx.attempt !== undefined ? { attempt: ctx.attempt } : {}),
     };
   });
   const agentFindingCount = findings.length;
@@ -267,6 +321,7 @@ export function buildTaskRecord(
       evidence: [],
       assumptions: [],
       openQuestions: toOpenQuestions(taskQuestions, ctx.newId),
+      ...(ctx.attempt !== undefined ? { attempt: ctx.attempt } : {}),
     });
   }
 
