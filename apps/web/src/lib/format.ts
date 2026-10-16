@@ -64,6 +64,17 @@ export function formatPercent(ratio: number, maximumFractionDigits = 1): string 
   }).format(ratio);
 }
 
+// Model cost is estimated in US dollars and is often a fraction of a cent.
+export function formatUsd(amount: number): string {
+  const magnitude = Math.abs(amount);
+  return new Intl.NumberFormat(locale, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: magnitude > 0 && magnitude < 1 ? 4 : 2,
+  }).format(amount);
+}
+
 export type DateInput = Date | string | number;
 
 function toDate(value: DateInput): Date {

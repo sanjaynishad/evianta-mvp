@@ -35,6 +35,7 @@ packages/
 - Scope to one package: `pnpm --filter @evianta/core test`
 - `pnpm test:emulators` runs the `*.emulator.test.ts` suites against the Firestore and Storage emulators (needs Java 21; uses the `demo-evianta` project, so no cloud resources are touched)
 - Run the web app locally: `pnpm --filter @evianta/web dev`, then open `/design` for the component gallery
+- Build the web image from the repo root: `docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_EVIANTA_API_URL=<api url> -t evianta-web .`
 
 ## Configuration
 
@@ -45,6 +46,8 @@ AI token prices live in [pricing.ts](packages/ai/src/pricing.ts). Costs are calc
 Orchestration holds a store-backed per-case lease, renewed every 20 seconds and expiring after 60 seconds if the worker stops. Planning and task-attempt charges are journaled before their work is marked complete. Runs reconcile unapplied charges into case totals atomically and idempotently, including on resume. `retryFailedAsync` can finish accounting for completed work without calling the agents again.
 
 The store reads `GCS_BUCKET` for uploaded file bytes. `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.
+
+The web app talks to `apps/api` at `NEXT_PUBLIC_EVIANTA_API_URL`. When it is unset, the web app runs on built-in fixtures (labeled in the UI) so every page works without the API. The web server also reads `EVIANTA_USAGE_VIEW_PATH` at request time and serves the usage view at `/<path>` (noindex, 404 for any other path).
 
 ## Document ingestion
 

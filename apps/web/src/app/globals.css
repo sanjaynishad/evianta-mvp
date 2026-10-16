@@ -226,3 +226,19 @@
     font-feature-settings: "tnum" 1;
   }
 }
+
+@media print {
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  html,
+  body {
+    background: #ffffff;
+    color: #111111;
+  }
+
+  main {
+    overflow: visible;
+  }
+}

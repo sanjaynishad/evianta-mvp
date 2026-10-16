@@ -18,7 +18,7 @@ export function AppShell({ children, caseContext, className }: AppShellProps) {
       >
         Skip to content
       </a>
-      <aside className="sticky top-0 hidden h-dvh w-16 shrink-0 border-r border-sidebar-border bg-sidebar md:block lg:w-56">
+      <aside className="sticky top-0 hidden h-dvh w-16 shrink-0 border-r border-sidebar-border bg-sidebar md:block lg:w-56 print:hidden">
         <SidebarNav />
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
