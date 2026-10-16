@@ -1,0 +1,36 @@
+{
+  "name": "@evianta/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@evianta/ai": "workspace:*",
+    "@evianta/core": "workspace:*",
+    "@evianta/store": "workspace:*",
+    "papaparse": "^5.5.3",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.4.299",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@evianta/config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@types/papaparse": "^5.5.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

@@ -30,12 +30,14 @@
 - `packages/ai` - Genkit initialization and Gemini/Gemma provider selection.
 - `packages/agents` - coordinator, specialist, and verification agent definitions.
 - `packages/store` - Firestore and document-storage data access.
+- `packages/ingest` - document ingestion: spreadsheet parsing, PDF text layers, and OCR fallback into `ExtractedDocument`.
 
 Where new code goes:
 
 - Shared types and schemas belong in `packages/core`; depend on it instead of redefining shapes.
 - Agent and orchestration logic belongs in `packages/agents`; model access goes through `packages/ai`.
 - Persistence belongs in `packages/store`; do not call Firestore directly from apps.
+- File parsing and text extraction belong in `packages/ingest`; agents consume its cached `ExtractedDocument` instead of raw bytes.
 - Read environment variables only through `packages/env`; do not use `process.env` elsewhere.
 - Workspace packages are named `@evianta/<name>` and reference each other with `workspace:*`.
 

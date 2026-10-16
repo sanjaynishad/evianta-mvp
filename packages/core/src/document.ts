@@ -70,6 +70,8 @@ export const extractedTableSchema = z.object({
   name: z.string(),
   sheet: z.string().optional(),
   pageIndex: z.number().int().positive().optional(),
+  // A1 range of the header row and data rows in the source sheet, for example "B3:F20".
+  range: z.string().optional(),
   columns: z.array(tableColumnSchema),
   // Each row holds one cell per column, in column order.
   rows: z.array(z.array(tableCellSchema)),
