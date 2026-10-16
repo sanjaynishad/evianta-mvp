@@ -23,7 +23,7 @@ const NUMERIC_TEXT = new RegExp(
   "i",
 );
 // Codes may touch the digits (`USD100`, `100inr`) but not other letters.
-const INR_MARKER = /₹|(?<![a-z])rs\.?(?=\s|\d|$)|(?<![a-z])inr(?![a-z])/i;
+const INR_MARKER = /₹|(?<![a-z])rs(?![a-z])|(?<![a-z])inr(?![a-z])/i;
 const CURRENCY_MARKERS: ReadonlyArray<[CurrencyCode, RegExp]> = [
   ["INR", INR_MARKER],
   ["USD", /\$|(?<![a-z])usd(?![a-z])/i],

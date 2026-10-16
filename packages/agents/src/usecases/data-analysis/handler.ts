@@ -389,7 +389,7 @@ function figureFor(analysis: DataAnalysis, id: string): FindingFigure | undefine
       : metric.unit === "currency"
         ? analysis.currency
         : metric.unit === "count"
-          ? "rows"
+          ? metric.countOf
           : undefined;
 
   return { key: metric.id, label: metric.label, value: metric.value, ...(unit ? { unit } : {}) };
@@ -728,13 +728,22 @@ export function buildDataAnalystTaskOutput(
           severity: question.severity,
         }))),
   ].sort((left, right) => SEVERITY_ORDER[left.severity] - SEVERITY_ORDER[right.severity]);
-  const trendIndexes = built.trend === undefined ? [] : [built.trend];
+  // Without a trend finding, monthly figures rest on the overview's amount and date evidence.
+  const trendIndexes = built.trend === undefined ? [built.overview] : [built.trend];
   const sections: TaskSectionDraft[] = [
     {
       title: "Summary",
       kind: "text",
       content: summary.text,
-      findingIndexes: [built.overview, ...trendIndexes, ...insightIndexes],
+      findingIndexes: [
+        ...new Set([
+          built.overview,
+          ...trendIndexes,
+          ...segmentIndexes,
+          ...built.anomalies,
+          ...insightIndexes,
+        ]),
+      ],
     },
     {
       title: "Key metrics",

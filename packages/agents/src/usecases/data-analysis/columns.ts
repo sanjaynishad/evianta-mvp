@@ -182,7 +182,8 @@ export function selectRoles(columns: readonly ColumnProfile[]): DatasetRoles {
   const amount =
     namedAmount ?? (unnamedMeasure ? { ...unnamedMeasure, role: "amount" as const } : undefined);
   const categories = byRole("category")
-    .filter((column) => column.distinct >= 2)
+    // Blank values form their own Unassigned segment, so they count toward the two needed.
+    .filter((column) => column.distinct + (column.missing > 0 ? 1 : 0) >= 2)
     .sort((left, right) => {
       const leftNamed = CATEGORY_NAME.test(normalizedName(left.name)) ? 0 : 1;
       const rightNamed = CATEGORY_NAME.test(normalizedName(right.name)) ? 0 : 1;

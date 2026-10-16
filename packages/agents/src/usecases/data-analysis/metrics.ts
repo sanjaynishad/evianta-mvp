@@ -20,6 +20,8 @@ export interface Metric {
   label: string;
   value: number;
   unit: MetricUnit;
+  /** What a count counts, for example "rows" or "months". */
+  countOf?: string;
   /** How the value was computed, in plain words. */
   basis: string;
 }
@@ -182,6 +184,7 @@ export function computeSalesMetrics(
       label: "Rows analyzed",
       value: records.length,
       unit: "count",
+      countOf: "rows",
       basis: "Non-blank data rows, counting exact repeats once",
     },
     true,
@@ -192,6 +195,7 @@ export function computeSalesMetrics(
       label: `Rows with a numeric ${columns.amount}`,
       value: withAmount.length,
       unit: "count",
+      countOf: "rows",
       basis: `Rows whose ${columns.amount} is a number`,
     },
     true,
@@ -276,6 +280,7 @@ export function computeSalesMetrics(
         label: "Months covered",
         value: periods.length,
         unit: "count",
+        countOf: "months",
         basis: `Calendar months from ${periods[0]?.period} to ${periods[periods.length - 1]?.period}`,
       },
       true,
@@ -304,8 +309,12 @@ export function computeSalesMetrics(
             },
             true,
           );
-    const changes = periods
-      .map((period) => period.changePct)
+    // Averaged from unrounded ratios so the mean is rounded only once.
+    const changes = months
+      .slice(1)
+      .map((month, index) =>
+        percentChange((months[index] as MonthlyTotal).exactTotal, month.exactTotal),
+      )
       .filter((value): value is number => value !== undefined);
     const averageChangeMetricId =
       changes.length === 0

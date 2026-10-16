@@ -420,6 +420,57 @@ describe("analyzeTable", () => {
       ],
     );
   });
+  it("keeps a huge invalid cell out of issue messages", async () => {
+    const huge = "x".repeat(600);
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "big.csv",
+      table: await csvTableAsync(`Amount\n10\n20\n30\n${huge}`),
+    });
+    const mismatch = analysis.issues.find((item) => item.kind === "type-mismatch");
+
+    expect(mismatch?.examples[0]).toHaveLength(40);
+    expect(mismatch?.message.length).toBeLessThan(200);
+    expect(mismatch?.question.length).toBeLessThan(200);
+  });
+
+  it("reads a parenthesized Rs header as INR", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "rs.csv",
+      table: await csvTableAsync("Amount (Rs.)\n100\n$200\n50"),
+    });
+
+    expect(analysis.currency).toBe("INR");
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.find((item) => item.kind === "mixed-currencies")?.rows).toEqual([1]);
+  });
+
+  it("keeps a category whose only other value is blank", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "regions.csv",
+      table: await csvTableAsync("Region,Amount\nNorth,100\n,50"),
+    });
+
+    expect(analysis.segments[0]?.segments.map((segment) => [segment.label, segment.total])).toEqual(
+      [
+        ["North", 100],
+        ["Unassigned", 50],
+      ],
+    );
+    expect(analysis.issues.map((item) => item.id)).toEqual(["dq-missing-values-region"]);
+  });
+
+  it("averages month-over-month changes from unrounded ratios", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "steady.csv",
+      table: await csvTableAsync("Date,Amount\n2024-01-01,800\n2024-02-01,801\n2024-03-01,802"),
+    });
+
+    expect(metricValue(analysis, "average-monthly-change-pct")).toBe(0.12);
+  });
   it("fails clearly when a table has no amount column", async () => {
     const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");
 

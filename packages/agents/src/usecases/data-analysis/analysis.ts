@@ -266,6 +266,7 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
       label: `Rows flagged: ${DATA_QUALITY_KIND_LABELS[issue.kind].toLowerCase()}${issue.column ? ` in ${issue.column}` : ""}`,
       value: issue.rows.length,
       unit: "count",
+      countOf: "rows",
       basis: `Rows flagged by the ${issue.kind} check`,
     }),
   }));

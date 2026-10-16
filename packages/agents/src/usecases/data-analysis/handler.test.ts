@@ -372,6 +372,51 @@ describe("insight evidence", () => {
   });
 });
 
+describe("section links", () => {
+  async function outputFor(csv: string, summary: string) {
+    const buffer = new TextEncoder().encode(csv);
+    const extraction = await extractFixtureAsync(
+      buffer,
+      fixtureMetadata("doc", "data.csv", CSV_MIME, buffer.byteLength),
+    );
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "data.csv",
+      table: extraction.tables[0] as ExtractedTable,
+    });
+
+    return buildDataAnalystTaskOutput(analysis, dataAnalystOutputSchema.parse({ summary }), {
+      usage: { input: 10, output: 5, total: 15 },
+      cost: 0,
+    });
+  }
+
+  it("links the summary to segment findings so shares keep their category evidence", async () => {
+    const output = await outputFor(
+      "Region,Amount\nNorth,10\nSouth,30\nSouth,20",
+      "South holds {{segment-region-south-share-pct}}.",
+    );
+    const segment = output.findings.findIndex((finding) => finding.summary.startsWith("Region"));
+    const summary = output.sections?.find((section) => section.title === "Summary");
+
+    expect(segment).toBeGreaterThan(0);
+    expect(summary?.findingIndexes).toContain(segment);
+    expect(output.findings[segment]?.evidence?.map((item) => item.cellRange)).toEqual([
+      "A2:A4",
+      "B2:B4",
+    ]);
+  });
+
+  it("links the trends section to the overview when there is a single month", async () => {
+    const output = await outputFor("Date,Amount\n2024-01-05,10\n2024-01-09,20", "Sales.");
+    const trends = output.sections?.find((section) => section.title === "Trends");
+    const overview = output.findings[0];
+
+    expect(trends?.findingIndexes).toEqual([0]);
+    expect(overview?.figures?.find((figure) => figure.key === "period-count")?.unit).toBe("months");
+    expect(overview?.figures?.find((figure) => figure.key === "rows-analyzed")?.unit).toBe("rows");
+  });
+});
 describe("data analyst registration", () => {
   it("is the default handler and agent for the business-data-analyst role", () => {
     const registry = createAgentRegistry();

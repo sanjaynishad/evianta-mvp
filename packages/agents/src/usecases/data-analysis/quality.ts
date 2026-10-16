@@ -57,6 +57,7 @@ export const MAX_PLAUSIBLE_YEAR = 2100;
 export const MAX_DAYS_FROM_MEDIAN_DATE = 5 * 366;
 
 const MAX_EXAMPLES = 3;
+export const MAX_EXAMPLE_CHARS = 40;
 const DAY_MS = 86_400_000;
 
 export interface DataQualityInput {
@@ -79,8 +80,13 @@ function agree(count: number, singular: string, pluralForm: string): string {
   return count === 1 ? singular : pluralForm;
 }
 
+/** Keeps a cell quoted in a message short, so one huge cell cannot bloat findings or prompts. */
+export function shortExample(value: string): string {
+  return value.length > MAX_EXAMPLE_CHARS ? `${value.slice(0, MAX_EXAMPLE_CHARS - 3)}...` : value;
+}
+
 function quoted(values: readonly string[]): string {
-  return values.map((value) => `"${value}"`).join(", ");
+  return values.map((value) => `"${shortExample(value)}"`).join(", ");
 }
 
 function dayNumber(date: ParsedDate): number {
@@ -167,7 +173,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
       id: allocateId(
         issue.column ? `dq-${issue.kind}-${slugify(issue.column)}` : `dq-${issue.kind}`,
       ),
-      examples: (issue.examples ?? []).slice(0, MAX_EXAMPLES),
+      examples: (issue.examples ?? []).slice(0, MAX_EXAMPLES).map(shortExample),
       locations: rowLocations(table, issue.rows, issue.columnIndex),
     });
   };
