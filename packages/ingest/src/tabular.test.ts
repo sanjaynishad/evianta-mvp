@@ -29,6 +29,16 @@ describe("resolveColumn", () => {
     expect(resolveColumn(["1234567890123456789"].map(text), "dmy").type).toBe("string");
   });
 
+  it.each(["9,007,199,254,740,993", "-9,007,199,254,740,993", "0,012", "+0,012"])(
+    "preserves grouped identifier %s exactly",
+    (value) => {
+      expect(resolveColumn([text(value)], "dmy")).toEqual({
+        type: "string",
+        cells: [value],
+      });
+    },
+  );
+
   it("infers booleans and keeps empty cells as null", () => {
     expect(resolveColumn([text("TRUE"), text(" "), text("false")], "dmy")).toEqual({
       type: "boolean",

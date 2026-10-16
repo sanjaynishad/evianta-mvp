@@ -89,23 +89,25 @@ function monthFromName(name: string): number | undefined {
 }
 
 function parseNumber(text: string): number | undefined {
-  if (LEADING_ZERO.test(text)) {
-    return undefined;
-  }
-
   const plain = PLAIN_NUMBER.test(text);
 
   if (!plain && !GROUPED_NUMBER.test(text)) {
     return undefined;
   }
 
-  const digits = text.replace(/[^0-9]/g, "").replace(/^0+/, "");
+  const normalized = text.replace(/,/g, "");
 
-  if (plain && !/[.eE]/.test(text) && digits.length > MAX_SAFE_DIGITS) {
+  if (LEADING_ZERO.test(normalized)) {
     return undefined;
   }
 
-  const value = Number(text.replace(/,/g, ""));
+  const digits = normalized.replace(/[^0-9]/g, "").replace(/^0+/, "");
+
+  if (!/[.eE]/.test(normalized) && digits.length > MAX_SAFE_DIGITS) {
+    return undefined;
+  }
+
+  const value = Number(normalized);
 
   return Number.isFinite(value) ? value : undefined;
 }

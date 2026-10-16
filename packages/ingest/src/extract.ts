@@ -21,7 +21,7 @@ import {
 } from "@evianta/ai";
 
 import { detectDocumentFormat } from "./detect.js";
-import { DocumentExtractionError } from "./errors.js";
+import { DocumentExtractionError, OcrExtractionError } from "./errors.js";
 import {
   createPdfPageSplitterAsync,
   MIN_TEXT_LAYER_CHARS,
@@ -301,9 +301,15 @@ function buildOutcome(
     .sort((left, right) => left.index - right.index);
   const pageUsage = results.flatMap((result) => (result.usage ? [result.usage] : []));
   const failed = results.filter((result) => result.error !== undefined);
+  const usage = pageUsage.reduce((total, entry) => addUsage(total, entry.usage), emptyUsage());
+  const cost = roundCost(pageUsage.reduce((total, entry) => total + entry.cost, 0));
 
   if (pages.length > 0 && failed.length === pages.length) {
-    throw failed[0]?.error;
+    throw new OcrExtractionError(
+      metadata.id,
+      { usage, cost, pageUsage },
+      failed.map((result) => result.error),
+    );
   }
 
   const extraction = extractedDocumentSchema.parse({
@@ -318,8 +324,8 @@ function buildOutcome(
 
   return {
     extraction,
-    usage: pageUsage.reduce((total, entry) => addUsage(total, entry.usage), emptyUsage()),
-    cost: roundCost(pageUsage.reduce((total, entry) => total + entry.cost, 0)),
+    usage,
+    cost,
     pageUsage,
     failedPages: failed.map((result) => result.page.index),
   };

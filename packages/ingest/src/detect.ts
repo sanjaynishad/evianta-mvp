@@ -19,8 +19,6 @@ export const SUPPORTED_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
-  "image/tiff",
-  "image/gif",
 ] as const;
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -113,6 +111,14 @@ export function detectDocumentFormat(
   }
 
   if (sniffed?.startsWith("image/")) {
+    if (sniffed === "image/tiff" || sniffed === "image/gif") {
+      throw new UnsupportedDocumentTypeError(
+        sniffed,
+        metadata.name,
+        "Convert TIFF or GIF to PNG, JPEG, WEBP, or a PDF preserving all pages before uploading.",
+      );
+    }
+
     return { format: "image", mimeType: sniffed };
   }
 

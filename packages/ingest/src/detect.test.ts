@@ -20,12 +20,6 @@ describe("detectDocumentFormat", () => {
         mimeType: "image/jpg",
       }).mimeType,
     ).toBe("image/jpeg");
-    expect(
-      detectDocumentFormat(Buffer.from("II*\u0000rest", "latin1"), {
-        name: "fax.tif",
-        mimeType: "",
-      }).mimeType,
-    ).toBe("image/tiff");
   });
 
   it("detects delimited text from the MIME type or extension", () => {
@@ -75,4 +69,16 @@ describe("detectDocumentFormat", () => {
       expect(() => detectDocumentFormat(buffer, metadata)).toThrow(UnsupportedDocumentTypeError);
     }
   });
+
+  it.each(["II*\u0000rest", "MM\u0000*rest", "GIF87a", "GIF89a"])(
+    "rejects unsupported image magic %j even when declared as CSV",
+    (header) => {
+      expect(() =>
+        detectDocumentFormat(Buffer.from(header, "latin1"), {
+          name: "data.csv",
+          mimeType: "text/csv",
+        }),
+      ).toThrow(UnsupportedDocumentTypeError);
+    },
+  );
 });

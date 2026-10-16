@@ -1,6 +1,12 @@
-import { createMockAi, IMAGE_EXTRACTION_KEY, mockImageExtractionStep } from "@evianta/ai";
+import {
+  AiOutputValidationError,
+  AiTransientError,
+  createMockAi,
+  IMAGE_EXTRACTION_KEY,
+  mockImageExtractionStep,
+} from "@evianta/ai";
 import { PDFDocument } from "pdf-lib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createPdfAsync,
@@ -8,7 +14,11 @@ import {
   createWorkbook,
   documentMetadata,
 } from "./__fixtures__/fixtures.js";
-import { DocumentExtractionError, UnsupportedDocumentTypeError } from "./errors.js";
+import {
+  DocumentExtractionError,
+  OcrExtractionError,
+  UnsupportedDocumentTypeError,
+} from "./errors.js";
 import {
   createGeminiExtractor,
   DEFAULT_OCR_MAX_OUTPUT_TOKENS,
@@ -412,6 +422,50 @@ describe("extractDocumentAsync: OCR paths", () => {
     ).rejects.toThrow(/Mock non-transient failure/);
   });
 
+  it("retains total spend and original failure classifications when all pages fail", async () => {
+    const errors = [
+      new AiOutputValidationError("Invalid output", ["Missing text"], "{}", {
+        usage: { input: 100, output: 20, total: 120 },
+        cost: 0.001,
+        attempts: 1,
+      }),
+      new AiTransientError("Unavailable", {
+        usage: { input: 200, output: 30, total: 230 },
+        cost: 0.002,
+        attempts: 2,
+      }),
+    ];
+    const ai = {
+      extractFromImageAsync: vi
+        .fn()
+        .mockRejectedValueOnce(errors[0])
+        .mockRejectedValueOnce(errors[1]),
+    };
+    const pdf = await createPdfAsync([{ image: true }, { image: true }]);
+    const error = await extractDocumentAsync(
+      pdf,
+      documentMetadata({ name: "scanned.pdf", mimeType: "application/pdf" }),
+      { ai },
+    ).catch((failure: unknown) => failure);
+
+    expect(error).toBeInstanceOf(OcrExtractionError);
+
+    if (!(error instanceof OcrExtractionError)) {
+      throw new Error("Expected OcrExtractionError");
+    }
+
+    expect(error.documentId).toBe("doc-1");
+    expect(error.usage).toEqual({ input: 300, output: 50, total: 350 });
+    expect(error.cost).toBe(0.003);
+    expect(error.pageUsage).toEqual([
+      expect.objectContaining({ pageIndex: 1, attempts: 1, failed: true, cost: 0.001 }),
+      expect.objectContaining({ pageIndex: 2, attempts: 2, failed: true, cost: 0.002 }),
+    ]);
+    expect(error.errors[0]).toBe(errors[0]);
+    expect(error.errors[1]).toBe(errors[1]);
+    expect(error.cause).toBeInstanceOf(AggregateError);
+  });
+
   it("skips OCR past the page limit and reports partial pages", async () => {
     const ai = createMockAi({ [IMAGE_EXTRACTION_KEY]: scannedPageStep() });
     const pdf = await createPdfAsync([{ text: NOTICE_LINES }, { image: true }]);
@@ -431,6 +485,22 @@ describe("extractDocumentAsync: OCR paths", () => {
 });
 
 describe("extractDocumentAsync: errors", () => {
+  it.each(["II*\u0000rest", "MM\u0000*rest", "GIF87a", "GIF89a"])(
+    "rejects TIFF and GIF before any model call (%j)",
+    async (header) => {
+      const ai = createMockAi();
+
+      await expect(
+        extractDocumentAsync(
+          Buffer.from(header, "latin1"),
+          documentMetadata({ name: "scan.png", mimeType: "image/png" }),
+          { ai },
+        ),
+      ).rejects.toBeInstanceOf(UnsupportedDocumentTypeError);
+      expect(ai.calls).toEqual([]);
+    },
+  );
+
   it("rejects unsupported types before any model call", async () => {
     const ai = createMockAi({ [IMAGE_EXTRACTION_KEY]: scannedPageStep() });
 

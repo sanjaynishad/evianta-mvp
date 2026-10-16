@@ -11,6 +11,7 @@ export interface TabularParseResult {
 
 const EMPTY_CELL: RawCell = { kind: "empty" };
 const MAX_PARSE_WARNINGS = 5;
+const MAX_WORKBOOK_CELL_SLOTS = 1_000_000;
 
 export function decodeText(buffer: Uint8Array): { text: string; warning?: string } {
   try {
@@ -112,7 +113,15 @@ function toRawCell(cell: CellObject | undefined, date1904: boolean): RawCell {
       const value = Number(cell.v);
       const iso = isDateFormat(cell.z) ? dateCodeToIso(value, date1904) : undefined;
 
-      return iso ? { kind: "date", iso, text } : { kind: "number", value, text };
+      if (iso) {
+        return { kind: "date", iso, text };
+      }
+
+      if (/^[+-]?0\d/.test(text.trim())) {
+        return { kind: "string", text };
+      }
+
+      return { kind: "number", value, text };
     }
 
     case "b":
@@ -132,7 +141,7 @@ function toRawCell(cell: CellObject | undefined, date1904: boolean): RawCell {
   }
 }
 
-function sheetGrid(sheet: WorkSheet, date1904: boolean) {
+function sheetGrid(sheet: WorkSheet, date1904: boolean, remainingCellSlots: number) {
   const cells = new Map<string, { row: number; column: number; cell: CellObject }>();
   let minRow = Number.POSITIVE_INFINITY;
   let minColumn = Number.POSITIVE_INFINITY;
@@ -157,6 +166,14 @@ function sheetGrid(sheet: WorkSheet, date1904: boolean) {
     return undefined;
   }
 
+  const cellSlots = (maxRow - minRow + 1) * (maxColumn - minColumn + 1);
+
+  if (!Number.isSafeInteger(cellSlots) || cellSlots > remainingCellSlots) {
+    throw new RangeError(
+      `Workbook exceeds the ${MAX_WORKBOOK_CELL_SLOTS.toLocaleString("en-US")}-cell expanded grid limit.`,
+    );
+  }
+
   const grid: RawCell[][] = Array.from({ length: maxRow - minRow + 1 }, () =>
     new Array<RawCell>(maxColumn - minColumn + 1).fill(EMPTY_CELL),
   );
@@ -169,7 +186,7 @@ function sheetGrid(sheet: WorkSheet, date1904: boolean) {
     }
   }
 
-  return { grid, origin: { row: minRow, column: minColumn } };
+  return { grid, origin: { row: minRow, column: minColumn }, cellSlots };
 }
 
 export function parseWorkbook(
@@ -180,10 +197,14 @@ export function parseWorkbook(
   const date1904 = Boolean(workbook.Workbook?.WBProps?.date1904);
   const tables: ExtractedTable[] = [];
   const warnings: string[] = [];
+  let remainingCellSlots = MAX_WORKBOOK_CELL_SLOTS;
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
-    const parsed = sheet ? sheetGrid(sheet, date1904) : undefined;
+    const parsed = sheet ? sheetGrid(sheet, date1904, remainingCellSlots) : undefined;
+
+    remainingCellSlots -= parsed?.cellSlots ?? 0;
+
     const table = parsed
       ? buildTable(parsed.grid, {
           name: sheetName,

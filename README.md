@@ -26,6 +26,7 @@ packages/
   ai/      model tiers, structured runs, grounding, cost accounting, and a mock provider
   agents/  coordinator, specialist, and verification agents
   store/   Firestore repositories and Cloud Storage document store
+  ingest/  spreadsheet parsing, PDF text extraction, and per-page OCR
 ```
 
 ## Common commands
@@ -42,3 +43,9 @@ Copy `.env.example` to `.env` and set values. `EVIANTA_AI_PROVIDER` selects `goo
 AI token prices live in [pricing.ts](packages/ai/src/pricing.ts). Costs are calculated per attempt, including failed attempts, then summed across retries. High-tier attempts with more than 200,000 input tokens use $2.50 per million input tokens and $15 per million output tokens, including thinking tokens. `estimateCost` accepts usage for a single attempt, not combined retry usage. Grounding request fees are not included.
 
 The store reads `GCS_BUCKET` for uploaded file bytes. `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.
+
+## Document ingestion
+
+`@evianta/ingest` accepts CSV, TSV, XLSX, XLS, PDF, PNG, JPEG, and WEBP. Convert TIFF and GIF before uploading, preserving multi-page documents as PDFs. Workbooks are limited to 1,000,000 expanded cell slots across all sheets, including gaps between populated cells; larger workbooks fail with a `DocumentExtractionError`.
+
+If every OCR page fails, `OcrExtractionError` exposes aggregate `usage`, `cost`, and `pageUsage`. Its `errors` array and `AggregateError` cause retain the original page failures, including their AI error types and retry classification. Partial OCR failures remain in the returned outcome and are not cached.

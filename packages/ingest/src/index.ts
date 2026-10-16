@@ -4,7 +4,11 @@ export {
   type DetectedFormat,
   type DocumentFormat,
 } from "./detect.js";
-export { DocumentExtractionError, UnsupportedDocumentTypeError } from "./errors.js";
+export {
+  DocumentExtractionError,
+  OcrExtractionError,
+  UnsupportedDocumentTypeError,
+} from "./errors.js";
 export {
   createGeminiExtractor,
   DEFAULT_MAX_OCR_PAGES,
