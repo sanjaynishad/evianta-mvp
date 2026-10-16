@@ -1,0 +1,228 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root,
+  .light {
+    --background: 0 0% 100%;
+    --foreground: 220 26% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 26% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 26% 14%;
+    --muted: 216 24% 96%;
+    --muted-foreground: 218 12% 40%;
+    --border: 216 20% 89%;
+    --input: 216 12% 58%;
+    --ring: 182 72% 28%;
+
+    --primary: 182 72% 26%;
+    --primary-foreground: 0 0% 100%;
+    --primary-subtle: 180 42% 94%;
+    --secondary: 216 24% 95%;
+    --secondary-foreground: 220 26% 14%;
+    --accent: 216 24% 95%;
+    --accent-foreground: 220 26% 14%;
+    --highlight: 9 64% 44%;
+    --highlight-foreground: 0 0% 100%;
+    --highlight-subtle: 10 90% 96%;
+
+    --success: 152 64% 26%;
+    --success-foreground: 0 0% 100%;
+    --success-subtle: 145 48% 94%;
+    --warning: 30 92% 29%;
+    --warning-foreground: 0 0% 100%;
+    --warning-subtle: 43 96% 93%;
+    --danger: 0 68% 42%;
+    --danger-foreground: 0 0% 100%;
+    --danger-subtle: 0 86% 96%;
+    --info: 212 72% 38%;
+    --info-foreground: 0 0% 100%;
+    --info-subtle: 212 82% 96%;
+    --destructive: 0 68% 42%;
+    --destructive-foreground: 0 0% 100%;
+
+    --confidence-high: 155 62% 25%;
+    --confidence-high-subtle: 150 46% 94%;
+    --confidence-medium: 34 92% 28%;
+    --confidence-medium-subtle: 42 96% 93%;
+    --confidence-low: 4 68% 42%;
+    --confidence-low-subtle: 4 86% 96%;
+    --confidence-unassessed: 218 12% 40%;
+    --confidence-unassessed-subtle: 216 24% 95%;
+
+    --sidebar-background: 216 30% 98%;
+    --sidebar-foreground: 220 18% 30%;
+    --sidebar-border: 216 20% 90%;
+    --sidebar-accent: 216 26% 93%;
+    --sidebar-accent-foreground: 220 26% 14%;
+
+    --chart-1: 182 72% 30%;
+    --chart-2: 9 64% 52%;
+    --chart-3: 212 62% 46%;
+    --chart-4: 38 86% 48%;
+    --chart-5: 152 44% 38%;
+
+    --radius: 0.5rem;
+
+    --elevation-1: 0 1px 2px 0 hsl(220 26% 14% / 0.05);
+    --elevation-2: 0 1px 2px 0 hsl(220 26% 14% / 0.04), 0 4px 12px -2px hsl(220 26% 14% / 0.08);
+    --elevation-3: 0 2px 4px 0 hsl(220 26% 14% / 0.04), 0 12px 32px -4px hsl(220 26% 14% / 0.14);
+
+    --duration-fast: 120ms;
+    --duration-base: 200ms;
+    --duration-slow: 320ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  }
+
+  .dark {
+    --background: 220 20% 7%;
+    --foreground: 210 20% 93%;
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 93%;
+    --popover: 220 18% 11%;
+    --popover-foreground: 210 20% 93%;
+    --muted: 220 15% 14%;
+    --muted-foreground: 216 12% 66%;
+    --border: 220 14% 20%;
+    --input: 220 10% 42%;
+    --ring: 178 58% 50%;
+
+    --primary: 178 58% 46%;
+    --primary-foreground: 220 26% 8%;
+    --primary-subtle: 180 38% 14%;
+    --secondary: 220 15% 16%;
+    --secondary-foreground: 210 20% 93%;
+    --accent: 220 15% 17%;
+    --accent-foreground: 210 20% 93%;
+    --highlight: 10 86% 70%;
+    --highlight-foreground: 220 26% 8%;
+    --highlight-subtle: 10 36% 16%;
+
+    --success: 150 50% 56%;
+    --success-foreground: 220 26% 8%;
+    --success-subtle: 150 34% 13%;
+    --warning: 38 90% 60%;
+    --warning-foreground: 220 26% 8%;
+    --warning-subtle: 38 48% 13%;
+    --danger: 0 82% 70%;
+    --danger-foreground: 220 26% 8%;
+    --danger-subtle: 0 42% 15%;
+    --info: 212 86% 70%;
+    --info-foreground: 220 26% 8%;
+    --info-subtle: 212 44% 15%;
+    --destructive: 0 82% 70%;
+    --destructive-foreground: 220 26% 8%;
+
+    --confidence-high: 150 50% 56%;
+    --confidence-high-subtle: 150 34% 13%;
+    --confidence-medium: 38 90% 60%;
+    --confidence-medium-subtle: 38 48% 13%;
+    --confidence-low: 4 82% 70%;
+    --confidence-low-subtle: 4 42% 15%;
+    --confidence-unassessed: 216 12% 66%;
+    --confidence-unassessed-subtle: 220 15% 15%;
+
+    --sidebar-background: 220 20% 8.5%;
+    --sidebar-foreground: 216 14% 74%;
+    --sidebar-border: 220 14% 17%;
+    --sidebar-accent: 220 15% 15%;
+    --sidebar-accent-foreground: 210 20% 93%;
+
+    --chart-1: 178 58% 46%;
+    --chart-2: 10 86% 68%;
+    --chart-3: 212 80% 64%;
+    --chart-4: 38 90% 58%;
+    --chart-5: 150 46% 52%;
+
+    --elevation-1: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --elevation-2: 0 1px 2px 0 hsl(0 0% 0% / 0.3), 0 4px 12px -2px hsl(0 0% 0% / 0.4);
+    --elevation-3: 0 2px 4px 0 hsl(0 0% 0% / 0.3), 0 12px 32px -4px hsl(0 0% 0% / 0.55);
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings:
+      "cv11" 1,
+      "ss01" 1;
+  }
+
+  ::selection {
+    background-color: hsl(var(--highlight) / 0.22);
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .toaster[data-sonner-toaster][data-sonner-theme] {
+    --normal-bg: hsl(var(--popover));
+    --normal-text: hsl(var(--popover-foreground));
+    --normal-border: hsl(var(--border));
+    --normal-bg-hover: hsl(var(--accent));
+    --normal-border-hover: hsl(var(--border));
+    --border-radius: var(--radius);
+
+    --success-bg: hsl(var(--success-subtle));
+    --success-text: hsl(var(--success));
+    --success-border: hsl(var(--success) / 0.25);
+    --info-bg: hsl(var(--info-subtle));
+    --info-text: hsl(var(--info));
+    --info-border: hsl(var(--info) / 0.25);
+    --warning-bg: hsl(var(--warning-subtle));
+    --warning-text: hsl(var(--warning));
+    --warning-border: hsl(var(--warning) / 0.25);
+    --error-bg: hsl(var(--danger-subtle));
+    --error-text: hsl(var(--danger));
+    --error-border: hsl(var(--danger) / 0.25);
+  }
+
+  .toaster [data-sonner-toast][data-styled="true"] {
+    box-shadow: var(--elevation-3);
+  }
+
+  .toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
+    color: hsl(var(--muted-foreground));
+  }
+
+  .toaster [data-sonner-toast][data-styled="true"] [data-button] {
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+
+  .toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-cancel] {
+    background: hsl(var(--muted));
+    color: hsl(var(--muted-foreground));
+  }
+}
+
+@layer utilities {
+  .figures {
+    @apply font-mono tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+}
