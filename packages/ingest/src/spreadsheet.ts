@@ -82,10 +82,21 @@ export function parseDelimitedText(
   return { tables: table ? [table] : [], warnings };
 }
 
-function isDateFormat(format: unknown): boolean {
+function isDateFormat(format: unknown): format is string {
   return (
     typeof format === "string" && (SSF as { is_date(format: string): boolean }).is_date(format)
   );
+}
+
+// SSF.is_date also matches time-only and elapsed formats such as "hh:mm" and "[h]:mm".
+function isCalendarDateFormat(format: string): boolean {
+  const tokens = format
+    .replace(/"[^"]*"/g, "")
+    .replace(/\\./g, "")
+    .replace(/\[[^\]]*\]/g, "")
+    .toLowerCase();
+
+  return /[yde]|m{3,}/.test(tokens);
 }
 
 interface DateCode {
@@ -119,7 +130,13 @@ function toRawCell(cell: CellObject | undefined, date1904: boolean): RawCell {
   switch (cell.t) {
     case "n": {
       const value = Number(cell.v);
-      const iso = isDateFormat(cell.z) ? dateCodeToIso(value, date1904) : undefined;
+      const dateFormat = isDateFormat(cell.z) ? cell.z : undefined;
+
+      if (dateFormat !== undefined && !isCalendarDateFormat(dateFormat)) {
+        return { kind: "string", text };
+      }
+
+      const iso = dateFormat === undefined ? undefined : dateCodeToIso(value, date1904);
 
       if (iso) {
         return { kind: "date", iso, text };

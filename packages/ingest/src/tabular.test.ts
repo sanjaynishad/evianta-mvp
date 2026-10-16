@@ -39,6 +39,27 @@ describe("resolveColumn", () => {
     },
   );
 
+  it.each(["9007199254740993.00", "9,007,199,254,740,993.00", "9007199254740993e0"])(
+    "keeps %s as a string when its mantissa exceeds the safe digit limit",
+    (value) => {
+      expect(resolveColumn([text(value)], "dmy")).toEqual({ type: "string", cells: [value] });
+    },
+  );
+
+  it("keeps numbers whose significant digits fit after trimming zeros", () => {
+    expect(
+      resolveColumn(["1.50", "0.000123", "1e21", "12.500000000000000000"].map(text), "dmy"),
+    ).toEqual({ type: "number", cells: [1.5, 0.000123, 1e21, 12.5] });
+  });
+
+  it("classifies long digit runs without quadratic backtracking", () => {
+    const value = `${"1".repeat(50_000)}x`;
+    const started = performance.now();
+
+    expect(resolveColumn([text(value)], "dmy").type).toBe("string");
+    expect(performance.now() - started).toBeLessThan(250);
+  });
+
   it("infers booleans and keeps empty cells as null", () => {
     expect(resolveColumn([text("TRUE"), text(" "), text("false")], "dmy")).toEqual({
       type: "boolean",

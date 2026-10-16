@@ -66,6 +66,22 @@ describe("parseWorkbook", () => {
       ["456", 30, "2024-02-15"],
     ]);
   });
+
+  it("keeps time-only and elapsed-duration formats as displayed text", () => {
+    const sheet = utils.aoa_to_sheet([
+      ["Start", "Elapsed"],
+      [0, 0],
+    ]);
+    sheet.A2 = { t: "n", v: 0.5, z: "hh:mm" };
+    sheet.B2 = { t: "n", v: 1.5, z: "[h]:mm" };
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, sheet, "Times");
+    const buffer: Uint8Array = write(workbook, { type: "buffer", bookType: "xlsx" });
+    const result = parseWorkbook(buffer, { dateOrder: "dmy" });
+
+    expect(result.tables[0]?.columns.map((column) => column.type)).toEqual(["string", "string"]);
+    expect(result.tables[0]?.rows).toEqual([["12:00", "36:00"]]);
+  });
 });
 
 describe("parseDelimitedText", () => {

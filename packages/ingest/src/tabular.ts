@@ -28,7 +28,7 @@ type Candidate =
 
 const EMPTY_CELL: RawCell = { kind: "empty" };
 
-const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+const PLAIN_NUMBER = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
 // Western (1,234,567) and Indian (12,34,567) digit grouping.
 const GROUPED_NUMBER = /^[+-]?(\d{1,3}(,\d{3})+|\d{1,2}(,\d{2})+,\d{3})(\.\d+)?$/;
 const LEADING_ZERO = /^[+-]?0\d/;
@@ -89,6 +89,13 @@ function monthFromName(name: string): number | undefined {
   return index === -1 ? undefined : index + 1;
 }
 
+function significantDigitCount(normalized: string): number {
+  const mantissa = normalized.replace(/^[+-]/, "").split(/[eE]/)[0] ?? "";
+  const [integerPart = "", fractionPart = ""] = mantissa.split(".");
+
+  return `${integerPart}${fractionPart.replace(/0+$/, "")}`.replace(/^0+/, "").length;
+}
+
 function parseNumber(text: string): number | undefined {
   const plain = PLAIN_NUMBER.test(text);
 
@@ -98,13 +105,7 @@ function parseNumber(text: string): number | undefined {
 
   const normalized = text.replace(/,/g, "");
 
-  if (LEADING_ZERO.test(normalized)) {
-    return undefined;
-  }
-
-  const digits = normalized.replace(/[^0-9]/g, "").replace(/^0+/, "");
-
-  if (!/[.eE]/.test(normalized) && digits.length > MAX_SAFE_DIGITS) {
+  if (LEADING_ZERO.test(normalized) || significantDigitCount(normalized) > MAX_SAFE_DIGITS) {
     return undefined;
   }
 
