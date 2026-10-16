@@ -125,14 +125,25 @@ export function createCaseRepo(db: Firestore): CaseRepo {
       }
 
       const copy = buildCaseCopy(source, visitorId);
+      // One read-only transaction gives every subcollection the same snapshot, so a concurrent
+      // extraction replacement cannot pair one version's metadata with another version's chunks.
+      const sourceSnapshots = await db.runTransaction(
+        (transaction) =>
+          Promise.all(
+            copiedSubcollections.map(async (name) => ({
+              name,
+              docs: (await transaction.get(caseSubcollection(db, sourceCaseId, name))).docs,
+            })),
+          ),
+        { readOnly: true },
+      );
       const writer = db.bulkWriter();
       const failures: unknown[] = [];
 
-      for (const name of copiedSubcollections) {
-        const snapshot = await caseSubcollection(db, sourceCaseId, name).get();
+      for (const { name, docs } of sourceSnapshots) {
         const target = caseSubcollection(db, copy.id, name);
 
-        for (const doc of snapshot.docs) {
+        for (const doc of docs) {
           const data = copyTransforms[name](doc.data(), copy.id);
 
           writer
