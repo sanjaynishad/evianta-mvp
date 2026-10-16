@@ -9,6 +9,7 @@ import { z } from "zod";
 import { createAiClient } from "./client.js";
 import { AiNonTransientError, isTransientAiError } from "./errors.js";
 import { createGenkitBackend, type GenkitRuntime } from "./genkit.js";
+import { estimateCost } from "./pricing.js";
 import type { ModelCallRequest } from "./types.js";
 
 const groundingResponse: unknown = JSON.parse(
@@ -156,6 +157,35 @@ describe("createGenkitBackend", () => {
 
     expect(error).toBeInstanceOf(AiNonTransientError);
     expect(error).toMatchObject({ reason: "not-configured" });
+  });
+
+  it("charges the usage of a blocked first attempt to the client error", async () => {
+    const { runtime, requests } = fakeRuntime(() =>
+      textResponse("", { finishReason: "blocked", finishMessage: "SAFETY" }),
+    );
+    const ai = createAiClient(createGenkitBackend("googleai", async () => runtime));
+
+    const error = await ai
+      .runStructuredAsync({
+        tier: "mid",
+        inputSchema: z.string(),
+        outputSchema,
+        system: "Answer.",
+        input: "question",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiNonTransientError);
+    expect(error).toMatchObject({
+      reason: "blocked",
+      attempts: 1,
+      usage: { input: 100, output: 50, total: 150 },
+    });
+    expect((error as AiNonTransientError).cost).toBeCloseTo(
+      estimateCost({ input: 100, output: 50, total: 150 }, "mid"),
+      12,
+    );
+    expect(requests).toHaveLength(1);
   });
 
   it("runs a grounded structured call end to end through the client", async () => {

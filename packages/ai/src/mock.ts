@@ -18,7 +18,13 @@ export type MockStep =
       groundingResponse?: unknown;
     }
   | { text: string; usage?: Partial<TokenUsage>; groundingResponse?: unknown }
-  | { error: "transient" | "non-transient" | Error; message?: string; retryAfterMs?: number };
+  | {
+      error: "transient" | "non-transient" | Error;
+      message?: string;
+      retryAfterMs?: number;
+      /** Usage billed for the failed attempt, for example a blocked response. */
+      usage?: Partial<TokenUsage>;
+    };
 
 /** Steps are served in order per key; the last step repeats once the list is exhausted. */
 export type MockScript = Record<string, MockStep | readonly MockStep[]>;
@@ -35,6 +41,13 @@ export interface MockAiClient extends AiClient {
 
 export function estimateMockTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+function completeUsage(usage: Partial<TokenUsage>): TokenUsage {
+  const input = usage.input ?? 0;
+  const output = usage.output ?? 0;
+
+  return { input, output, total: usage.total ?? input + output };
 }
 
 function syntheticUsage(call: ModelCallRequest, text: string, override?: Partial<TokenUsage>) {
@@ -122,17 +135,18 @@ function createMockBackend(initialScript: MockScript) {
           throw step.error;
         }
 
+        const usage = step.usage ? completeUsage(step.usage) : undefined;
+
         if (step.error === "transient") {
           throw new AiTransientError(step.message ?? "Mock transient failure (503 UNAVAILABLE).", {
             retryAfterMs: step.retryAfterMs,
+            usage,
           });
         }
 
         throw new AiNonTransientError(
           step.message ?? "Mock non-transient failure (400 INVALID_ARGUMENT).",
-          {
-            reason: "invalid-request",
-          },
+          { reason: "invalid-request", usage },
         );
       }
 

@@ -271,6 +271,98 @@ describe("retries", () => {
 
     await expect(ai.runStructuredAsync(request())).resolves.toMatchObject({ attempts: 2 });
   });
+
+  it("keeps a timeout transient when the backend rejects from its abort listener", async () => {
+    let calls = 0;
+    const backend: ModelBackend = {
+      provider: "mock",
+      generateAsync: ({ signal }) => {
+        calls += 1;
+
+        if (calls === 1) {
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("The operation was aborted."), { name: "AbortError" }),
+              );
+            });
+          });
+        }
+
+        return Promise.resolve({
+          text: JSON.stringify(validOutput),
+          usage: { input: 1, output: 1, total: 2 },
+        });
+      },
+    };
+    const ai = createAiClient(backend, { timeoutMs: 10, sleepAsync: async () => {} });
+
+    await expect(ai.runStructuredAsync(request())).resolves.toMatchObject({ attempts: 2 });
+  });
+
+  it("waits for a provider retry-after longer than the backoff cap", async () => {
+    const sleep = recordingSleep();
+    const ai = createMockAi(
+      {
+        "case-analysis": [{ error: "transient", retryAfterMs: 60_000 }, { output: validOutput }],
+      },
+      { sleepAsync: sleep.sleepAsync },
+    );
+
+    await expect(ai.runStructuredAsync(request())).resolves.toMatchObject({ attempts: 2 });
+    expect(sleep.delays).toEqual([60_000]);
+  });
+
+  it("fails without waiting when the retry-after exceeds maxRetryAfterMs", async () => {
+    const sleep = recordingSleep();
+    const ai = createMockAi(
+      {
+        "case-analysis": [{ error: "transient", retryAfterMs: 300_000 }, { output: validOutput }],
+      },
+      { sleepAsync: sleep.sleepAsync, maxRetryAfterMs: 120_000 },
+    );
+
+    const error = await ai.runStructuredAsync(request()).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiTransientError);
+    expect(error).toMatchObject({ attempts: 1, retryAfterMs: 300_000 });
+    expect((error as AiTransientError).message).toMatch(/retry after 300000 ms/);
+    expect(sleep.delays).toEqual([]);
+    expect(ai.calls).toHaveLength(1);
+  });
+
+  it("sums usage from a usage-bearing transient failure with the successful attempt", async () => {
+    const ai = createMockAi({
+      "case-analysis": [
+        { error: "transient", usage: { input: 40, output: 5 } },
+        { output: validOutput, usage: { input: 100, output: 30 } },
+      ],
+    });
+
+    const result = await ai.runStructuredAsync(request());
+
+    expect(result.attempts).toBe(2);
+    expect(result.usage).toEqual({ input: 140, output: 35, total: 175 });
+    expect(result.cost).toBeCloseTo(estimateCost(result.usage, "mid"), 12);
+  });
+
+  it("keeps usage and cost from earlier attempts and a usage-bearing final failure", async () => {
+    const ai = createMockAi({
+      "case-analysis": [
+        { error: "transient", usage: { input: 40, output: 5 } },
+        { error: "non-transient", usage: { input: 60, output: 10 } },
+      ],
+    });
+
+    const error = await ai.runStructuredAsync(request()).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiNonTransientError);
+    expect(error).toMatchObject({ attempts: 2, usage: { input: 100, output: 15, total: 115 } });
+    expect((error as AiNonTransientError).cost).toBeCloseTo(
+      estimateCost({ input: 100, output: 15, total: 115 }, "mid"),
+      12,
+    );
+  });
 });
 
 describe("isTransientAiError", () => {
@@ -297,7 +389,7 @@ describe("isTransientAiError", () => {
 });
 
 describe("backoffDelayMs", () => {
-  it("grows exponentially with jitter and respects the cap and retry-after", () => {
+  it("grows exponentially with capped jitter and uses retry-after as an uncapped minimum", () => {
     const settings = { baseDelayMs: 500, maxDelayMs: 8000, random: () => 0.2 };
 
     expect(backoffDelayMs(0, settings)).toBe(600);
@@ -305,7 +397,10 @@ describe("backoffDelayMs", () => {
     expect(backoffDelayMs(2, settings)).toBe(2100);
     expect(backoffDelayMs(10, settings)).toBe(8000);
     expect(backoffDelayMs(0, settings, 3000)).toBe(3000);
-    expect(backoffDelayMs(0, settings, 60_000)).toBe(8000);
+    expect(backoffDelayMs(0, settings, 100)).toBe(600);
+    // maxDelayMs caps only the computed backoff; runModelAsync rejects retry-after values above
+    // maxRetryAfterMs instead of shortening them.
+    expect(backoffDelayMs(0, settings, 60_000)).toBe(60_000);
   });
 });
 

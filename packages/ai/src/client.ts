@@ -2,6 +2,7 @@ import type { TokenUsage } from "@evianta/core";
 import type { z } from "zod";
 
 import {
+  AiError,
   AiInputValidationError,
   AiNonTransientError,
   AiOutputValidationError,
@@ -38,7 +39,10 @@ export interface AiClientOptions {
   /** Retries after the first attempt. Defaults to 2. */
   maxRetries?: number;
   baseDelayMs?: number;
+  /** Caps the computed exponential backoff, not a provider retry-after. */
   maxDelayMs?: number;
+  /** Longest provider retry-after to wait for; a longer one fails the call instead. */
+  maxRetryAfterMs?: number;
   /** Per-attempt timeout; a timeout counts as a transient failure. */
   timeoutMs?: number;
   defaultMaxOutputTokens?: number;
@@ -51,6 +55,7 @@ export const DEFAULT_RETRY_SETTINGS = {
   maxRetries: 2,
   baseDelayMs: 500,
   maxDelayMs: 8000,
+  maxRetryAfterMs: 120_000,
   timeoutMs: 120_000,
 } as const;
 
@@ -58,6 +63,7 @@ interface ClientSettings {
   maxRetries: number;
   baseDelayMs: number;
   maxDelayMs: number;
+  maxRetryAfterMs: number;
   timeoutMs: number;
   defaultMaxOutputTokens: number;
   sleepAsync: (ms: number) => Promise<void>;
@@ -73,6 +79,7 @@ function resolveSettings(options: AiClientOptions): ClientSettings {
     maxRetries: options.maxRetries ?? DEFAULT_RETRY_SETTINGS.maxRetries,
     baseDelayMs: options.baseDelayMs ?? DEFAULT_RETRY_SETTINGS.baseDelayMs,
     maxDelayMs: options.maxDelayMs ?? DEFAULT_RETRY_SETTINGS.maxDelayMs,
+    maxRetryAfterMs: options.maxRetryAfterMs ?? DEFAULT_RETRY_SETTINGS.maxRetryAfterMs,
     timeoutMs: options.timeoutMs ?? DEFAULT_RETRY_SETTINGS.timeoutMs,
     defaultMaxOutputTokens: options.defaultMaxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     sleepAsync: options.sleepAsync ?? defaultSleepAsync,
@@ -86,10 +93,12 @@ export function backoffDelayMs(
   retryAfterMs?: number,
 ): number {
   const exponential = Math.min(settings.maxDelayMs, settings.baseDelayMs * 2 ** retryIndex);
-  const jittered = exponential + Math.floor(settings.random() * settings.baseDelayMs);
-  const floor = retryAfterMs === undefined ? 0 : Math.min(retryAfterMs, settings.maxDelayMs);
+  const jittered = Math.min(
+    settings.maxDelayMs,
+    exponential + Math.floor(settings.random() * settings.baseDelayMs),
+  );
 
-  return Math.min(settings.maxDelayMs, Math.max(jittered, floor));
+  return Math.max(jittered, retryAfterMs ?? 0);
 }
 
 function messageOf(error: unknown): string {
@@ -130,8 +139,9 @@ async function callWithTimeoutAsync(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      controller.abort();
+      // Reject first so a backend that rejects from its abort listener cannot win the race.
       reject(new AiTransientError(`Model call timed out after ${timeoutMs} ms.`));
+      controller.abort();
     }, timeoutMs);
   });
 
@@ -170,11 +180,23 @@ async function runModelAsync<T>(
     try {
       result = await callWithTimeoutAsync(backend, call, settings.timeoutMs);
     } catch (error) {
+      if (error instanceof AiError) {
+        usage = addUsage(usage, error.usage);
+      }
+
       const details = { cause: error, attempts, usage, cost: estimateCost(usage, call.tier) };
       const transient = isTransientAiError(error);
+      const retryAfterMs = retryAfterMsOf(error);
+
+      if (transient && retryAfterMs !== undefined && retryAfterMs > settings.maxRetryAfterMs) {
+        throw new AiTransientError(
+          `Model call failed after ${attempts} attempt(s); the provider asked to retry after ${retryAfterMs} ms, longer than the ${settings.maxRetryAfterMs} ms limit: ${messageOf(error)}`,
+          { ...details, retryAfterMs },
+        );
+      }
 
       if (transient && retries < settings.maxRetries) {
-        await settings.sleepAsync(backoffDelayMs(retries, settings, retryAfterMsOf(error)));
+        await settings.sleepAsync(backoffDelayMs(retries, settings, retryAfterMs));
         retries += 1;
         continue;
       }
