@@ -23,7 +23,7 @@ import {
 } from "./image.js";
 import { parseJsonText } from "./json.js";
 import { DEFAULT_MAX_OUTPUT_TOKENS, modelForTier } from "./models.js";
-import { addUsage, emptyUsage, estimateCost } from "./pricing.js";
+import { addUsage, emptyUsage, estimateCost, roundCost, type Cost } from "./pricing.js";
 import type {
   AiClient,
   ImageExtractionRequest,
@@ -158,6 +158,7 @@ async function callWithTimeoutAsync(
 interface ModelRunOutcome<T> {
   output: T;
   usage: TokenUsage;
+  cost: Cost;
   attempts: number;
   raw: unknown;
 }
@@ -169,6 +170,7 @@ async function runModelAsync<T>(
   settings: ClientSettings,
 ): Promise<ModelRunOutcome<T>> {
   let usage = emptyUsage();
+  let cost: Cost = 0;
   let attempts = 0;
   let retries = 0;
   let retriedInvalidOutput = false;
@@ -182,9 +184,10 @@ async function runModelAsync<T>(
     } catch (error) {
       if (error instanceof AiError) {
         usage = addUsage(usage, error.usage);
+        cost = roundCost(cost + estimateCost(error.usage, call.tier));
       }
 
-      const details = { cause: error, attempts, usage, cost: estimateCost(usage, call.tier) };
+      const details = { cause: error, attempts, usage, cost };
       const transient = isTransientAiError(error);
       const retryAfterMs = retryAfterMsOf(error);
 
@@ -215,10 +218,11 @@ async function runModelAsync<T>(
     }
 
     usage = addUsage(usage, result.usage);
+    cost = roundCost(cost + estimateCost(result.usage, call.tier));
     const validation = validateOutput(result.text, outputSchema);
 
     if (validation.ok) {
-      return { output: validation.value, usage, attempts, raw: result.raw };
+      return { output: validation.value, usage, cost, attempts, raw: result.raw };
     }
 
     if (!retriedInvalidOutput && retries < settings.maxRetries) {
@@ -231,7 +235,7 @@ async function runModelAsync<T>(
       `Model output did not match the expected schema: ${validation.issues.join("; ")}`,
       validation.issues,
       result.text,
-      { attempts, usage, cost: estimateCost(usage, call.tier) },
+      { attempts, usage, cost },
     );
   }
 }
@@ -267,7 +271,7 @@ export function createAiClient(backend: ModelBackend, options: AiClientOptions =
     const prompt =
       typeof parsedInput.data === "string"
         ? parsedInput.data
-        : JSON.stringify(parsedInput.data, null, 2);
+        : (JSON.stringify(parsedInput.data, null, 2) ?? "");
 
     const outcome = await runModelAsync<z.output<TOutputSchema>>(
       backend,
@@ -292,7 +296,7 @@ export function createAiClient(backend: ModelBackend, options: AiClientOptions =
     const result: RunStructuredResult<z.output<TOutputSchema>> = {
       output: outcome.output,
       usage: outcome.usage,
-      cost: estimateCost(outcome.usage, request.tier),
+      cost: outcome.cost,
       tier: request.tier,
       model,
       attempts: outcome.attempts,
@@ -368,7 +372,7 @@ export function createAiClient(backend: ModelBackend, options: AiClientOptions =
       handwriting,
       lines: lineBoxes ? toTextSpans(outcome.output.lines) : [],
       usage: outcome.usage,
-      cost: estimateCost(outcome.usage, tier),
+      cost: outcome.cost,
       tier,
       model,
       attempts: outcome.attempts,

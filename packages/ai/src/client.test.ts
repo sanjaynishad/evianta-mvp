@@ -92,6 +92,19 @@ describe("runStructuredAsync", () => {
     expect(second.usage).toEqual(first.usage);
   });
 
+  it("sends an empty string prompt for a valid no-input request", async () => {
+    const ai = createMockAi({ "case-analysis": { output: validOutput } });
+
+    const result = await ai.runStructuredAsync({
+      ...request(),
+      inputSchema: z.void(),
+      input: undefined,
+    });
+
+    expect(result.output).toEqual(validOutput);
+    expect(ai.calls[0]?.prompt).toBe("");
+  });
+
   it("falls back to the wildcard script and honors a custom output cap", async () => {
     const ai = createMockAi({ "*": { output: validOutput } });
 
@@ -372,6 +385,19 @@ describe("isTransientAiError", () => {
     [{ status: "INTERNAL" }, true],
     [Object.assign(new Error("UNKNOWN: [502 Bad Gateway]"), { status: "UNKNOWN" }), true],
     [Object.assign(new Error("UNKNOWN: [418 Teapot]"), { status: "UNKNOWN" }), false],
+    [Object.assign(new Error("fetch failed"), { status: "UNKNOWN" }), true],
+    [
+      Object.assign(new Error("connection failed", { cause: { code: "ECONNRESET" } }), {
+        status: "UNKNOWN",
+      }),
+      true,
+    ],
+    [Object.assign(new Error("connection failed"), { status: "UNKNOWN", code: "ETIMEDOUT" }), true],
+    [Object.assign(new Error("unrecognized failure"), { status: "UNKNOWN" }), false],
+    [
+      Object.assign(new Error("UNKNOWN: [400 Bad Request] fetch failed"), { status: "UNKNOWN" }),
+      false,
+    ],
     [{ status: "INVALID_ARGUMENT" }, false],
     [{ status: "PERMISSION_DENIED" }, false],
     [{ status: 503 }, true],
@@ -385,6 +411,89 @@ describe("isTransientAiError", () => {
     [new AiNonTransientError("x"), false],
   ])("classifies %o as transient=%s", (error, expected) => {
     expect(isTransientAiError(error)).toBe(expected);
+  });
+});
+
+describe("high-tier cost accounting", () => {
+  it("charges long-context rates for a successful attempt", async () => {
+    const ai = createMockAi({
+      "case-analysis": { output: validOutput, usage: { input: 250_000, output: 1000 } },
+    });
+
+    const result = await ai.runStructuredAsync({ ...request(), tier: "high" });
+
+    expect(result.cost).toBeCloseTo(0.64, 10);
+  });
+
+  it.each([false, true])(
+    "does not apply long-context rates to combined short attempts (invalid output: %s)",
+    async (invalidOutput) => {
+      const usage = { input: 120_000, output: 1000 };
+      const firstStep: MockStep = invalidOutput
+        ? { output: { summary: "missing amount" }, usage }
+        : { error: "transient", usage };
+      const ai = createMockAi({
+        "case-analysis": [firstStep, { output: validOutput, usage }],
+      });
+
+      const result = await ai.runStructuredAsync({ ...request(), tier: "high" });
+
+      expect(result.attempts).toBe(2);
+      expect(result.usage).toEqual({ input: 240_000, output: 2000, total: 242_000 });
+      expect(result.cost).toBeCloseTo(0.32, 10);
+    },
+  );
+
+  it("prices long and short attempts separately when recovering from a transient failure", async () => {
+    const ai = createMockAi({
+      "case-analysis": [
+        { error: "transient", usage: { input: 250_000, output: 1000 } },
+        { output: validOutput, usage: { input: 100_000, output: 1000 } },
+      ],
+    });
+
+    const result = await ai.runStructuredAsync({ ...request(), tier: "high" });
+
+    expect(result.usage).toEqual({ input: 350_000, output: 2000, total: 352_000 });
+    expect(result.cost).toBeCloseTo(0.775, 10);
+  });
+
+  it.each(["transient", "non-transient"] as const)(
+    "preserves per-attempt costs on a final %s failure",
+    async (error) => {
+      const ai = createMockAi(
+        {
+          "case-analysis": [
+            { error: "transient", usage: { input: 120_000, output: 1000 } },
+            { error, usage: { input: 250_000, output: 1000 } },
+          ],
+        },
+        { maxRetries: 1 },
+      );
+
+      await expect(ai.runStructuredAsync({ ...request(), tier: "high" })).rejects.toMatchObject({
+        name: error === "transient" ? "AiTransientError" : "AiNonTransientError",
+        attempts: 2,
+        usage: { input: 370_000, output: 2000, total: 372_000 },
+        cost: 0.8,
+      });
+    },
+  );
+
+  it("preserves short-attempt costs when output validation exhausts retries", async () => {
+    const ai = createMockAi({
+      "case-analysis": {
+        output: { summary: "missing amount" },
+        usage: { input: 120_000, output: 1000 },
+      },
+    });
+
+    await expect(ai.runStructuredAsync({ ...request(), tier: "high" })).rejects.toMatchObject({
+      name: "AiOutputValidationError",
+      attempts: 2,
+      usage: { input: 240_000, output: 2000, total: 242_000 },
+      cost: 0.32,
+    });
   });
 });
 

@@ -37,6 +37,25 @@ describe("estimateCost", () => {
     expect(estimateCost(usage, "mid")).toBeLessThan(estimateCost(usage, "high"));
   });
 
+  it.each([
+    [199_999, 0.25999875],
+    [200_000, 0.26],
+    [200_001, 0.5150025],
+    [250_000, 0.64],
+  ])("prices a high-tier attempt with %i input tokens", (input, expectedCost) => {
+    expect(estimateCost({ input, output: 1000, total: input + 1000 }, "high")).toBeCloseTo(
+      expectedCost,
+      10,
+    );
+  });
+
+  it("keeps cheap and mid pricing unchanged above 200K input tokens", () => {
+    const usage = { input: 250_000, output: 1000, total: 251_000 };
+
+    expect(estimateCost(usage, "cheap")).toBeCloseTo(0.0254, 10);
+    expect(estimateCost(usage, "mid")).toBeCloseTo(0.0775, 10);
+  });
+
   it("is additive across attempts", () => {
     const first = { input: 120, output: 30, total: 150 };
     const second = { input: 80, output: 45, total: 125 };

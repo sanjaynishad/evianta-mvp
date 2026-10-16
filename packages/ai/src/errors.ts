@@ -134,7 +134,9 @@ export function isTransientAiError(error: unknown): boolean {
 
     const httpStatus = httpStatusInMessage(message);
 
-    return httpStatus !== undefined && isTransientHttpStatus(httpStatus);
+    if (httpStatus !== undefined) {
+      return isTransientHttpStatus(httpStatus);
+    }
   }
 
   const numericStatus = typeof status === "number" ? status : readProperty(error, "statusCode");
