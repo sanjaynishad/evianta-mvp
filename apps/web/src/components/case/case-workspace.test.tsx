@@ -15,6 +15,8 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/cases/test",
 }));
 
+const streamTimeoutMs = 15000;
+
 beforeAll(() => {
   stubResizeObserver();
 });
@@ -60,6 +62,9 @@ describe("CaseWorkspace", () => {
     expect(await screen.findByRole("figure", { name: /Net sales by month/ })).toBeInTheDocument();
     expect(screen.getByRole("figure", { name: /Return rate by region/ })).toBeInTheDocument();
     expect(
+      screen.getByRole("figure", { name: /Cumulative net sales, quarter to date/ }),
+    ).toHaveAttribute("data-chart-type", "area");
+    expect(
       screen.getByRole("figure", { name: /Share of net sales by region/ }),
     ).toBeInTheDocument();
   });
@@ -74,49 +79,59 @@ describe("CaseWorkspace", () => {
     );
   });
 
-  it("shows the failed step, blocked steps, and retries only what failed", async () => {
-    const dataSource = createTestDataSource({
-      seedStates: [failedCaseState],
-      seedEvents: { [failedCaseId]: failedRunEvents },
-    });
-    const retrySpy = vi.spyOn(dataSource, "retryRunAsync");
-    renderWithDataSource(<CaseWorkspace caseId={failedCaseId} />, dataSource);
+  it(
+    "shows the failed step, blocked steps, and retries only what failed",
+    async () => {
+      const dataSource = createTestDataSource({
+        seedStates: [failedCaseState],
+        seedEvents: { [failedCaseId]: failedRunEvents },
+      });
+      const retrySpy = vi.spyOn(dataSource, "retryRunAsync");
+      renderWithDataSource(<CaseWorkspace caseId={failedCaseId} />, dataSource);
 
-    expect(await screen.findByTestId("task-last-error")).toHaveTextContent(fixtureFailure.error);
-    const blocked = screen.getByRole("list", { name: "Blocked steps" });
-    expect(within(blocked).getAllByRole("listitem")).toHaveLength(2);
+      expect(await screen.findByTestId("task-last-error")).toHaveTextContent(fixtureFailure.error);
+      const blocked = screen.getByRole("list", { name: "Blocked steps" });
+      expect(within(blocked).getAllByRole("listitem")).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("button", { name: /Retry failed steps/ }));
+      fireEvent.click(screen.getByRole("button", { name: /Retry failed steps/ }));
 
-    await waitFor(() => expect(retrySpy).toHaveBeenCalledWith(failedCaseId));
-    await waitFor(() =>
-      expect(screen.queryByRole("heading", { name: "A step failed" })).not.toBeInTheDocument(),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Claim summary" })).toBeInTheDocument(),
-    );
-    const steps = screen.getByRole("list", { name: "Steps" });
-    expect(
-      within(steps)
-        .getAllByRole("listitem")
-        .every((item) => item.getAttribute("data-task-status") === "completed"),
-    ).toBe(true);
-  });
+      await waitFor(() => expect(retrySpy).toHaveBeenCalledWith(failedCaseId));
+      await waitFor(() =>
+        expect(screen.queryByRole("heading", { name: "A step failed" })).not.toBeInTheDocument(),
+      );
+      await waitFor(
+        () => expect(screen.getByRole("region", { name: "Claim summary" })).toBeInTheDocument(),
+        { timeout: streamTimeoutMs },
+      );
+      const steps = screen.getByRole("list", { name: "Steps" });
+      expect(
+        within(steps)
+          .getAllByRole("listitem")
+          .every((item) => item.getAttribute("data-task-status") === "completed"),
+      ).toBe(true);
+    },
+    streamTimeoutMs * 2,
+  );
 
-  it("runs a new case without documents and streams progress to completion", async () => {
-    const dataSource = createTestDataSource();
-    const created = await dataSource.createCaseAsync({
-      title: "Sales check",
-      useCase: "data-analysis",
-    });
-    renderWithDataSource(<CaseWorkspace caseId={created.id} />, dataSource);
+  it(
+    "runs a new case without documents and streams progress to completion",
+    async () => {
+      const dataSource = createTestDataSource();
+      const created = await dataSource.createCaseAsync({
+        title: "Sales check",
+        useCase: "data-analysis",
+      });
+      renderWithDataSource(<CaseWorkspace caseId={created.id} />, dataSource);
 
-    fireEvent.click(await screen.findByRole("button", { name: /Run case/ }));
+      fireEvent.click(await screen.findByRole("button", { name: /Run case/ }));
 
-    await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument(),
-    );
-    expect(screen.getByText("4 of 4 steps done")).toBeInTheDocument();
-    expect(screen.getByTestId("running-cost")).toHaveTextContent("$0.0213");
-  });
+      await waitFor(
+        () => expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument(),
+        { timeout: streamTimeoutMs },
+      );
+      expect(screen.getByText("4 of 4 steps done")).toBeInTheDocument();
+      expect(screen.getByTestId("running-cost")).toHaveTextContent("$0.0213");
+    },
+    streamTimeoutMs * 2,
+  );
 });

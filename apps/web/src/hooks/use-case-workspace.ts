@@ -15,6 +15,7 @@ import {
   createRunProgress,
   type RunProgress,
 } from "@/lib/run-progress";
+import { partitionUploadFiles, unsupportedUploadMessage } from "@/lib/use-cases";
 
 export interface LocalUpload {
   id: string;
@@ -229,12 +230,20 @@ export function useCaseWorkspace(
   }
 
   async function uploadAsync(files: File[]) {
-    const pending = files.map((file) => ({
+    const { supported, unsupported } = partitionUploadFiles(files);
+    const pending = supported.map((file) => ({
       id: `upload-${nextRequestId()}`,
       file,
     }));
     setUploads((current) => [
       ...current,
+      ...unsupported.map((file) => ({
+        id: `upload-${nextRequestId()}`,
+        name: file.name,
+        size: file.size,
+        status: "failed" as const,
+        error: unsupportedUploadMessage,
+      })),
       ...pending.map(({ id, file }) => ({
         id,
         name: file.name,

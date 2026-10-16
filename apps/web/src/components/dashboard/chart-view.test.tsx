@@ -21,6 +21,7 @@ describe("ChartView", () => {
       const figure = screen.getByRole("figure", { name: new RegExp(spec.title) });
       expect(figure).toHaveAttribute("data-chart-type", type);
       expect(container.querySelector("svg")).not.toBeNull();
+      expect(container.querySelector(`.recharts-${type}`)).not.toBeNull();
       const table = within(figure).getByRole("table");
       expect(within(table).getAllByRole("row")).toHaveLength(spec.data.length + 1);
       expect(within(figure).getByText(`Source: ${spec.source?.aggregation}`)).toBeInTheDocument();

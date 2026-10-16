@@ -77,7 +77,33 @@ const regionShare: ChartSpecInput = {
   },
 };
 
-export const dataAnalysisChartSpecs = [monthlyNetSales, returnRate, regionShare];
+const cumulativeNetSales: ChartSpecInput = {
+  id: "chart-cumulative-net-sales",
+  type: "area",
+  title: "Cumulative net sales, quarter to date",
+  description: "Running total of monthly net sales across all regions.",
+  categoryKey: "month",
+  series: [{ key: "cumulativeNetSales", label: "Cumulative net sales" }],
+  data: [
+    { month: "Jul 2025", cumulativeNetSales: 4210000 },
+    { month: "Aug 2025", cumulativeNetSales: 8835000 },
+    { month: "Sep 2025", cumulativeNetSales: 13815000 },
+  ],
+  xAxis: { label: "Month" },
+  yAxis: { label: "Amount", format: "currency-inr" },
+  source: {
+    aggregation: "Running sum of net amount by invoice month",
+    documentId: salesFile.id,
+    evidenceIds: ["a-ev-monthly-totals"],
+  },
+};
+
+export const dataAnalysisChartSpecs = [
+  monthlyNetSales,
+  returnRate,
+  cumulativeNetSales,
+  regionShare,
+];
 
 export const dataAnalysisCaseState: CaseStateInput = {
   case: {

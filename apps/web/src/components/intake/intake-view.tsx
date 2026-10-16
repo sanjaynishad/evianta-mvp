@@ -12,7 +12,12 @@ import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { describeError } from "@/lib/api/errors";
 import { useDataSource } from "@/lib/data/data-source-context";
-import { matchChecklistItem, useCaseDefinitions } from "@/lib/use-cases";
+import {
+  matchChecklistItem,
+  partitionUploadFiles,
+  unsupportedUploadMessage,
+  useCaseDefinitions,
+} from "@/lib/use-cases";
 import { UploadChecklist, type IntakeFile } from "./upload-checklist";
 import { UseCasePicker } from "./use-case-picker";
 
@@ -65,7 +70,14 @@ export function IntakeView() {
     );
   }
 
-  function handleAddFiles(added: File[], itemId?: string) {
+  function handleAddFiles(selected: File[], itemId?: string) {
+    const { supported: added, unsupported } = partitionUploadFiles(selected);
+    if (unsupported.length > 0) {
+      toast.error(`Skipped ${unsupported.map((file) => file.name).join(", ")}`, {
+        description: unsupportedUploadMessage,
+      });
+    }
+
     const checklist = definition?.checklist ?? [];
     setFiles((current) => [
       ...current,

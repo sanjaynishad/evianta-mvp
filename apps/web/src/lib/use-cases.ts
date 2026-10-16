@@ -22,10 +22,39 @@ export interface UseCaseDefinition {
   checklist: ChecklistItem[];
 }
 
+// Mirrors SUPPORTED_MIME_TYPES in @evianta/ingest, which the API enforces on upload.
+export const supportedUploadMimeTypes = [
+  "text/csv",
+  "text/tab-separated-values",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+] as const;
+
+export const supportedUploadExtensions = [
+  "csv",
+  "tsv",
+  "xlsx",
+  "xls",
+  "pdf",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+] as const;
+
+export const unsupportedUploadMessage =
+  "This file type is not supported. Upload CSV, TSV, Excel (.xlsx, .xls), PDF, PNG, JPEG, or WebP files.";
+
 const spreadsheetAccept = ".xlsx,.xls,.csv,.tsv";
 const documentAccept = ".pdf,.png,.jpg,.jpeg,.webp";
-// Matches the upload MIME allow list enforced by the API and ingestion.
-const anyAccept = `${documentAccept},${spreadsheetAccept}`;
+const anyAccept = [
+  ...supportedUploadExtensions.map((extension) => `.${extension}`),
+  ...supportedUploadMimeTypes,
+].join(",");
 
 export const useCaseDefinitions: Record<UseCase, UseCaseDefinition> = {
   "data-analysis": {
@@ -170,6 +199,29 @@ function fileNameWords(fileName: string): { words: string[]; extension: string }
   const extension = dot > 0 ? lower.slice(dot + 1) : "";
   const stem = dot > 0 ? lower.slice(0, dot) : lower;
   return { words: stem.split(/[^a-z0-9]+/).filter(Boolean), extension };
+}
+
+export function isSupportedUploadFile(file: Pick<File, "name" | "type">): boolean {
+  const { extension } = fileNameWords(file.name);
+  const mimeType = file.type.split(";")[0]?.trim().toLowerCase() ?? "";
+  return (
+    (supportedUploadExtensions as readonly string[]).includes(extension) ||
+    (supportedUploadMimeTypes as readonly string[]).includes(mimeType)
+  );
+}
+
+export function partitionUploadFiles(files: File[]): { supported: File[]; unsupported: File[] } {
+  const supported: File[] = [];
+  const unsupported: File[] = [];
+  for (const file of files) {
+    if (isSupportedUploadFile(file)) {
+      supported.push(file);
+    } else {
+      unsupported.push(file);
+    }
+  }
+
+  return { supported, unsupported };
 }
 
 export function matchChecklistItem(

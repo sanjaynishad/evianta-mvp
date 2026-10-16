@@ -91,7 +91,7 @@ describe("sample fixtures", () => {
     },
   );
 
-  it("includes a dashboard with valid bar, line, and pie chart specs for use case A", () => {
+  it("includes a dashboard with valid bar, line, area, and pie chart specs for use case A", () => {
     const dashboard = sampleCaseStates[0]!.deliverables.find(
       (deliverable) => deliverable.format === "dashboard",
     );
@@ -101,6 +101,7 @@ describe("sample fixtures", () => {
     expect(specs?.map((result) => (result.success ? result.spec.type : undefined))).toEqual([
       "bar",
       "line",
+      "area",
       "pie",
     ]);
   });

@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -136,6 +138,27 @@ function ChartBody({ spec, size }: Pick<ChartViewProps, "spec" | "size">) {
           />
         ))}
       </LineChart>
+    );
+  }
+
+  if (spec.type === "area") {
+    return (
+      <AreaChart data={spec.data} width={width} height={height}>
+        {axes}
+        {spec.series.map((series, index) => (
+          <Area
+            key={series.key}
+            type="monotone"
+            dataKey={series.key}
+            name={series.label}
+            stroke={colorAt(index)}
+            strokeWidth={2}
+            fill={colorAt(index)}
+            fillOpacity={0.16}
+            isAnimationActive={animate}
+          />
+        ))}
+      </AreaChart>
     );
   }
 

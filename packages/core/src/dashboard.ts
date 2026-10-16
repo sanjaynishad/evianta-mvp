@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const chartTypeSchema = z.enum(["bar", "line", "pie"]);
+export const chartTypeSchema = z.enum(["bar", "line", "area", "pie"]);
 
 export type ChartType = z.infer<typeof chartTypeSchema>;
 
