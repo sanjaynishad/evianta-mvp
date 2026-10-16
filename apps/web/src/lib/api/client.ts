@@ -2,24 +2,26 @@ import {
   agentDirectoryResponseSchema,
   agentProfileSchema,
   apiErrorBodySchema,
+  approveCaseResponseSchema,
+  askDeltaSchema,
   askRequestSchema,
-  askResponseSchema,
-  caseDocumentSchema,
+  askResultSchema,
   caseListResponseSchema,
   caseSchema,
   caseStateSchema,
   createCaseRequestSchema,
   deliverableSchema,
-  deliverableSectionSchema,
-  openQuestionSchema,
+  openQuestionUpdateResponseSchema,
   reviewNoteRequestSchema,
   runStartResponseSchema,
   sampleReadOnlyErrorBodySchema,
   sectionUpdateRequestSchema,
+  uploadDocumentsResponseSchema,
   usageCasesResponseSchema,
   usageSummarySchema,
   visitorHeaderName,
   type AgentRole,
+  type AskResult,
   type ExportFormat,
 } from "@evianta/core";
 import type { CaseDataSource, RunStreamHandlers, RunStreamOptions } from "@/lib/data/types";
@@ -31,6 +33,7 @@ import {
   type ResponseIssue,
 } from "./errors";
 import { subscribeToRunEvents, type EventSourceFactory } from "./run-stream";
+import { readServerSentEventsAsync } from "./sse";
 
 interface ResponseSchema<T> {
   safeParse(
@@ -50,9 +53,13 @@ interface RequestOptions {
   json?: unknown;
   formData?: FormData;
   signal?: AbortSignal;
+  accept?: string;
 }
 
 export type ApiClient = CaseDataSource;
+
+// Matches the field apps/api reads uploads from.
+export const uploadFieldName = "files";
 
 function segment(value: string): string {
   return encodeURIComponent(value);
@@ -79,6 +86,14 @@ async function readBodyAsync(response: Response): Promise<unknown> {
   }
 }
 
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
 export function createApiClient(options: ApiClientOptions): ApiClient {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const fetchImpl = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
@@ -101,17 +116,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
     const parsed = apiErrorBodySchema.safeParse(body);
     const details = parsed.success ? parsed.data : {};
-    const message =
-      details.message ?? details.error ?? `The request failed with status ${status}. Try again.`;
-    return new ApiError(message, status, { reason: details.reason, body });
+    const message = details.message ?? `The request failed with status ${status}. Try again.`;
+    return new ApiError(message, status, { code: details.error, body });
   }
 
-  async function requestAsync<T>(
-    path: string,
-    schema: ResponseSchema<T>,
-    request: RequestOptions = {},
-  ): Promise<T> {
-    const headers = new Headers({ Accept: "application/json" });
+  async function sendAsync(path: string, request: RequestOptions = {}): Promise<Response> {
+    const headers = new Headers({ Accept: request.accept ?? "application/json" });
     const visitorId = options.getVisitorId?.();
     if (visitorId) {
       headers.set(visitorHeaderName, visitorId);
@@ -143,12 +153,20 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       });
     }
 
-    const payload = await readBodyAsync(response);
     if (!response.ok) {
-      throw toApiError(response.status, payload);
+      throw toApiError(response.status, await readBodyAsync(response));
     }
 
-    const parsed = schema.safeParse(payload);
+    return response;
+  }
+
+  async function requestAsync<T>(
+    path: string,
+    schema: ResponseSchema<T>,
+    request: RequestOptions = {},
+  ): Promise<T> {
+    const response = await sendAsync(path, request);
+    const parsed = schema.safeParse(await readBodyAsync(response));
     if (!parsed.success) {
       throw new ApiResponseValidationError(path, parsed.error.issues);
     }
@@ -195,14 +213,23 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       return requestAsync(casePath(caseId), caseStateSchema);
     },
 
-    uploadDocumentAsync(caseId, file, uploadOptions = {}) {
+    async uploadDocumentAsync(caseId, file, uploadOptions = {}) {
+      const path = `${casePath(caseId)}/documents`;
       const formData = new FormData();
-      formData.append("file", file, file.name);
-      return requestAsync(`${casePath(caseId)}/documents`, caseDocumentSchema, {
+      formData.append(uploadFieldName, file, file.name);
+      const response = await requestAsync(path, uploadDocumentsResponseSchema, {
         method: "POST",
         formData,
         signal: uploadOptions.signal,
       });
+      const [document] = response.documents;
+      if (!document) {
+        throw new ApiResponseValidationError(path, [
+          { path: ["documents"], message: "No document was returned" },
+        ]);
+      }
+
+      return document;
     },
 
     startRunAsync(caseId) {
@@ -235,41 +262,99 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       );
     },
 
-    askAsync(caseId, question) {
-      return requestAsync(`${casePath(caseId)}/ask`, askResponseSchema, {
+    async askAsync(caseId, question, askOptions = {}) {
+      const path = `${casePath(caseId)}/ask`;
+      const response = await sendAsync(path, {
         method: "POST",
         json: askRequestSchema.parse({ question }),
+        signal: askOptions.signal,
+        accept: "text/event-stream",
       });
+      if (!response.body) {
+        throw new ApiNetworkError("The answer did not arrive. Try again.");
+      }
+
+      let result: AskResult | undefined;
+      let failure: ApiError | undefined;
+      await readServerSentEventsAsync(response.body, ({ event, data }) => {
+        const payload = parseJson(data);
+        if (event === "answer-delta") {
+          const delta = askDeltaSchema.safeParse(payload);
+          if (delta.success) {
+            askOptions.onDelta?.(delta.data.text);
+          }
+
+          return;
+        }
+
+        if (event === "answer") {
+          const parsed = askResultSchema.safeParse(payload);
+          if (!parsed.success) {
+            throw new ApiResponseValidationError(path, parsed.error.issues);
+          }
+
+          result = parsed.data;
+          return;
+        }
+
+        if (event === "error") {
+          const parsed = apiErrorBodySchema.safeParse(payload);
+          const details = parsed.success ? parsed.data : {};
+          failure = new ApiError(
+            details.message ?? "The assistant could not answer right now. Try again.",
+            response.status,
+            { code: details.error ?? "ask-failed", body: payload },
+          );
+        }
+      });
+
+      if (failure) {
+        throw failure;
+      }
+
+      if (!result) {
+        throw new ApiNetworkError("The answer stream ended early. Try again.");
+      }
+
+      return result;
     },
 
     updateSectionAsync(caseId, deliverableId, sectionId, update) {
       return requestAsync(
         `${casePath(caseId)}/deliverables/${segment(deliverableId)}/sections/${segment(sectionId)}`,
-        deliverableSectionSchema,
+        deliverableSchema,
         { method: "PATCH", json: sectionUpdateRequestSchema.parse(update) },
       );
     },
 
-    resolveOpenQuestionAsync(caseId, questionId, note) {
-      return requestAsync(
+    async resolveOpenQuestionAsync(caseId, questionId, note) {
+      const response = await requestAsync(
         `${casePath(caseId)}/open-questions/${segment(questionId)}/resolve`,
-        openQuestionSchema,
-        { method: "POST", json: reviewNoteRequestSchema.parse({ note }) },
+        openQuestionUpdateResponseSchema,
+        {
+          method: "POST",
+          json: reviewNoteRequestSchema.parse({ note: note?.trim() || undefined }),
+        },
       );
+      return response.finding;
     },
 
-    dismissOpenQuestionAsync(caseId, questionId, note) {
-      return requestAsync(
+    async dismissOpenQuestionAsync(caseId, questionId, note) {
+      const response = await requestAsync(
         `${casePath(caseId)}/open-questions/${segment(questionId)}/dismiss`,
-        openQuestionSchema,
-        { method: "POST", json: reviewNoteRequestSchema.parse({ note }) },
+        openQuestionUpdateResponseSchema,
+        {
+          method: "POST",
+          json: reviewNoteRequestSchema.parse({ note: note?.trim() || undefined }),
+        },
       );
+      return response.finding;
     },
 
     approveCaseAsync(caseId, note) {
-      return requestAsync(`${casePath(caseId)}/approve`, caseSchema, {
+      return requestAsync(`${casePath(caseId)}/approve`, approveCaseResponseSchema, {
         method: "POST",
-        json: reviewNoteRequestSchema.parse({ note }),
+        json: reviewNoteRequestSchema.parse({ note: note?.trim() || undefined }),
       });
     },
 

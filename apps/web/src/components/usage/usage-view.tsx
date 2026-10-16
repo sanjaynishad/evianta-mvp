@@ -1,4 +1,4 @@
-import type { UsageCaseRow, UsageSummary } from "@evianta/core";
+import type { UsageCaseRow, UsageSummary, UsageTotals, UseCase } from "@evianta/core";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,11 @@ export interface UsageViewProps {
   nextPageHref?: string;
 }
 
-type UseCaseTotalsRow = UsageSummary["byUseCase"][number];
+type UseCaseTotalsRow = UsageTotals & { useCase: string };
+
+function labelForUseCase(useCase: string): string {
+  return useCase in useCaseLabels ? useCaseLabels[useCase as UseCase] : "No use case";
+}
 
 const caseColumns: DataTableColumn<UsageCaseRow>[] = [
   {
@@ -50,7 +54,7 @@ const caseColumns: DataTableColumn<UsageCaseRow>[] = [
     cell: (row) =>
       row.isSample ? (
         <Badge variant="info">Sample</Badge>
-      ) : row.sourceCaseId ? (
+      ) : row.isCopy ? (
         <Badge variant="outline">Copy</Badge>
       ) : (
         <Badge variant="neutral">Own</Badge>
@@ -90,20 +94,28 @@ const caseColumns: DataTableColumn<UsageCaseRow>[] = [
 ];
 
 const useCaseColumns: DataTableColumn<UseCaseTotalsRow>[] = [
-  { id: "useCase", header: "Use case", cell: (row) => useCaseLabels[row.useCase] },
+  { id: "useCase", header: "Use case", cell: (row) => labelForUseCase(row.useCase) },
   { id: "cases", header: "Cases", numeric: true, cell: (row) => formatNumber(row.cases) },
   { id: "runs", header: "Runs", numeric: true, cell: (row) => formatNumber(row.runs) },
   { id: "visitors", header: "Visitors", numeric: true, cell: (row) => formatNumber(row.visitors) },
-  { id: "tokens", header: "Tokens", numeric: true, cell: (row) => formatNumber(row.tokens) },
+  {
+    id: "tokens",
+    header: "Tokens",
+    numeric: true,
+    cell: (row) => formatNumber(row.tokenUsage.total),
+  },
   { id: "cost", header: "Cost", numeric: true, cell: (row) => formatUsd(row.costEstimate) },
 ];
 
 export function UsageView({ cases, summary, fixtureMode, nextPageHref }: UsageViewProps) {
+  const useCaseRows: UseCaseTotalsRow[] = Object.entries(summary.byUseCase).map(
+    ([useCase, totals]) => ({ ...totals, useCase }),
+  );
   const totals = [
     { label: "Cases", value: formatNumber(summary.totals.cases) },
     { label: "Runs", value: formatNumber(summary.totals.runs) },
     { label: "Visitors", value: formatNumber(summary.totals.visitors) },
-    { label: "Tokens", value: formatNumber(summary.totals.tokens) },
+    { label: "Tokens", value: formatNumber(summary.totals.tokenUsage.total) },
     { label: "Model cost", value: formatUsd(summary.totals.costEstimate) },
   ];
 
@@ -128,11 +140,7 @@ export function UsageView({ cases, summary, fixtureMode, nextPageHref }: UsageVi
         <h2 id="usage-by-use-case" className="text-base font-semibold">
           Totals per use case
         </h2>
-        <DataTable
-          columns={useCaseColumns}
-          rows={summary.byUseCase}
-          getRowId={(row) => row.useCase}
-        />
+        <DataTable columns={useCaseColumns} rows={useCaseRows} getRowId={(row) => row.useCase} />
       </section>
       <section aria-labelledby="usage-cases" className="flex flex-col gap-3">
         <h2 id="usage-cases" className="text-base font-semibold">

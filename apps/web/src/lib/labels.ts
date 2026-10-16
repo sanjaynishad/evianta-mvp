@@ -2,7 +2,7 @@ import type {
   AgentRole,
   CaseStatus,
   DeliverableFormat,
-  DocumentProcessingStatus,
+  DocumentStatus,
   ExtractionMethod,
   FindingSeverity,
   SectionReviewStatus,
@@ -69,11 +69,11 @@ export const findingSeverityLabels: Record<FindingSeverity, string> = {
   info: "Note",
 };
 
-export const documentProcessingLabels: Record<DocumentProcessingStatus, string> = {
-  queued: "Queued",
-  "reading-text": "Reading text",
-  ocr: "OCR in progress",
+export const documentStatusLabels: Record<DocumentStatus, string> = {
+  pending: "Queued",
+  processing: "Reading",
   ready: "Ready",
+  partial: "Partly read",
   failed: "Failed",
 };
 

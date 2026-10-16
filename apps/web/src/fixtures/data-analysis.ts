@@ -1,4 +1,5 @@
 import type { ChartSpecInput, CaseStateInput } from "@evianta/core";
+import { extractionSummary } from "./documents";
 
 const caseId = "sample-data-analysis";
 const createdAt = "2026-09-29T04:30:00.000Z";
@@ -131,9 +132,9 @@ export const dataAnalysisCaseState: CaseStateInput = {
       name: salesFile.name,
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       size: 482113,
-      gcsPath: `cases/${caseId}/documents/${salesFile.id}`,
       uploadedAt: "2026-09-29T04:31:10.000Z",
-      processing: { status: "ready", method: "parse", confidence: 1 },
+      status: "ready",
+      extraction: extractionSummary("parse", 1),
     },
   ],
   tasks: [
@@ -315,10 +316,5 @@ export const dataAnalysisCaseState: CaseStateInput = {
       })),
     },
   ],
-  latestRun: {
-    runId: "a-run-1",
-    status: "completed",
-    startedAt: "2026-09-29T04:32:00.000Z",
-    finishedAt,
-  },
+  run: { active: false, lastEventSeq: 0, lastRunId: "a-run-1", lastEventType: "run-completed" },
 };

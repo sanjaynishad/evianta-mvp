@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { CaseDocument, CaseState, RunEvent } from "@evianta/core";
+import type { CaseDocument, CaseState, DocumentStatus, RunEvent } from "@evianta/core";
 import { toast } from "@/components/ui/sonner";
 import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { useResource } from "@/hooks/use-resource";
@@ -43,7 +43,7 @@ export type WorkspaceAction = "run" | "retry";
 
 const replayPaceMs = 450;
 const processingPollMs = 3000;
-const processingStatuses = new Set(["queued", "reading-text", "ocr"]);
+const processingStatuses = new Set<DocumentStatus>(["pending", "processing"]);
 
 let requestCounter = 0;
 
@@ -78,18 +78,27 @@ export function useCaseWorkspace(
   const caseState = useResource(`case:${caseId}`, () => dataSource.getCaseStateAsync(caseId));
   const [live, setLive] = useState<LiveProgress | null>(null);
   const [streamRequest, setStreamRequest] = useState<StreamRequest | null>(null);
-  const [finishedRunIds, setFinishedRunIds] = useState<string[]>([]);
+  // Seq of the last terminal event seen; older case state still reports that run as active.
+  const [terminalSeq, setTerminalSeq] = useState(0);
   const [connection, setConnection] = useState<StreamConnectionState>();
   const [busyAction, setBusyAction] = useState<WorkspaceAction>();
   const [uploads, setUploads] = useState<LocalUpload[]>([]);
   const state = caseState.data;
   const { reload, mutate } = caseState;
 
-  const runningRunId = state?.latestRun?.status === "running" ? state.latestRun.runId : undefined;
-  const autoRequest: StreamRequest | null =
-    runningRunId && !finishedRunIds.includes(runningRunId)
-      ? { id: -1, runId: runningRunId, replay: false }
-      : null;
+  const activeRun =
+    state?.run.active && state.run.lastEventSeq >= terminalSeq ? state.run : undefined;
+  const lastEventIsTerminal =
+    activeRun?.lastEventType === "run-completed" || activeRun?.lastEventType === "run-failed";
+  const autoRequest: StreamRequest | null = activeRun
+    ? {
+        id: -1,
+        // Until the new run's first event is stored, the cursor still names the previous run.
+        runId: lastEventIsTerminal ? undefined : activeRun.lastRunId,
+        replay: false,
+        lastEventId: activeRun.lastEventSeq,
+      }
+    : null;
   const activeRequest = streamRequest ?? autoRequest;
 
   const showReadOnlyToast = useCallback(
@@ -121,13 +130,10 @@ export function useCaseWorkspace(
     });
   });
 
-  const handleTerminal = useLatestCallback((runId: string | undefined) => {
-    if (runId) {
-      setFinishedRunIds((current) => [...current, runId]);
-    }
-
+  const handleTerminal = useLatestCallback((event: RunEvent) => {
+    setTerminalSeq((current) => Math.max(current, event.seq));
     setStreamRequest(null);
-    void settleAfterRunAsync(runId);
+    void settleAfterRunAsync(event.runId);
   });
 
   async function settleAfterRunAsync(runId: string | undefined) {
@@ -158,7 +164,7 @@ export function useCaseWorkspace(
 
     const handlers = {
       onEvent: (event: RunEvent) => handleEvent(event, requestReplay),
-      onTerminal: () => handleTerminal(requestRunId),
+      onTerminal: (event: RunEvent) => handleTerminal(event),
       onError: (error: Error) => handleStreamError(error),
       onConnectionChange: setConnection,
     };
@@ -187,9 +193,7 @@ export function useCaseWorkspace(
   ]);
 
   const hasProcessingDocuments = Boolean(
-    state?.documents.some(
-      (document) => document.processing && processingStatuses.has(document.processing.status),
-    ),
+    state?.documents.some((document) => processingStatuses.has(document.status)),
   );
 
   useEffect(() => {
@@ -217,6 +221,7 @@ export function useCaseWorkspace(
           ...createRunProgress(state),
           runId,
           status: "running",
+          error: undefined,
           announcement: action === "run" ? "Starting the run." : "Retrying the failed steps.",
         },
         replay: false,
@@ -225,7 +230,7 @@ export function useCaseWorkspace(
         id: nextRequestId(),
         runId,
         replay: false,
-        lastEventId: state.latestRun?.lastEventSeq,
+        lastEventId: state.run.lastEventSeq,
       });
       reload();
     } catch (error) {
@@ -240,12 +245,13 @@ export function useCaseWorkspace(
   }
 
   function replay() {
-    if (!state?.latestRun) {
+    const runId = state?.run.lastRunId;
+    if (!state || !runId) {
       return;
     }
 
     setLive({ progress: createReplayProgress(state), replay: true });
-    setStreamRequest({ id: nextRequestId(), runId: state.latestRun.runId, replay: true });
+    setStreamRequest({ id: nextRequestId(), runId, replay: true });
   }
 
   async function uploadAsync(files: File[]) {

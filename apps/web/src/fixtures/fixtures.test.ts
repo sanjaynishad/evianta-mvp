@@ -118,7 +118,7 @@ describe("run event fixtures", () => {
 
       expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
       expect(isTerminalRunEvent(events.at(-1)!)).toBe(true);
-      expect(state.latestRun?.lastEventSeq).toBe(events.length);
+      expect(state.run.lastEventSeq).toBe(events.length);
 
       const replayed = events.reduce(applyRunEvent, createReplayProgress(state));
       expect(replayed.status).toBe("completed");

@@ -17,7 +17,8 @@ export interface SubscribeToRunEventsOptions extends RunStreamOptions {
   reconnectDelayMs?: number;
 }
 
-export const lastEventIdParam = "lastEventId";
+// The API resumes after the larger of Last-Event-ID and this query parameter.
+export const resumeCursorParam = "after";
 
 export function parseRunEventData(data: unknown): RunEvent {
   let raw: unknown;
@@ -38,14 +39,14 @@ export function parseRunEventData(data: unknown): RunEvent {
 }
 
 // EventSource cannot set headers on a fresh connection, so a manual resume passes the last
-// seen sequence as a query parameter. Automatic browser reconnects send Last-Event-ID.
+// seen sequence as a query parameter.
 export function withLastEventId(streamUrl: string, lastEventId: number): string {
   if (lastEventId <= 0) {
     return streamUrl;
   }
 
   const url = new URL(streamUrl);
-  url.searchParams.set(lastEventIdParam, String(lastEventId));
+  url.searchParams.set(resumeCursorParam, String(lastEventId));
   return url.toString();
 }
 

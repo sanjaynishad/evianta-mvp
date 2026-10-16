@@ -1,14 +1,17 @@
 import {
   isTerminalRunEvent,
-  type AskResponse,
+  type AskResult,
   type Case,
   type CaseDocument,
   type CaseState,
   type CaseUsage,
   type ExtractionMethod,
-  type OpenQuestion,
+  type Finding,
   type RunEvent,
+  type RunMode,
+  type RunStartResponse,
   type Task,
+  type UsageCaseRow,
   type UsageSummary,
   type UsageTotals,
 } from "@evianta/core";
@@ -19,6 +22,7 @@ import {
   sampleRunEvents,
   toUsageRow,
 } from "@/fixtures";
+import { extractionSummary } from "@/fixtures/documents";
 import { buildRunEvents, collectDependents, toFailedCaseState } from "@/fixtures/run-events";
 import { ApiError, SampleReadOnlyError } from "@/lib/api/errors";
 import { getVisitorId } from "@/lib/visitor";
@@ -102,15 +106,38 @@ function addToUsage(
   };
 }
 
+function startResponse(caseId: string, runId: string, mode: RunMode): RunStartResponse {
+  return { caseId, runId, mode, streamUrl: `/cases/${encodeURIComponent(caseId)}/stream` };
+}
+
+function addTotals(totals: UsageTotals, row: UsageCaseRow): UsageTotals {
+  return {
+    cases: totals.cases + 1,
+    samples: totals.samples + (row.isSample ? 1 : 0),
+    copies: totals.copies + (row.isCopy ? 1 : 0),
+    runs: totals.runs + row.runCount,
+    visitors: totals.visitors,
+    tokenUsage: {
+      input: totals.tokenUsage.input + row.tokenUsage.input,
+      output: totals.tokenUsage.output + row.tokenUsage.output,
+      total: totals.tokenUsage.total + row.tokenUsage.total,
+    },
+    costEstimate: totals.costEstimate + row.costEstimate,
+  };
+}
+
 function totalsFor(states: CaseState[]): UsageTotals {
   const rows = states.map(toUsageRow);
-  return {
-    cases: rows.length,
-    runs: rows.reduce((total, row) => total + row.runCount, 0),
+  const empty: UsageTotals = {
+    cases: 0,
+    samples: 0,
+    copies: 0,
+    runs: 0,
     visitors: new Set(rows.map((row) => row.visitorId).filter(Boolean)).size,
-    tokens: rows.reduce((total, row) => total + row.tokenUsage.total, 0),
-    costEstimate: rows.reduce((total, row) => total + row.costEstimate, 0),
+    tokenUsage: { input: 0, output: 0, total: 0 },
+    costEstimate: 0,
   };
+  return rows.reduce(addTotals, empty);
 }
 
 export function createFixtureDataSource(options: FixtureDataSourceOptions = {}): CaseDataSource {
@@ -137,7 +164,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
   function requireState(caseId: string): CaseState {
     const state = states.get(caseId);
     if (!state) {
-      throw new ApiError("This case could not be found.", 404, { reason: "not-found" });
+      throw new ApiError("This case could not be found.", 404, { code: "not-found" });
     }
 
     return state;
@@ -172,25 +199,25 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
     recordedEvents.set(caseId, [...(recordedEvents.get(caseId) ?? []), ...pending.events]);
   }
 
-  function findQuestion(state: CaseState, questionId: string): OpenQuestion {
-    for (const finding of state.findings) {
-      const question = finding.openQuestions.find((candidate) => candidate.id === questionId);
-      if (question) {
-        return question;
-      }
+  function findQuestionFinding(state: CaseState, questionId: string): Finding {
+    const finding = state.findings.find((candidate) =>
+      candidate.openQuestions.some((question) => question.id === questionId),
+    );
+    if (finding) {
+      return finding;
     }
 
-    throw new ApiError("This open question could not be found.", 404, { reason: "not-found" });
+    throw new ApiError("This open question could not be found.", 404, { code: "not-found" });
   }
 
   function updateQuestion(
     caseId: string,
     questionId: string,
-    status: OpenQuestion["status"],
+    status: "resolved" | "dismissed",
     note: string | undefined,
-  ): OpenQuestion {
+  ): Finding {
     const state = requireEditable(caseId);
-    findQuestion(state, questionId);
+    findQuestionFinding(state, questionId);
     const resolvedAt = now().toISOString();
     const next: CaseState = {
       ...state,
@@ -204,7 +231,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
       })),
     };
     states.set(caseId, next);
-    return clone(findQuestion(next, questionId));
+    return clone(findQuestionFinding(next, questionId));
   }
 
   return {
@@ -256,6 +283,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         evidence: [],
         deliverables: [],
         documents: [],
+        run: { active: false, lastEventSeq: 0 },
       });
       return wait(clone(created));
     },
@@ -299,15 +327,9 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         name: file.name,
         mimeType: file.type || "application/octet-stream",
         size: file.size,
-        gcsPath: `cases/${caseId}/documents/${id}`,
         uploadedAt: now().toISOString(),
-        processing: {
-          status: "ready",
-          method,
-          confidence: method === "parse" ? 1 : 0.9,
-          handwritingDetected: false,
-          warnings: [],
-        },
+        status: "ready",
+        extraction: extractionSummary(method, method === "parse" ? 1 : 0.9),
       };
       states.set(caseId, { ...touch(state, {}), documents: [...state.documents, document] });
       await new Promise((resolve) => setTimeout(resolve, replayIntervalMs));
@@ -317,7 +339,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
     async startRunAsync(caseId) {
       const state = requireEditable(caseId);
       if (pendingRuns.has(caseId)) {
-        return { runId: pendingRuns.get(caseId)?.runId ?? "" };
+        return startResponse(caseId, pendingRuns.get(caseId)?.runId ?? "", "run");
       }
 
       const useCase = state.case.useCase ?? "data-analysis";
@@ -366,7 +388,6 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
             ...failed.case,
             usage: addToUsage(previousUsage, completedTasks, startedAt, true),
           },
-          latestRun: failed.latestRun && { ...failed.latestRun, startedAt, finishedAt: startedAt },
         };
       } else {
         events = buildRunEvents(planned, eventOptions);
@@ -377,13 +398,11 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
             status: "completed",
             usage: addToUsage(previousUsage, planned.tasks, startedAt, true),
           },
-          latestRun: {
-            runId,
-            mode: "run",
-            status: "completed",
-            startedAt,
-            finishedAt: startedAt,
+          run: {
+            active: false,
             lastEventSeq: events.at(-1)?.seq ?? lastSeq,
+            lastRunId: runId,
+            lastEventType: "run-completed",
           },
         };
       }
@@ -401,9 +420,9 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         })),
         findings: [],
         deliverables: [],
-        latestRun: { runId, mode: "run", status: "running", startedAt, lastEventSeq: lastSeq },
+        run: { ...state.run, active: true, lastEventSeq: lastSeq },
       });
-      return wait({ runId });
+      return wait(startResponse(caseId, runId, "run"));
     },
 
     async retryRunAsync(caseId) {
@@ -413,7 +432,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         .map((task) => task.id);
       if (failedIds.length === 0) {
         throw new ApiError("There are no failed steps to retry.", 409, {
-          reason: "nothing-to-retry",
+          code: "nothing-to-retry",
         });
       }
 
@@ -465,21 +484,19 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
             status: "completed",
             usage: addToUsage(usage, retriedTasks, startedAt, true),
           },
-          latestRun: {
-            runId,
-            mode: "retry",
-            status: "completed",
-            startedAt,
-            finishedAt: startedAt,
+          run: {
+            active: false,
             lastEventSeq: events.at(-1)?.seq ?? lastSeq,
+            lastRunId: runId,
+            lastEventType: "run-completed",
           },
         },
       });
       states.set(caseId, {
         ...touch(state, { status: "in-progress" }),
-        latestRun: { runId, mode: "retry", status: "running", startedAt, lastEventSeq: lastSeq },
+        run: { ...state.run, active: true, lastEventSeq: lastSeq },
       });
-      return wait({ runId });
+      return wait(startResponse(caseId, runId, "retry"));
     },
 
     subscribeToRun(
@@ -492,7 +509,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         pending && (!streamOptions.runId || pending.runId === streamOptions.runId),
       );
       const runId =
-        streamOptions.runId ?? (isPending ? pending?.runId : states.get(caseId)?.latestRun?.runId);
+        streamOptions.runId ?? (isPending ? pending?.runId : states.get(caseId)?.run.lastRunId);
       const source = isPending && pending ? pending.events : (recordedEvents.get(caseId) ?? []);
       const queue = source.filter(
         (event) =>
@@ -541,7 +558,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         (candidate) => candidate.id === deliverableId,
       );
       if (!deliverable) {
-        throw new ApiError("This deliverable could not be found.", 404, { reason: "not-found" });
+        throw new ApiError("This deliverable could not be found.", 404, { code: "not-found" });
       }
 
       return wait(clone(deliverable));
@@ -551,7 +568,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
       return undefined;
     },
 
-    async askAsync(caseId, question): Promise<AskResponse> {
+    async askAsync(caseId, question, askOptions = {}): Promise<AskResult> {
       const state = requireState(caseId);
       const words = question
         .toLowerCase()
@@ -563,26 +580,37 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         ),
       );
       if (matches.length === 0) {
+        const message = "The sample work record does not cover this question.";
+        askOptions.onDelta?.(message);
         return wait({
-          answer: "The sample work record does not cover this question.",
-          supported: false,
-          findingIds: [],
+          status: "not-supported",
+          message,
           evidenceIds: [],
+          findingIds: [],
+          canFlagForReview: true,
+          retrievedFindingIds: [],
         });
       }
 
+      const answer = matches.map((finding) => finding.summary).join(" ");
+      const evidenceIds = matches.flatMap((finding) =>
+        finding.evidence.map((evidence) => evidence.id),
+      );
+      askOptions.onDelta?.(answer);
       return wait({
-        answer: matches.map((finding) => finding.summary).join(" "),
-        supported: true,
+        status: "answered",
+        answer,
         findingIds: matches.map((finding) => finding.id),
-        evidenceIds: matches.flatMap((finding) => finding.evidence.map((evidence) => evidence.id)),
+        evidenceIds,
+        evidence: state.evidence.filter((evidence) => evidenceIds.includes(evidence.id)),
+        retrievedFindingIds: matches.map((finding) => finding.id),
       });
     },
 
     async updateSectionAsync(caseId, deliverableId, sectionId, update) {
       const state = requireEditable(caseId);
       const reviewedAt = now().toISOString();
-      let updated: CaseState["deliverables"][number]["sections"][number] | undefined;
+      let found = false;
       const deliverables = state.deliverables.map((deliverable) =>
         deliverable.id !== deliverableId
           ? deliverable
@@ -593,22 +621,26 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
                   return section;
                 }
 
-                updated = {
+                found = true;
+                return {
                   ...section,
                   ...(update.editedContent !== undefined
-                    ? { editedContent: update.editedContent, editedAt: reviewedAt }
+                    ? {
+                        editedContent: update.editedContent ?? undefined,
+                        editedAt: update.editedContent === null ? undefined : reviewedAt,
+                      }
                     : {}),
                   ...(update.reviewStatus ? { reviewStatus: update.reviewStatus, reviewedAt } : {}),
                   ...(update.reviewComment !== undefined
-                    ? { reviewComment: update.reviewComment }
+                    ? { reviewComment: update.reviewComment ?? undefined }
                     : {}),
                 };
-                return updated;
               }),
             },
       );
-      if (!updated) {
-        throw new ApiError("This section could not be found.", 404, { reason: "not-found" });
+      const updated = deliverables.find((deliverable) => deliverable.id === deliverableId);
+      if (!found || !updated) {
+        throw new ApiError("This section could not be found.", 404, { code: "not-found" });
       }
 
       states.set(caseId, { ...state, deliverables });
@@ -625,17 +657,19 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
 
     async approveCaseAsync(caseId, note) {
       const state = requireEditable(caseId);
-      const unresolvedQuestionIds = state.findings.flatMap((finding) =>
-        finding.openQuestions
-          .filter((question) => question.status === "open")
-          .map((question) => question.id),
+      const unresolvedQuestions = state.findings.flatMap((finding) =>
+        finding.openQuestions.filter((question) => question.status === "open"),
       );
       const next = touch(state, {
         status: "completed",
-        approval: { approvedAt: now().toISOString(), unresolvedQuestionIds, note },
+        approval: {
+          approvedAt: now().toISOString(),
+          unresolvedQuestionIds: unresolvedQuestions.map((question) => question.id),
+          note,
+        },
       });
       states.set(caseId, next);
-      return wait(clone(next.case));
+      return wait(clone({ case: next.case, unresolvedQuestions }));
     },
 
     async listUsageCasesAsync() {
@@ -647,11 +681,11 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
 
     async getUsageSummaryAsync(): Promise<UsageSummary> {
       const all = [...states.values()];
-      const byUseCase = (["data-analysis", "tax-notice", "msme-payment"] as const).map(
-        (useCase) => ({
+      const byUseCase = Object.fromEntries(
+        (["data-analysis", "tax-notice", "msme-payment"] as const).map((useCase) => [
           useCase,
-          ...totalsFor(all.filter((state) => state.case.useCase === useCase)),
-        }),
+          totalsFor(all.filter((state) => state.case.useCase === useCase)),
+        ]),
       );
       return wait({ totals: totalsFor(all), byUseCase });
     },

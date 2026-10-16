@@ -56,7 +56,7 @@ export function buildRunEvents(state: CaseState, options: BuildRunEventsOptions)
   const tasks = state.tasks.filter((task) => included.has(task.id));
   const blocked = new Set(options.failTaskId ? collectDependents(tasks, options.failTaskId) : []);
   const startMs = Date.parse(
-    options.startTime ?? state.latestRun?.startedAt ?? state.case.createdAt,
+    options.startTime ?? state.case.usage?.lastRunAt ?? state.case.createdAt,
   );
   const stepMs = options.stepMs ?? 4000;
   let seq = (options.startSeq ?? 1) - 1;
@@ -207,7 +207,7 @@ export function toFailedCaseState(state: CaseState, options: FailedStateOptions)
   const cost = roundCost(
     completedTasks.reduce((total, task) => total + (task.costEstimate ?? 0), 0),
   );
-  const startedAt = state.latestRun?.startedAt ?? state.case.createdAt;
+  const startedAt = state.case.usage?.lastRunAt ?? state.case.createdAt;
 
   return {
     ...state,
@@ -225,13 +225,11 @@ export function toFailedCaseState(state: CaseState, options: FailedStateOptions)
     tasks,
     findings: state.findings.filter((finding) => completedTaskIds.has(finding.taskId)),
     deliverables: [],
-    latestRun: {
-      runId: options.runId,
-      mode: "run",
-      status: "failed",
-      startedAt,
-      finishedAt: startedAt,
+    run: {
+      active: false,
       lastEventSeq: options.lastEventSeq,
+      lastRunId: options.runId,
+      lastEventType: "run-failed",
     },
   };
 }

@@ -99,7 +99,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
     ? state.findings.filter((finding) => streamedFindingIds.has(finding.id))
     : state.findings;
   const showDeliverables = !workspace.replaying;
-  const hasRun = Boolean(state.latestRun) || (caseItem.usage?.runCount ?? 0) > 0;
+  const hasRun = Boolean(state.run.lastRunId) || (caseItem.usage?.runCount ?? 0) > 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -122,7 +122,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2 print:hidden">
-            {state.latestRun && !workspace.streaming ? (
+            {state.run.lastRunId && !workspace.streaming ? (
               <Button variant="outline" onClick={workspace.replay}>
                 <History aria-hidden />
                 Replay run

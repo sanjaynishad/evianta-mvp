@@ -20,12 +20,17 @@ export const rawSampleCaseStates: CaseStateInput[] = [
 ];
 
 function withRecordedRun(state: CaseState): { state: CaseState; events: RunEvent[] } {
-  const runId = state.latestRun?.runId ?? `${state.case.id}-run-1`;
+  const runId = state.run.lastRunId ?? `${state.case.id}-run-1`;
   const events = buildRunEvents(state, { runId });
   return {
     state: {
       ...state,
-      latestRun: state.latestRun ? { ...state.latestRun, lastEventSeq: events.length } : undefined,
+      run: {
+        active: false,
+        lastEventSeq: events.length,
+        lastRunId: runId,
+        lastEventType: events.at(-1)?.type,
+      },
     },
     events,
   };
@@ -100,9 +105,12 @@ export function toUsageRow(state: CaseState): UsageCaseRow {
     status: state.case.status,
     visitorId: state.case.visitorId,
     isSample: state.case.isSample,
+    isCopy: Boolean(state.case.sourceCaseId),
     sourceCaseId: state.case.sourceCaseId,
     createdAt: state.case.createdAt,
+    updatedAt: state.case.updatedAt,
     lastRunAt: usage?.lastRunAt,
+    approved: Boolean(state.case.approval),
     documentCount: state.documents.length,
     runCount: usage?.runCount ?? 0,
     tokenUsage: { input: inputTokens, output: outputTokens, total: inputTokens + outputTokens },

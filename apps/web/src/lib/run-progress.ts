@@ -45,28 +45,41 @@ export interface RunProgress {
 }
 
 function progressStatusFromState(state: CaseState): RunProgressStatus {
-  if (state.latestRun) {
-    return state.latestRun.status;
+  if (state.run.active) {
+    return "running";
+  }
+
+  if (state.run.lastEventType === "run-failed") {
+    return "failed";
+  }
+
+  if (state.run.lastEventType === "run-completed") {
+    return "completed";
   }
 
   if (state.case.status === "failed") {
     return "failed";
   }
 
-  if (state.case.status === "planning" || state.case.status === "in-progress") {
-    return "running";
-  }
-
   return "idle";
 }
 
+// The case state does not carry a run-level error, only that the last run failed.
+export const runStoppedMessage = "The run stopped before it finished. Run the case again.";
+
 export function createRunProgress(state: CaseState): RunProgress {
   const usage = state.case.usage;
+  const status = progressStatusFromState(state);
   const failedTask = state.tasks.find((task) => task.status === "failed");
+  let error = failedTask?.lastError;
+  if (!error && status === "failed") {
+    error = runStoppedMessage;
+  }
+
   return {
-    runId: state.latestRun?.runId,
-    mode: state.latestRun?.mode ?? "run",
-    status: progressStatusFromState(state),
+    runId: state.run.lastRunId,
+    mode: "run",
+    status,
     tasks: state.tasks.map((task) => ({
       id: task.id,
       title: task.title,
@@ -89,42 +102,21 @@ export function createRunProgress(state: CaseState): RunProgress {
     })),
     totalTokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
     totalCost: usage?.costEstimate ?? 0,
-    lastSeq: state.latestRun?.lastEventSeq ?? 0,
-    error: state.latestRun?.error ?? failedTask?.lastError,
+    lastSeq: state.run.lastEventSeq,
+    error,
     announcement: "",
   };
 }
 
-// A blank board for replaying a recorded run from its first event. A retry run only carries
-// events for the steps it re-ran, so its board keeps the other steps and lets the run-started
-// event reset the re-run ones.
+// The board for replaying the latest run from its first event. The replayed run-started event
+// resets what that run touched: every step for a normal run, only the re-run steps for a retry.
 export function createReplayProgress(state: CaseState): RunProgress {
-  const progress = createRunProgress(state);
-  const replayBase: RunProgress = {
-    ...progress,
+  return {
+    ...createRunProgress(state),
     status: "running",
     lastSeq: 0,
     error: undefined,
     announcement: "Replaying the recorded run.",
-  };
-  if (state.latestRun?.mode === "retry") {
-    return replayBase;
-  }
-
-  return {
-    ...replayBase,
-    tasks: progress.tasks.map((task) => ({
-      ...task,
-      status: "pending",
-      attempts: 0,
-      lastError: undefined,
-      tokenUsage: undefined,
-      costEstimate: undefined,
-      findingIds: [],
-    })),
-    findings: [],
-    totalTokens: 0,
-    totalCost: 0,
   };
 }
 
@@ -166,7 +158,14 @@ export function applyRunEvent(progress: RunProgress, event: RunEvent): RunProgre
           : [],
         tasks: progress.tasks.map((task) =>
           restarting.has(task.id) || !isRetry
-            ? { ...task, status: "pending", lastError: undefined, findingIds: [] }
+            ? {
+                ...task,
+                status: "pending",
+                lastError: undefined,
+                tokenUsage: undefined,
+                costEstimate: undefined,
+                findingIds: [],
+              }
             : task,
         ),
         announcement: isRetry ? "Retrying the failed steps." : "Run started.",

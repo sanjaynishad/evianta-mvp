@@ -141,7 +141,8 @@ export function DocumentPanel({
             </li>
           ))}
           {documents.map((document) => {
-            const processing = document.processing;
+            const extraction = document.extraction;
+            const reviewPages = extraction?.pagesNeedingReview ?? [];
             return (
               <li
                 key={document.id}
@@ -150,21 +151,25 @@ export function DocumentPanel({
               >
                 <span className="truncate text-sm font-medium">{document.name}</span>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <DocumentStatusBadge status={processing?.status ?? "ready"} />
-                  {processing?.handwritingDetected ? <HandwritingBadge /> : null}
+                  <DocumentStatusBadge status={document.status} />
+                  {extraction?.handwriting ? <HandwritingBadge /> : null}
                   <span className="figures text-xs text-muted-foreground">
                     {formatSize(document.size)}
                   </span>
                 </div>
-                {processing?.method ? (
+                {extraction ? (
                   <p className="text-xs text-muted-foreground">
-                    {extractionMethodLabels[processing.method]}
+                    {extractionMethodLabels[extraction.method]}
                   </p>
                 ) : null}
-                {processing?.error ? (
-                  <p className="text-xs text-danger">{processing.error}</p>
+                {reviewPages.length > 0 ? (
+                  <p className="text-xs text-warning">
+                    {reviewPages.length === 1 ? "Page" : "Pages"} {reviewPages.join(", ")} need
+                    review.
+                  </p>
                 ) : null}
-                {processing?.warnings.map((warning) => (
+                {document.error ? <p className="text-xs text-danger">{document.error}</p> : null}
+                {extraction?.warnings.map((warning) => (
                   <p key={warning} className="text-xs text-warning">
                     {warning}
                   </p>

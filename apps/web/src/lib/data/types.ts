@@ -2,15 +2,15 @@ import type {
   AgentDirectoryResponse,
   AgentProfile,
   AgentRole,
-  AskResponse,
+  ApproveCaseResponse,
+  AskResult,
   Case,
   CaseDocument,
   CaseState,
   CreateCaseRequest,
   Deliverable,
-  DeliverableSection,
   ExportFormat,
-  OpenQuestion,
+  Finding,
   RunCompletedEvent,
   RunEvent,
   RunFailedEvent,
@@ -22,6 +22,12 @@ import type {
 import type { DataSourceMode } from "@/lib/env";
 
 export type StreamConnectionState = "connecting" | "open" | "reconnecting" | "closed";
+
+export interface AskOptions {
+  // Receives the answer text as it streams in.
+  onDelta?: (text: string) => void;
+  signal?: AbortSignal;
+}
 
 export interface RunStreamHandlers {
   onEvent: (event: RunEvent) => void;
@@ -68,24 +74,16 @@ export interface CaseDataSource {
   getDeliverableAsync(caseId: string, deliverableId: string): Promise<Deliverable>;
   // Undefined when the data source cannot produce server-side exports.
   getExportUrl(caseId: string, deliverableId: string, format: ExportFormat): string | undefined;
-  askAsync(caseId: string, question: string): Promise<AskResponse>;
+  askAsync(caseId: string, question: string, options?: AskOptions): Promise<AskResult>;
   updateSectionAsync(
     caseId: string,
     deliverableId: string,
     sectionId: string,
     update: SectionUpdateRequest,
-  ): Promise<DeliverableSection>;
-  resolveOpenQuestionAsync(
-    caseId: string,
-    questionId: string,
-    note?: string,
-  ): Promise<OpenQuestion>;
-  dismissOpenQuestionAsync(
-    caseId: string,
-    questionId: string,
-    note?: string,
-  ): Promise<OpenQuestion>;
-  approveCaseAsync(caseId: string, note?: string): Promise<Case>;
+  ): Promise<Deliverable>;
+  resolveOpenQuestionAsync(caseId: string, questionId: string, note?: string): Promise<Finding>;
+  dismissOpenQuestionAsync(caseId: string, questionId: string, note?: string): Promise<Finding>;
+  approveCaseAsync(caseId: string, note?: string): Promise<ApproveCaseResponse>;
   listUsageCasesAsync(usageViewPath: string, query?: UsageCasesQuery): Promise<UsageCasesResponse>;
   getUsageSummaryAsync(usageViewPath: string): Promise<UsageSummary>;
 }

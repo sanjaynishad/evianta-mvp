@@ -14,6 +14,7 @@ import {
   createRunProgress,
   getBlockedTasks,
   getFailedTasks,
+  runStoppedMessage,
 } from "./run-progress";
 
 describe("run progress", () => {
@@ -72,12 +73,11 @@ describe("run progress", () => {
     const retryIds = [fixtureFailure.taskId, "c-task-prepare", "c-task-review"];
     const state: CaseState = {
       ...sample,
-      latestRun: {
-        runId: "retry-1",
-        mode: "retry",
-        status: "completed",
-        startedAt: "2026-10-03T10:00:00.000Z",
+      run: {
+        active: false,
         lastEventSeq: 20,
+        lastRunId: "retry-1",
+        lastEventType: "run-completed",
       },
     };
     const events = buildRunEvents(state, {
@@ -96,32 +96,27 @@ describe("run progress", () => {
     );
   });
 
-  it("starts a replay of a normal run from a blank board", () => {
+  it("clears the board when a replayed normal run starts", () => {
     const sample = getSampleStateForUseCase("data-analysis");
+    const [runStarted] = buildRunEvents(sample, { runId: "replay-1" });
 
-    const replay = createReplayProgress(sample);
+    const replay = applyRunEvent(createReplayProgress(sample), runStarted!);
 
     expect(replay.tasks.every((task) => task.status === "pending")).toBe(true);
     expect(replay.findings).toEqual([]);
   });
 
-  it("keeps a run-level error when no step failed", () => {
+  it("derives status from the run cursor and explains a run that stopped outside a step", () => {
     const sample = getSampleStateForUseCase("data-analysis");
-    const progress = createRunProgress({
+    const running = createRunProgress({ ...sample, run: { ...sample.run, active: true } });
+    const stopped = createRunProgress({
       ...sample,
-      case: { ...sample.case, status: "failed" },
-      latestRun: {
-        runId: "run-9",
-        mode: "run",
-        status: "failed",
-        startedAt: "2026-10-03T10:00:00.000Z",
-        lastEventSeq: 3,
-        error: "Planning did not finish. Try again.",
-      },
+      run: { active: false, lastEventSeq: 3, lastRunId: "run-9", lastEventType: "run-failed" },
     });
 
-    expect(progress.status).toBe("failed");
-    expect(getFailedTasks(progress)).toEqual([]);
-    expect(progress.error).toBe("Planning did not finish. Try again.");
+    expect(running.status).toBe("running");
+    expect(stopped.status).toBe("failed");
+    expect(getFailedTasks(stopped)).toEqual([]);
+    expect(stopped.error).toBe(runStoppedMessage);
   });
 });

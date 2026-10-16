@@ -1,4 +1,5 @@
 import type { CaseStateInput } from "@evianta/core";
+import { extractionSummary } from "./documents";
 
 const caseId = "sample-tax-notice";
 const createdAt = "2026-09-30T05:10:00.000Z";
@@ -35,9 +36,9 @@ export const taxNoticeCaseState: CaseStateInput = {
       name: notice.name,
       mimeType: "application/pdf",
       size: 184220,
-      gcsPath: `cases/${caseId}/documents/${notice.id}`,
       uploadedAt: "2026-09-30T05:11:00.000Z",
-      processing: { status: "ready", method: "pdf-text", confidence: 0.98 },
+      status: "ready",
+      extraction: extractionSummary("pdf-text", 0.98),
     },
     {
       id: form26as.id,
@@ -45,14 +46,12 @@ export const taxNoticeCaseState: CaseStateInput = {
       name: form26as.name,
       mimeType: "application/pdf",
       size: 902311,
-      gcsPath: `cases/${caseId}/documents/${form26as.id}`,
       uploadedAt: "2026-09-30T05:11:20.000Z",
-      processing: {
-        status: "ready",
-        method: "ocr",
-        confidence: 0.86,
+      status: "ready",
+      extraction: extractionSummary("ocr", 0.86, {
+        pageCount: 4,
         warnings: ["Page 3 is slightly skewed; amounts were cross-checked against totals."],
-      },
+      }),
     },
     {
       id: ledger.id,
@@ -60,9 +59,9 @@ export const taxNoticeCaseState: CaseStateInput = {
       name: ledger.name,
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       size: 61204,
-      gcsPath: `cases/${caseId}/documents/${ledger.id}`,
       uploadedAt: "2026-09-30T05:11:40.000Z",
-      processing: { status: "ready", method: "parse", confidence: 1 },
+      status: "ready",
+      extraction: extractionSummary("parse", 1),
     },
     {
       id: note.id,
@@ -70,15 +69,12 @@ export const taxNoticeCaseState: CaseStateInput = {
       name: note.name,
       mimeType: "image/jpeg",
       size: 1320442,
-      gcsPath: `cases/${caseId}/documents/${note.id}`,
       uploadedAt: "2026-09-30T05:12:05.000Z",
-      processing: {
-        status: "ready",
-        method: "handwriting",
-        confidence: 0.58,
-        handwritingDetected: true,
+      status: "ready",
+      extraction: extractionSummary("handwriting", 0.58, {
+        pagesNeedingReview: [1],
         warnings: ["Handwritten amounts should be checked against the original."],
-      },
+      }),
     },
   ],
   tasks: [
@@ -279,10 +275,5 @@ export const taxNoticeCaseState: CaseStateInput = {
       ],
     },
   ],
-  latestRun: {
-    runId: "b-run-1",
-    status: "completed",
-    startedAt: "2026-09-30T05:13:00.000Z",
-    finishedAt,
-  },
+  run: { active: false, lastEventSeq: 0, lastRunId: "b-run-1", lastEventType: "run-completed" },
 };

@@ -111,7 +111,7 @@ describe("parseRunEventData", () => {
 describe("withLastEventId", () => {
   it("adds the resume id only when there is one", () => {
     expect(withLastEventId(streamUrl, 0)).toBe(streamUrl);
-    expect(withLastEventId(streamUrl, 7)).toBe(`${streamUrl}?lastEventId=7`);
+    expect(withLastEventId(streamUrl, 7)).toBe(`${streamUrl}?after=7`);
   });
 });
 
@@ -145,7 +145,7 @@ describe("subscribeToRunEvents", () => {
   it("starts from a resume id and skips events at or before it", () => {
     const { handlers, source } = subscribe({ lastEventId: 2 });
 
-    expect(source().url).toBe(`${streamUrl}?lastEventId=2`);
+    expect(source().url).toBe(`${streamUrl}?after=2`);
     source().emit(taskStarted(2));
     source().emit(runCompleted(3));
 
@@ -187,7 +187,7 @@ describe("subscribeToRunEvents", () => {
     vi.advanceTimersByTime(100);
 
     expect(FakeEventSource.instances).toHaveLength(2);
-    expect(source().url).toBe(`${streamUrl}?lastEventId=2`);
+    expect(source().url).toBe(`${streamUrl}?after=2`);
   });
 
   it("stops after too many reconnect attempts during a persistent outage", () => {

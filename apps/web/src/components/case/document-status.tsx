@@ -2,28 +2,28 @@ import {
   CircleCheck,
   CircleX,
   Clock,
-  FileSearch,
+  FileExclamationPoint,
   LoaderCircle,
   PenLine,
   ScanText,
   type LucideIcon,
 } from "lucide-react";
-import type { DocumentProcessingStatus } from "@evianta/core";
+import type { DocumentStatus } from "@evianta/core";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
-import { documentProcessingLabels } from "@/lib/labels";
+import { documentStatusLabels } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 
-export type DocumentDisplayStatus = DocumentProcessingStatus | "uploading";
+export type DocumentDisplayStatus = DocumentStatus | "uploading";
 
 const statusMeta: Record<
   DocumentDisplayStatus,
   { icon: LucideIcon; variant: NonNullable<BadgeProps["variant"]>; spinning?: boolean }
 > = {
   uploading: { icon: LoaderCircle, variant: "primary", spinning: true },
-  queued: { icon: Clock, variant: "neutral" },
-  "reading-text": { icon: FileSearch, variant: "info", spinning: false },
-  ocr: { icon: ScanText, variant: "info" },
+  pending: { icon: Clock, variant: "neutral" },
+  processing: { icon: ScanText, variant: "info" },
   ready: { icon: CircleCheck, variant: "success" },
+  partial: { icon: FileExclamationPoint, variant: "warning" },
   failed: { icon: CircleX, variant: "danger" },
 };
 
@@ -43,7 +43,7 @@ export function DocumentStatusBadge({ status, className }: DocumentStatusBadgePr
           meta.spinning && "animate-spin [animation-duration:1.6s] motion-reduce:animate-none",
         )}
       />
-      {status === "uploading" ? "Uploading" : documentProcessingLabels[status]}
+      {status === "uploading" ? "Uploading" : documentStatusLabels[status]}
     </Badge>
   );
 }

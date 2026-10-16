@@ -1,4 +1,5 @@
 import type { CaseStateInput } from "@evianta/core";
+import { extractionSummary } from "./documents";
 
 const caseId = "sample-msme-payment";
 const createdAt = "2026-10-02T06:00:00.000Z";
@@ -35,9 +36,9 @@ export const msmePaymentCaseState: CaseStateInput = {
       name: invoices.name,
       mimeType: "application/pdf",
       size: 2210400,
-      gcsPath: `cases/${caseId}/documents/${invoices.id}`,
       uploadedAt: "2026-10-02T06:01:00.000Z",
-      processing: { status: "ready", method: "mixed", confidence: 0.91 },
+      status: "ready",
+      extraction: extractionSummary("mixed", 0.91),
     },
     {
       id: statement.id,
@@ -45,9 +46,9 @@ export const msmePaymentCaseState: CaseStateInput = {
       name: statement.name,
       mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       size: 40980,
-      gcsPath: `cases/${caseId}/documents/${statement.id}`,
       uploadedAt: "2026-10-02T06:01:20.000Z",
-      processing: { status: "ready", method: "parse", confidence: 1 },
+      status: "ready",
+      extraction: extractionSummary("parse", 1),
     },
     {
       id: udyam.id,
@@ -55,9 +56,9 @@ export const msmePaymentCaseState: CaseStateInput = {
       name: udyam.name,
       mimeType: "application/pdf",
       size: 120330,
-      gcsPath: `cases/${caseId}/documents/${udyam.id}`,
       uploadedAt: "2026-10-02T06:01:40.000Z",
-      processing: { status: "ready", method: "pdf-text", confidence: 0.99 },
+      status: "ready",
+      extraction: extractionSummary("pdf-text", 0.99),
     },
     {
       id: reminders.id,
@@ -65,9 +66,9 @@ export const msmePaymentCaseState: CaseStateInput = {
       name: reminders.name,
       mimeType: "application/pdf",
       size: 310220,
-      gcsPath: `cases/${caseId}/documents/${reminders.id}`,
       uploadedAt: "2026-10-02T06:02:00.000Z",
-      processing: { status: "ready", method: "pdf-text", confidence: 0.97 },
+      status: "ready",
+      extraction: extractionSummary("pdf-text", 0.97),
     },
   ],
   tasks: [
@@ -283,10 +284,5 @@ export const msmePaymentCaseState: CaseStateInput = {
       ],
     },
   ],
-  latestRun: {
-    runId: "c-run-1",
-    status: "completed",
-    startedAt: "2026-10-02T06:03:00.000Z",
-    finishedAt,
-  },
+  run: { active: false, lastEventSeq: 0, lastRunId: "c-run-1", lastEventType: "run-completed" },
 };

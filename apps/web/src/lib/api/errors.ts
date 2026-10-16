@@ -5,14 +5,15 @@ export interface ResponseIssue {
 
 export class ApiError extends Error {
   readonly status: number;
-  readonly reason?: string;
+  // The stable `error` code from the API, for example "run-in-progress".
+  readonly code?: string;
   readonly body?: unknown;
 
-  constructor(message: string, status: number, options: { reason?: string; body?: unknown } = {}) {
+  constructor(message: string, status: number, options: { code?: string; body?: unknown } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
-    this.reason = options.reason;
+    this.code = options.code;
     this.body = options.body;
   }
 }
@@ -24,7 +25,7 @@ export class SampleReadOnlyError extends ApiError {
     copyUrl: string,
     message = "Sample cases are read-only. Try this case to work on a copy.",
   ) {
-    super(message, 409, { reason: "sample-read-only" });
+    super(message, 409, { code: "sample-read-only" });
     this.name = "SampleReadOnlyError";
     this.copyUrl = copyUrl;
   }
