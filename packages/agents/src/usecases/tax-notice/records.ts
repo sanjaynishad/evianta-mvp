@@ -25,7 +25,7 @@ export type TaxColumnMap = Partial<Record<TaxColumnKind, number>>;
 // Checked in order, so "TAN of deductor" is a TAN column and "Tax deducted" is not an amount.
 const COLUMN_PATTERNS: ReadonlyArray<[TaxColumnKind, RegExp]> = [
   ["tan", /\btan\b/i],
-  ["tax", /\btds\b|tax deducted|tax credit|tax collected|\btcs\b/i],
+  ["tax", /\btds\b|tax deducted|tax credit/i],
   ["date", /date/i],
   ["quarter", /quarter/i],
   ["financialYear", /financial year|\bfy\b|\bf\.y\.?/i],
@@ -113,10 +113,31 @@ const MEASURE_PREFERENCES: Readonly<Record<TaxRecordSource, Record<TaxMeasure, R
   "tax-credit": { tax: /tax deducted|tds deducted/i, amount: /paid|credited/i },
 };
 
+// The transaction date decides the period; booking, deposit, and upload dates do not.
+const TRANSACTION_DATE = /transaction|deduct|payment|paid|credit/i;
+const NON_TRANSACTION_DATE = /booking|deposit|upload|challan|filing|processed/i;
+
 export interface ColumnSelection {
   columns: TaxColumnMap;
-  /** Measures with several candidate columns and no clear choice for this source. */
-  ambiguous: Array<{ measure: TaxMeasure; names: string[] }>;
+  /** Kinds with several candidate columns and no clear choice for this source. */
+  ambiguous: Array<{ measure: TaxMeasure | "date"; names: string[] }>;
+}
+
+function pickDateColumn(indexes: readonly number[], columnNames: readonly string[]) {
+  if (indexes.length === 1) {
+    return indexes[0];
+  }
+
+  const nameOf = (index: number) => columnNames[index] ?? "";
+  const transaction = indexes.filter((index) => TRANSACTION_DATE.test(nameOf(index)));
+
+  if (transaction.length === 1) {
+    return transaction[0];
+  }
+
+  const other = indexes.filter((index) => !NON_TRANSACTION_DATE.test(nameOf(index)));
+
+  return other.length === 1 ? other[0] : undefined;
 }
 
 export function selectTaxColumns(
@@ -128,6 +149,21 @@ export function selectTaxColumns(
   const ambiguous: ColumnSelection["ambiguous"] = [];
 
   for (const [kind, indexes] of Object.entries(candidates) as Array<[TaxColumnKind, number[]]>) {
+    if (kind === "date") {
+      const chosen = pickDateColumn(indexes, columnNames);
+
+      if (chosen === undefined) {
+        ambiguous.push({
+          measure: "date",
+          names: indexes.map((index) => columnNames[index] ?? ""),
+        });
+      } else {
+        columns.date = chosen;
+      }
+
+      continue;
+    }
+
     if (kind !== "tax" && kind !== "amount") {
       columns[kind] = indexes[0];
       continue;
@@ -190,6 +226,21 @@ export function classifyTaxRecordSource(
   }
 
   return undefined;
+}
+
+/** Tax collected at source is a different credit from TDS and is kept out of the reconciliation. */
+export function isTcsTable(
+  documentName: string,
+  tableName: string,
+  columnNames: readonly string[],
+): boolean {
+  const tcs = /\btcs\b|tax collected/i;
+  const tds = /\btds\b|tax deducted/i;
+
+  return (
+    (tcs.test(`${documentName} ${tableName}`) && !tds.test(tableName)) ||
+    (columnNames.some((name) => tcs.test(name)) && !columnNames.some((name) => tds.test(name)))
+  );
 }
 
 export function taxCreditStatementOf(documentName: string, tableName: string): TaxCreditStatement {
@@ -433,6 +484,11 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
         continue;
       }
 
+      if (isTcsTable(metadata.name, table.name, columnNames)) {
+        skip("it holds tax collected at source (TCS), which is not part of the TDS reconciliation");
+        continue;
+      }
+
       const source = classifyTaxRecordSource(metadata.name, table.name, columnNames);
 
       if (!source) {
@@ -455,9 +511,15 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
         continue;
       }
 
-      const warnings = ambiguous.map(
-        (entry) =>
-          `${metadata.name}: amounts were not compared because several columns could hold them (${entry.names.join(", ")}).`,
+      if (source === "tax-credit" && columns.tax === undefined) {
+        skip("it has no TDS column, so it cannot show TDS credit");
+        continue;
+      }
+
+      const warnings = ambiguous.map((entry) =>
+        entry.measure === "date"
+          ? `${metadata.name}: transaction dates were not used because several date columns could hold them (${entry.names.join(", ")}).`
+          : `${metadata.name}: amounts were not compared because several columns could hold them (${entry.names.join(", ")}).`,
       );
       const rows: TaxRecordRow[] = [];
       const skippedRowIndexes: number[] = [];

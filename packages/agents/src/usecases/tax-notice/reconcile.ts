@@ -121,6 +121,10 @@ export interface TaxReconciliation {
   unattributedRows: ExcludedRow[];
   /** Tax-credit rows repeated in another uploaded copy of the same statement, counted once. */
   duplicateRows: ExcludedRow[];
+  /** Rows with no financial year, reconciled under PERIOD_NOT_STATED rather than offset. */
+  undatedRows: ExcludedRow[];
+  /** Tables without a period column that were assigned the records' single financial year. */
+  assumedPeriods: AssumedPeriod[];
   statementOverlap?: StatementOverlap;
   warnings: string[];
   lines: ReconciliationLine[];
@@ -202,22 +206,64 @@ function resolveDeductors(rows: readonly TaxRecordRow[]): DeductorResolution {
   };
 }
 
-type Granularity = "quarter" | "year" | "none";
+export const PERIOD_NOT_STATED = "Period not stated";
 
+type Granularity = "quarter" | "year";
+
+/** Quarters when every dated row has one, else financial years. Undated rows never widen it. */
 function granularityOf(rows: readonly TaxRecordRow[]): Granularity {
-  if (rows.every((row) => row.financialYear && row.quarter)) {
-    return "quarter";
-  }
+  const dated = rows.filter((row) => row.financialYear);
 
-  return rows.every((row) => row.financialYear) ? "year" : "none";
+  return dated.every((row) => row.quarter) ? "quarter" : "year";
 }
 
+/** Rows without a financial year get their own period, so they never offset dated rows. */
 function periodOf(row: TaxRecordRow, granularity: Granularity): string {
-  if (granularity === "quarter") {
-    return `FY ${row.financialYear} ${row.quarter}`;
+  if (!row.financialYear) {
+    return PERIOD_NOT_STATED;
   }
 
-  return granularity === "year" ? `FY ${row.financialYear}` : "All periods";
+  return granularity === "quarter"
+    ? `FY ${row.financialYear} ${row.quarter}`
+    : `FY ${row.financialYear}`;
+}
+
+export interface AssumedPeriod {
+  documentId: string;
+  documentName: string;
+  financialYear: string;
+}
+
+/**
+ * A table with no date, quarter, or financial-year column (such as a return schedule, which
+ * covers one year) is assigned the financial year of the other records when they all share one.
+ */
+function assignFinancialYears(tables: readonly TaxRecordTable[]) {
+  const years = new Set(
+    tables.flatMap((table) => table.rows.flatMap((row) => row.financialYear ?? [])),
+  );
+  const [onlyYear] = years;
+  const assumed: AssumedPeriod[] = [];
+  const assigned = tables.map((table) => {
+    const hasPeriodColumn =
+      table.columns.date !== undefined ||
+      table.columns.quarter !== undefined ||
+      table.columns.financialYear !== undefined;
+
+    if (hasPeriodColumn || years.size !== 1 || !onlyYear || table.rows.length === 0) {
+      return table;
+    }
+
+    assumed.push({
+      documentId: table.documentId,
+      documentName: table.documentName,
+      financialYear: onlyYear,
+    });
+
+    return { ...table, rows: table.rows.map((row) => ({ ...row, financialYear: onlyYear })) };
+  });
+
+  return { tables: assigned, assumed };
 }
 
 function mostCommon(values: readonly (string | undefined)[]): string | undefined {
@@ -347,8 +393,13 @@ export function reconcileTaxRecords(
     records.tables.some((table) => table.source === source),
   );
   const provided = new Set(providedSources);
-  const { reconciled, corroborating } = partitionTaxCreditStatements(records.tables);
-  const { tables, duplicates, warnings: overlapWarnings } = dropDuplicateStatementRows(reconciled);
+  const {
+    tables: dedupedTables,
+    duplicates,
+    warnings: overlapWarnings,
+  } = dropDuplicateStatementRows(records.tables);
+  const periods = assignFinancialYears(dedupedTables);
+  const { reconciled: tables, corroborating } = partitionTaxCreditStatements(periods.tables);
   const available: MeasureAvailability = {};
 
   for (const table of tables) {
@@ -474,6 +525,14 @@ export function reconcileTaxRecords(
         location: excludedRowLocation(table.table.range, table.table.sheet, rowIndex),
       })),
     ),
+    undatedRows: allRows
+      .filter((row) => !row.financialYear)
+      .map((row) => ({
+        documentId: row.documentId,
+        documentName: row.documentName,
+        location: row.location,
+      })),
+    assumedPeriods: periods.assumed,
     duplicateRows: duplicates.map((row) => ({
       documentId: row.documentId,
       documentName: row.documentName,

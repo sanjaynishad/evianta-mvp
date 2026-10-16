@@ -18,6 +18,7 @@ import {
 import {
   discrepancies,
   lineDifferenceComponents,
+  PERIOD_NOT_STATED,
   primaryTaxDifference,
   reconcileTaxRecords,
 } from "./reconcile.js";
@@ -478,5 +479,128 @@ describe("transaction identity and TAN validation", () => {
     expect(
       reconciliationDataCheck(reconciliation, ["rec"])([]).map((issue) => issue.key),
     ).toContain(`incomplete:${eastern?.ref}`);
+  });
+});
+
+describe("periods, TCS, and corroborating statements", () => {
+  const header26as = TAX_CREDIT_CSV.split("\n")[0];
+
+  it("keeps financial years separate and reconciles undated rows on their own", async () => {
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(
+        await fixtureDocumentsAsync({
+          returnComputation: [
+            "TAN,Deductor,Financial year,TDS claimed",
+            "MUMN10001A,Northwind Bank Ltd,2022-23,1000",
+            "MUMN10001A,Northwind Bank Ltd,2023-24,2000",
+          ].join("\n"),
+          taxCredit: [
+            header26as,
+            "MUMN10001A,Northwind Bank Ltd,194A,2022-09-30,10000,2000,F",
+            "MUMN10001A,Northwind Bank Ltd,194A,2023-09-30,10000,1000,F",
+          ].join("\n"),
+          ledger: [
+            "Date,Party,Section,Gross amount,TDS deducted,Voucher",
+            "2023-09-30,Asha Salaries Ltd,192,1000,100,SAL-1",
+            ",Northwind Bank Ltd,194A,30000,3000,INT-X",
+          ].join("\n"),
+        }),
+      ),
+    );
+    const northwind = reconciliation.lines.filter((line) => line.tan === "MUMN10001A");
+
+    expect(northwind.map((line) => [line.period, line.returnVsTaxCredit?.tax])).toEqual([
+      ["FY 2022-23", -1000],
+      ["FY 2023-24", 1000],
+      [PERIOD_NOT_STATED, undefined],
+    ]);
+    expect(northwind.every((line) => line.status !== "matched")).toBe(true);
+    expect(reconciliation.undatedRows).toEqual([
+      expect.objectContaining({
+        documentId: "doc-ledger",
+        location: expect.objectContaining({ rowRange: { start: 3, end: 3 } }),
+      }),
+    ]);
+    expect(
+      reconciliationDataCheck(reconciliation, ["rec"])([]).map((issue) => issue.key),
+    ).toContain("undated:doc-ledger:3");
+  });
+
+  it("assigns the records' single financial year to a return without a period column", async () => {
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(
+        await fixtureDocumentsAsync({
+          returnComputation: RETURN_COMPUTATION_CSV.replace("Financial year,", "").replace(
+            /,2023-24,/g,
+            ",",
+          ),
+        }),
+      ),
+    );
+
+    expect(reconciliation.assumedPeriods).toEqual([
+      { documentId: "doc-return", documentName: "itr-computation.csv", financialYear: "2023-24" },
+    ]);
+    expect(reconciliation.undatedRows).toEqual([]);
+    expect(
+      reconciliation.lines.find((line) => line.tan === "DELS20002B")?.returnVsTaxCredit?.tax,
+    ).toBe(12400);
+  });
+
+  it("deduplicates repeated AIS exports before comparing them with 26AS", async () => {
+    const documents = [
+      ...(await fixtureDocumentsAsync()),
+      await csvDocumentAsync("doc-ais-1", "ais-1.csv", TAX_CREDIT_CSV),
+      await csvDocumentAsync("doc-ais-2", "ais-2.csv", TAX_CREDIT_CSV),
+    ];
+    const reconciliation = reconcileTaxRecords(readTaxRecords(documents));
+
+    expect(reconciliation.statementOverlap?.disagreements).toEqual([]);
+    expect(reconciliation.duplicateRows).toHaveLength(9);
+    expect(reconciliation.duplicateRows.every((row) => row.documentId === "doc-ais-2")).toBe(true);
+    expect(reconciliation.totals.bySource["tax-credit"]?.tax).toBe(128600);
+  });
+
+  it("keeps TCS and tables without TDS out of the TDS reconciliation", async () => {
+    const documents = [
+      ...(await fixtureDocumentsAsync()),
+      await csvDocumentAsync(
+        "doc-tcs",
+        "26as-part-b.csv",
+        "TAN of collector,Name of collector,Transaction date,Amount paid/credited,Tax collected\nMUMN10001A,Northwind Bank Ltd,2023-09-30,50000,500",
+      ),
+      await csvDocumentAsync(
+        "doc-26as-amounts",
+        "26as-sft.csv",
+        "TAN of deductor,Name of deductor,Transaction date,Amount paid/credited\nMUMN10001A,Northwind Bank Ltd,2023-09-30,50000",
+      ),
+    ];
+    const records = readTaxRecords(documents);
+    const reconciliation = reconcileTaxRecords(records);
+
+    expect(records.unclassified.map((table) => [table.documentId, table.reason])).toEqual([
+      ["doc-tcs", expect.stringContaining("tax collected at source")],
+      ["doc-26as-amounts", expect.stringContaining("no TDS column")],
+    ]);
+    expect(reconciliation.totals.bySource["tax-credit"]?.tax).toBe(128600);
+  });
+
+  it("uses the transaction date rather than the booking date and flags unclear date columns", () => {
+    expect(
+      selectTaxColumns(
+        [
+          "TAN of deductor",
+          "Name of deductor",
+          "Date of booking",
+          "Transaction date",
+          "Amount paid",
+          "Tax deducted",
+        ],
+        "tax-credit",
+      ).columns.date,
+    ).toBe(3);
+    expect(
+      selectTaxColumns(["Party", "Date", "Entry date", "TDS deducted"], "ledger").ambiguous,
+    ).toEqual([{ measure: "date", names: ["Date", "Entry date"] }]);
   });
 });

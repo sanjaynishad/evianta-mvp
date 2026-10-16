@@ -39,6 +39,7 @@ import {
   discrepancies,
   hasReconciliationData,
   lineDifferenceComponents,
+  PERIOD_NOT_STATED,
   primaryTaxDifference,
   sourceLabel,
   type TaxReconcileOptions,
@@ -357,6 +358,10 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
       (source) =>
         `${sourceLabel(source)} totals are not stated because some of its values are blank or unreadable.`,
     ),
+    ...reconciliation.assumedPeriods.map(
+      (period) =>
+        `${period.documentName} has no period column, so its rows were taken as FY ${period.financialYear}, the year of the other records.`,
+    ),
     ...(reconciliation.unattributedRows.length > 0
       ? [
           `Totals exclude ${reconciliation.unattributedRows.length} row(s) without a deductor or TAN.`,
@@ -415,6 +420,13 @@ export function reconciliationOpenQuestions(
     questions.push({
       text: `Row ${row.location.rowRange?.start ?? "?"} of ${row.documentName} has values but no deductor or TAN, so it was not reconciled and the totals may be incomplete. Identify the deductor or confirm the row can be ignored.`,
       severity: "high",
+    });
+  }
+
+  for (const row of reconciliation.undatedRows) {
+    questions.push({
+      text: `Row ${row.location.rowRange?.start ?? "?"} of ${row.documentName} has no financial year, so it was reconciled separately under "${PERIOD_NOT_STATED}" instead of being netted against other years. Confirm its period.`,
+      severity: "medium",
     });
   }
 

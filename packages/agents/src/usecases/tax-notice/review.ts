@@ -215,6 +215,16 @@ export function reconciliationDataCheck(
       );
     }
 
+    for (const row of reconciliation.undatedRows) {
+      issues.push(
+        issue(
+          "medium",
+          `undated:${row.documentId}:${row.location.rowRange?.start}`,
+          `A row of ${row.documentName} (row ${row.location.rowRange?.start ?? "?"}) has no financial year and was reconciled separately.`,
+        ),
+      );
+    }
+
     for (const deductor of reconciliation.ambiguousDeductors) {
       issues.push(
         issue(
