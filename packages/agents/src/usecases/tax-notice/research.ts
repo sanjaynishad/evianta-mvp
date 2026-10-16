@@ -20,7 +20,7 @@ import {
   type TaskHandler,
   type TaskOutput,
 } from "../../handlers.js";
-import { responsePackSpec } from "./constants.js";
+import { taxNoticePackSpec } from "./constants.js";
 import { createPreparedTaskHandler, loadCaseDocumentsAsync } from "./context.js";
 import { readTaxRecords, taxRecordDocumentIds } from "./records.js";
 
@@ -206,7 +206,7 @@ export function taxResearchTaskOutput(result: AgentResult<TaxResearchOutput>): T
   const base = specialistResultToTaskOutput(result, true);
 
   if (result.output.provisions.length === 0) {
-    return { ...base, deliverables: [responsePackSpec()] };
+    return { ...base, deliverables: [taxNoticePackSpec()] };
   }
 
   const citations = result.citations;
@@ -224,7 +224,7 @@ export function taxResearchTaskOutput(result: AgentResult<TaxResearchOutput>): T
         findingIndexes: allFindings.map((_finding, index) => index),
       },
     ],
-    deliverables: [responsePackSpec()],
+    deliverables: [taxNoticePackSpec()],
   };
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createTaxNoticeHarnessAsync, DOCUMENT_IDS } from "../../testing/taxNotice.js";
-import { lineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
+import { reconciliationLineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
 
 describe("reconciliation handler", () => {
   it("reconciles deterministically and asks the model only to explain the differences", async () => {
@@ -27,7 +27,7 @@ describe("reconciliation handler", () => {
       confidence: "high",
       figures: [
         {
-          key: lineFigureKey("R-03"),
+          key: reconciliationLineFigureKey("R-03"),
           label: "R-03 TDS difference",
           value: 12400,
           unit: "INR",

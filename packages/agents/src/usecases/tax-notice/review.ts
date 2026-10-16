@@ -7,7 +7,7 @@ import {
   type VerificationFinding,
   type VerificationIssue,
 } from "../../verification.js";
-import { formatAmount, lineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
+import { formatAmount, reconciliationLineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
 import { reconcileCaseAsync } from "./context.js";
 import {
   hasReconciliationData,
@@ -43,7 +43,11 @@ export function expectedReconciliationFigures(reconciliation: TaxReconciliation)
   push(TAX_FIGURE_KEYS.ledgerTdsDifference, "TDS per ledger less 26AS/AIS", ledgerVsTaxCredit?.tax);
 
   for (const line of reconciliation.lines) {
-    push(lineFigureKey(line.ref), `${line.ref} TDS difference`, primaryTaxDifference(line));
+    push(
+      reconciliationLineFigureKey(line.ref),
+      `${line.ref} TDS difference`,
+      primaryTaxDifference(line),
+    );
   }
 
   return expected;

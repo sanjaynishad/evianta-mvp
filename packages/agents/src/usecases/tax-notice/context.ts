@@ -8,7 +8,11 @@ import {
   type TaskOutput,
 } from "../../handlers.js";
 import { readTaxRecords, type TaxRecordDocument, type TaxRecordSet } from "./records.js";
-import { reconcileTaxRecords, type ReconcileOptions, type TaxReconciliation } from "./reconcile.js";
+import {
+  reconcileTaxRecords,
+  type TaxReconcileOptions,
+  type TaxReconciliation,
+} from "./reconcile.js";
 
 export async function loadCaseDocumentsAsync(
   ctx: Pick<TaskExecutionContext, "documentMetadata" | "loadExtractionAsync">,
@@ -29,7 +33,7 @@ export interface CaseRecords {
 
 export async function reconcileCaseAsync(
   ctx: Pick<TaskExecutionContext, "documentMetadata" | "loadExtractionAsync">,
-  options: ReconcileOptions = {},
+  options: TaxReconcileOptions = {},
 ): Promise<CaseRecords> {
   const documents = await loadCaseDocumentsAsync(ctx);
   const records = readTaxRecords(documents);

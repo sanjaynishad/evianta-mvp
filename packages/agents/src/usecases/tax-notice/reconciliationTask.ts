@@ -21,7 +21,12 @@ import {
   type TaskOutput,
   type TaskSectionDraft,
 } from "../../handlers.js";
-import { lineFigureKey, responsePackSpec, TAX_FIGURE_KEYS, formatRupees } from "./constants.js";
+import {
+  reconciliationLineFigureKey,
+  taxNoticePackSpec,
+  TAX_FIGURE_KEYS,
+  formatRupees,
+} from "./constants.js";
 import { createPreparedTaskHandler, reconcileCaseAsync, type CaseRecords } from "./context.js";
 import { SOURCE_LABELS, taxRecordDocumentIds, type TaxRecordSource } from "./records.js";
 import {
@@ -30,7 +35,7 @@ import {
   lineDifferenceComponents,
   primaryTaxDifference,
   sourceLabel,
-  type ReconcileOptions,
+  type TaxReconcileOptions,
   type ReconciliationLine,
   type TaxReconciliation,
 } from "./reconcile.js";
@@ -190,7 +195,7 @@ export function discrepancyFinding(
       ? {
           figures: [
             {
-              key: lineFigureKey(line.ref),
+              key: reconciliationLineFigureKey(line.ref),
               label: `${line.ref} TDS difference`,
               value: delta,
               unit: "INR",
@@ -374,7 +379,7 @@ export function reconciliationTaskOutput(
   const base = specialistResultToTaskOutput(result, false);
 
   if (!hasReconciliationData(reconciliation)) {
-    return { ...base, deliverables: [responsePackSpec()] };
+    return { ...base, deliverables: [taxNoticePackSpec()] };
   }
 
   const explanations = new Map(result.output.explanations.map((entry) => [entry.ref, entry]));
@@ -429,11 +434,11 @@ export function reconciliationTaskOutput(
         : []),
     ],
     sections,
-    deliverables: [responsePackSpec()],
+    deliverables: [taxNoticePackSpec()],
   };
 }
 
-export interface ReconciliationHandlerOptions extends ReconcileOptions {
+export interface ReconciliationHandlerOptions extends TaxReconcileOptions {
   agent?: ReconciliationAgent;
 }
 

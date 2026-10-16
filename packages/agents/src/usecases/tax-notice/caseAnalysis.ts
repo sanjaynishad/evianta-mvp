@@ -25,7 +25,7 @@ import {
 import {
   formatAmount,
   markdownTable,
-  responsePackSpec,
+  taxNoticePackSpec,
   TAX_DATE_KEYS,
   TAX_FIGURE_KEYS,
 } from "./constants.js";
@@ -144,7 +144,7 @@ function isIssueDate(label: string): boolean {
 }
 
 export function canonicalDateKey(entry: { key: string; label: string }): string {
-  if (Object.values(TAX_DATE_KEYS).includes(entry.key as never)) {
+  if ((Object.values(TAX_DATE_KEYS) as string[]).includes(entry.key)) {
     return entry.key;
   }
 
@@ -450,7 +450,7 @@ export function caseAnalysisTaskOutput(
     findings,
     openQuestions: [...structured.openQuestions, ...(base.openQuestions ?? [])],
     sections,
-    deliverables: [responsePackSpec()],
+    deliverables: [taxNoticePackSpec()],
   };
 }
 

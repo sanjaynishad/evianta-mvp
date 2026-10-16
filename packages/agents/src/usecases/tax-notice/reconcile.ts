@@ -74,7 +74,7 @@ export interface TaxReconciliation {
   totals: ReconciliationTotals;
 }
 
-export interface ReconcileOptions {
+export interface TaxReconcileOptions {
   /** Absolute tolerance in rupees for treating two amounts as equal. */
   tolerance?: number;
 }
@@ -217,7 +217,7 @@ function totalDifference(
  */
 export function reconcileTaxRecords(
   records: TaxRecordSet,
-  options: ReconcileOptions = {},
+  options: TaxReconcileOptions = {},
 ): TaxReconciliation {
   const tolerance = options.tolerance ?? DEFAULT_RECONCILIATION_TOLERANCE;
   const providedSources = TAX_RECORD_SOURCES.filter((source) =>

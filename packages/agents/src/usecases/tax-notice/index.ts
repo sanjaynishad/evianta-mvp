@@ -1,25 +1,94 @@
 import type { TaskHandlerRegistry } from "../../handlers.js";
 import type { DeterministicCheckOptions } from "../../verification.js";
 import { createCaseAnalysisTaskHandler, type CaseAnalysisAgent } from "./caseAnalysis.js";
-import type { ReconcileOptions } from "./reconcile.js";
+import type { TaxReconcileOptions } from "./reconcile.js";
 import { createReconciliationTaskHandler, type ReconciliationAgent } from "./reconciliationTask.js";
 import { createTaxResearchTaskHandler, type TaxResearchAgent } from "./research.js";
 import { createResponsePreparationTaskHandler, type ResponsePreparationAgent } from "./response.js";
 import { createTaxNoticeReviewTaskHandler } from "./review.js";
 
-export * from "./caseAnalysis.js";
-export * from "./constants.js";
-export * from "./context.js";
-export * from "./reconcile.js";
-export * from "./reconciliationTask.js";
-export * from "./records.js";
-export * from "./render.js";
-export * from "./research.js";
-export * from "./response.js";
-export * from "./review.js";
+export {
+  CASE_ANALYSIS_SYSTEM_PROMPT,
+  caseAnalysisOutputSchema,
+  createCaseAnalysisAgent,
+  createCaseAnalysisTaskHandler,
+  noticeAnalysisSchema,
+  type CaseAnalysisAgent,
+  type CaseAnalysisHandlerOptions,
+  type CaseAnalysisOutput,
+  type NoticeAnalysis,
+} from "./caseAnalysis.js";
+export {
+  reconciliationLineFigureKey,
+  TAX_DATE_KEYS,
+  TAX_FIGURE_KEYS,
+  TAX_NOTICE_GUARDRAIL,
+  taxNoticePackSpec,
+} from "./constants.js";
+export { pagesToVerify, reconcileCaseAsync, type CaseRecords, type ReviewPage } from "./context.js";
+export {
+  DEFAULT_RECONCILIATION_TOLERANCE,
+  reconcileTaxRecords,
+  type ReconciliationLine,
+  type ReconciliationStatus,
+  type TaxReconciliation,
+  type TaxReconcileOptions,
+} from "./reconcile.js";
+export {
+  createReconciliationAgent,
+  createReconciliationTaskHandler,
+  RECONCILIATION_SYSTEM_PROMPT,
+  reconciliationOutputSchema,
+  type ReconciliationAgent,
+  type ReconciliationHandlerOptions,
+  type ReconciliationOutput,
+} from "./reconciliationTask.js";
+export {
+  classifyTaxRecordSource,
+  mapTaxColumns,
+  readTaxRecords,
+  TAX_RECORD_SOURCES,
+  type TaxRecordDocument,
+  type TaxRecordRow,
+  type TaxRecordSet,
+  type TaxRecordSource,
+  type TaxRecordTable,
+} from "./records.js";
+export { reconciliationTableMarkdown } from "./render.js";
+export {
+  citationsForProvision,
+  createTaxResearchAgent,
+  createTaxResearchTaskHandler,
+  TAX_RESEARCH_SYSTEM_PROMPT,
+  taxResearchOutputSchema,
+  type Provision,
+  type TaxResearchAgent,
+  type TaxResearchHandlerOptions,
+  type TaxResearchOutput,
+} from "./research.js";
+export {
+  createResponsePreparationAgent,
+  createResponsePreparationTaskHandler,
+  findFilingClaims,
+  OPEN_QUESTIONS_SECTION_TITLE,
+  RESPONSE_DRAFT_SECTION_TITLE,
+  RESPONSE_PREPARATION_SYSTEM_PROMPT,
+  responsePreparationOutputSchema,
+  type ResponsePreparationAgent,
+  type ResponsePreparationHandlerOptions,
+  type ResponsePreparationOutput,
+} from "./response.js";
+export {
+  createTaxNoticeReviewTaskHandler,
+  draftFiguresCheck,
+  expectedReconciliationFigures,
+  quotedAmounts,
+  reconciliationRecomputeCheck,
+  type TaxNoticeReviewOptions,
+} from "./review.js";
 
 export interface TaxNoticeHandlerOptions {
-  reconciliation?: ReconcileOptions;
+  reconciliation?: TaxReconcileOptions;
   review?: DeterministicCheckOptions;
   agents?: {
     caseAnalysis?: CaseAnalysisAgent;

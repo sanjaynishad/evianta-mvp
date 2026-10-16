@@ -25,7 +25,7 @@ import {
 import {
   formatAmount,
   markdownTable,
-  responsePackSpec,
+  taxNoticePackSpec,
   TAX_FIGURE_KEYS,
   TAX_NOTICE_GUARDRAIL,
 } from "./constants.js";
@@ -34,7 +34,7 @@ import { taxRecordDocumentIds } from "./records.js";
 import {
   hasReconciliationData,
   sourceLabel,
-  type ReconcileOptions,
+  type TaxReconcileOptions,
   type TaxReconciliation,
 } from "./reconcile.js";
 import { reconciliationTableMarkdown } from "./render.js";
@@ -446,11 +446,11 @@ export function responseTaskOutput(
     findings,
     openQuestions: allQuestions,
     sections,
-    deliverables: [responsePackSpec()],
+    deliverables: [taxNoticePackSpec()],
   };
 }
 
-export interface ResponsePreparationHandlerOptions extends ReconcileOptions {
+export interface ResponsePreparationHandlerOptions extends TaxReconcileOptions {
   agent?: ResponsePreparationAgent;
 }
 

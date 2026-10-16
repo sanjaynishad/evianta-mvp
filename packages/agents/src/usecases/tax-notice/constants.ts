@@ -24,12 +24,12 @@ export const TAX_DATE_KEYS = {
   responseDueDate: "notice-response-due-date",
 } as const;
 
-export function lineFigureKey(ref: string): string {
+export function reconciliationLineFigureKey(ref: string): string {
   return `recon-${ref.toLowerCase()}-tds-difference`;
 }
 
 /** Puts the guardrail on the primary deliverable so every export of the pack carries it. */
-export function responsePackSpec(): DeliverableSpec {
+export function taxNoticePackSpec(): DeliverableSpec {
   const { deliverable } = referencePlanFor("tax-notice");
 
   return {
