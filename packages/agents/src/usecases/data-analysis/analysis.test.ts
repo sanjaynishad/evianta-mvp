@@ -319,6 +319,65 @@ describe("analyzeTable", () => {
     expect(metricValue(positive, "average-amount")).toBe(10.08);
     expect(metricValue(negative, "average-amount")).toBe(-10.08);
   });
+  it("leaves amounts in another currency out of the totals and flags them", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "fx.csv",
+      table: await csvTableAsync("Amount\n₹100\n$100\n₹50"),
+    });
+
+    expect(analysis.currency).toBe("INR");
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.map((item) => [item.id, item.rows, item.severity])).toEqual([
+      ["dq-mixed-currencies-amount", [1], "high"],
+    ]);
+  });
+
+  it("does not let exact repeats move the date baseline", async () => {
+    const repeated = Array.from({ length: 5 }, () => "1924-03-11,500");
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "repeats.csv",
+      table: await csvTableAsync(
+        ["Date,Amount", "2024-01-10,100", "2024-02-10,110", "2024-03-10,120", ...repeated].join(
+          "\n",
+        ),
+      ),
+    });
+
+    expect(analysis.issues.find((item) => item.kind === "out-of-range")?.rows).toEqual([
+      3, 4, 5, 6, 7,
+    ]);
+    expect(analysis.periods.map((period) => period.period)).toEqual([
+      "2024-01",
+      "2024-02",
+      "2024-03",
+    ]);
+  });
+
+  it("reads exponent and trailing-dot numbers in a mixed column", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "mixed.csv",
+      table: await csvTableAsync("Amount\n100\n200.\n300\n1e3\npending"),
+    });
+
+    expect(metricValue(analysis, "total-amount")).toBe(1600);
+    expect(analysis.issues.map((item) => [item.id, item.rows])).toEqual([
+      ["dq-type-mismatch-amount", [4]],
+    ]);
+  });
+
+  it("averages the unrounded total", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n1.004\n1.005"),
+    });
+
+    expect(metricValue(analysis, "total-amount")).toBe(2.01);
+    expect(metricValue(analysis, "average-amount")).toBe(1);
+  });
   it("fails clearly when a table has no amount column", async () => {
     const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");
 

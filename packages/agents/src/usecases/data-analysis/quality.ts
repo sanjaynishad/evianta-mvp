@@ -1,6 +1,13 @@
 import type { EvidenceLocation, ExtractedTable, OpenQuestionSeverity } from "@evianta/core";
 
-import { cellText, isMissingCell, parseNumericCell, type ParsedDate } from "./cells.js";
+import {
+  cellText,
+  currencyMarker,
+  isMissingCell,
+  parseNumericCell,
+  type CurrencyCode,
+  type ParsedDate,
+} from "./cells.js";
 import type { ColumnProfile, ColumnProfiling, DatasetRoles } from "./columns.js";
 import { rowLocations } from "./evidence.js";
 import { createIdAllocator, slugify } from "./ids.js";
@@ -10,6 +17,7 @@ export const DATA_QUALITY_ISSUE_KINDS = [
   "duplicate-rows",
   "missing-values",
   "type-mismatch",
+  "mixed-currencies",
   "negative-values",
   "out-of-range",
   "inconsistent-date-formats",
@@ -21,6 +29,7 @@ export const DATA_QUALITY_KIND_LABELS: Readonly<Record<DataQualityIssueKind, str
   "duplicate-rows": "Duplicate rows",
   "missing-values": "Missing values",
   "type-mismatch": "Type mismatch",
+  "mixed-currencies": "Mixed currencies",
   "negative-values": "Negative values",
   "out-of-range": "Out-of-range values",
   "inconsistent-date-formats": "Inconsistent date formats",
@@ -94,6 +103,48 @@ export function medianDayOf(dates: readonly (ParsedDate | undefined)[]): number 
     .map(dayNumber);
 
   return median(days);
+}
+
+export interface AmountCurrency {
+  /** The header's currency, or else the currency most amount cells name. */
+  base?: CurrencyCode;
+  /** Rows whose amount names a different currency. */
+  foreignRows: number[];
+}
+
+export function amountCurrency(
+  table: Pick<ExtractedTable, "rows">,
+  rows: readonly number[],
+  amount: Pick<ColumnProfile, "index" | "name">,
+): AmountCurrency {
+  const marked: Array<{ row: number; code: CurrencyCode }> = [];
+  const counts = new Map<CurrencyCode, number>();
+
+  for (const row of rows) {
+    const cell = table.rows[row]?.[amount.index];
+    const code =
+      typeof cell === "string" && parseNumericCell(cell) !== undefined
+        ? currencyMarker(cell)
+        : undefined;
+
+    if (code) {
+      marked.push({ row, code });
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+  }
+
+  let base = currencyMarker(amount.name);
+
+  for (const [code, count] of counts) {
+    if (!base || (!currencyMarker(amount.name) && count > (counts.get(base) ?? 0))) {
+      base = code;
+    }
+  }
+
+  return {
+    ...(base ? { base } : {}),
+    foreignRows: marked.filter((item) => item.code !== base).map((item) => item.row),
+  };
 }
 
 /** Deterministic data-quality checks; each issue lists its rows and cell-range locations. */
@@ -215,9 +266,30 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
     }
   }
 
+  const amountColumn = roles.amount;
+
+  if (amountColumn) {
+    const currency = amountCurrency(table, rows, amountColumn);
+
+    if (currency.foreignRows.length > 0 && currency.base) {
+      const examples = currency.foreignRows.map((row) => cellText(cellAt(row, amountColumn.index)));
+
+      add({
+        kind: "mixed-currencies",
+        severity: "high",
+        column: amountColumn.name,
+        columnIndex: amountColumn.index,
+        rows: currency.foreignRows,
+        examples,
+        message: `${plural(currency.foreignRows.length, `${amountColumn.name} value`)} ${agree(currency.foreignRows.length, "is", "are")} in a currency other than ${currency.base}, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
+        treatment: `${amountColumn.name} values in a currency other than ${currency.base} were left out of ${amountColumn.name} metrics; no conversion was applied.`,
+        question: `Should the ${amountColumn.name} values in other currencies be converted to ${currency.base}, and at what rate?`,
+      });
+    }
+  }
+
   const dateColumn = roles.date;
   const resolution = dateColumn ? profiling.dateColumns.get(dateColumn.index) : undefined;
-
   if (dateColumn && resolution) {
     const datesByRow = new Map(rows.map((row, position) => [row, resolution.dates[position]]));
     const unreadable = rows.filter(
@@ -272,7 +344,10 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
   }
 
   if (dateColumn && resolution) {
-    const medianDay = medianDayOf(resolution.dates);
+    const duplicateRows = new Set(duplicates);
+    const medianDay = medianDayOf(
+      resolution.dates.filter((_date, position) => !duplicateRows.has(rows[position] as number)),
+    );
     const outOfRange = rows.filter((_row, position) => {
       const date = resolution.dates[position];
 

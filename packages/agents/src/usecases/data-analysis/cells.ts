@@ -16,12 +16,26 @@ export function cellText(cell: TableCell | undefined): string {
 }
 
 const CURRENCY_TOKEN = String.raw`(?:₹|rs\.?|inr|usd|eur|gbp|\$|€|£)`;
-const GROUPED_DIGITS = String.raw`(?:\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})+,\d{3}|\d+)(?:\.\d+)?|\.\d+`;
+// Grouped or plain digits with an optional decimal part (`100.` included) and exponent (`1e3`).
+const GROUPED_DIGITS = String.raw`(?:(?:\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})+,\d{3}|\d+)(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?`;
 const NUMERIC_TEXT = new RegExp(
   String.raw`^([+-]?)\s*${CURRENCY_TOKEN}?\s*([+-]?)\s*(${GROUPED_DIGITS})\s*${CURRENCY_TOKEN}?$`,
   "i",
 );
 const INR_MARKER = /₹|\brs\.?(?=\s|\d|$)|\binr\b/i;
+const CURRENCY_MARKERS: ReadonlyArray<[CurrencyCode, RegExp]> = [
+  ["INR", INR_MARKER],
+  ["USD", /\$|\busd\b/i],
+  ["EUR", /€|\beur\b/i],
+  ["GBP", /£|\bgbp\b/i],
+];
+
+export type CurrencyCode = "INR" | "USD" | "EUR" | "GBP";
+
+/** The currency a header or cell names, if any. */
+export function currencyMarker(text: string): CurrencyCode | undefined {
+  return CURRENCY_MARKERS.find(([, pattern]) => pattern.test(text))?.[0];
+}
 
 /** Reads numbers, including text with digit grouping, currency marks, or accounting parentheses. */
 export function parseNumericCell(cell: TableCell | undefined): number | undefined {

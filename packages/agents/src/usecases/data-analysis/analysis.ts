@@ -5,13 +5,7 @@ import {
   type AnomalyScreeningStatus,
   type PeriodAnomaly,
 } from "./anomalies.js";
-import {
-  cellText,
-  hasInrMarker,
-  isMissingCell,
-  parseNumericCell,
-  type ParsedDate,
-} from "./cells.js";
+import { cellText, isMissingCell, parseNumericCell, type ParsedDate } from "./cells.js";
 import {
   blankRowIndexes,
   profileColumns,
@@ -33,6 +27,7 @@ import {
 import {
   DATA_QUALITY_KIND_LABELS,
   isOutOfRangeDate,
+  amountCurrency,
   medianDayOf,
   runDataQualityChecks,
   type DataQualityIssue,
@@ -117,16 +112,6 @@ function sourceLabel(source: TabularSource): string {
     : `${source.table.name} in ${source.documentName}`;
 }
 
-function detectCurrency(table: ExtractedTable, amount: ColumnProfile): Currency | undefined {
-  if (hasInrMarker(amount.name)) {
-    return "INR";
-  }
-
-  const sample = table.rows.slice(0, 200).map((row) => row[amount.index]);
-
-  return sample.some((cell) => typeof cell === "string" && hasInrMarker(cell)) ? "INR" : undefined;
-}
-
 /** Profiles a table without computing metrics; returns undefined when it has no amount column. */
 export function profileTable(table: ExtractedTable) {
   const blankRows = new Set(blankRowIndexes(table));
@@ -189,11 +174,21 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
   const datesByRow = new Map<number, ParsedDate | undefined>(
     rows.map((row, position) => [row, dateResolution?.dates[position]]),
   );
-  const medianDay = dateResolution ? medianDayOf(dateResolution.dates) : Number.NaN;
+  const analyzedSet = new Set(analyzedRows);
+  const medianDay = dateResolution
+    ? medianDayOf(
+        dateResolution.dates.filter((_date, position) => analyzedSet.has(rows[position] as number)),
+      )
+    : Number.NaN;
+  const foreignCurrencyRows = new Set(
+    issues.filter((issue) => issue.kind === "mixed-currencies").flatMap((issue) => issue.rows),
+  );
   const cellAt = (row: number, column: number) => table.rows[row]?.[column] ?? null;
   const records: SalesRecord[] = analyzedRows.map((row) => {
     const date = datesByRow.get(row);
-    const amountValue = parseNumericCell(cellAt(row, amount.index));
+    const amountValue = foreignCurrencyRows.has(row)
+      ? undefined
+      : parseNumericCell(cellAt(row, amount.index));
     const quantityValue = roles.quantity
       ? parseNumericCell(cellAt(row, roles.quantity.index))
       : undefined;
@@ -320,11 +315,16 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
     });
   }
 
-  const currency = detectCurrency(table, amount);
+  const baseCurrency = amountCurrency(table, rows, amount).base;
+  const currency: Currency | undefined = baseCurrency === "INR" ? "INR" : undefined;
 
-  if (!currency) {
+  if (!baseCurrency) {
     assumptions.push(
       `${amount.name} is reported in the units of the source file; no currency was stated.`,
+    );
+  } else if (!currency) {
+    assumptions.push(
+      `${amount.name} is in ${baseCurrency}; values are shown without a currency symbol.`,
     );
   }
 

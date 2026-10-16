@@ -288,22 +288,30 @@ function metricEvidenceIndex(analysis: DataAnalysis): Map<string, EvidenceRefere
     index.set("period-count", [dateColumn]);
   }
 
-  for (const period of analysis.periods) {
-    const references =
-      period.rows.length > 0
-        ? rowsOf(period.rows, `Rows dated in ${period.period}`)
-        : [amountColumn, ...(dateColumn ? [dateColumn] : [])];
+  const columns = [amountColumn, ...(dateColumn ? [dateColumn] : [])];
 
-    index.set(period.totalMetricId, references);
+  analysis.periods.forEach((period, position) => {
+    index.set(
+      period.totalMetricId,
+      period.rows.length > 0 ? rowsOf(period.rows, `Rows dated in ${period.period}`) : columns,
+    );
 
-    if (period.changeMetricId) {
-      index.set(period.changeMetricId, references);
+    const previous = analysis.periods[position - 1];
+
+    if (period.changeMetricId && previous) {
+      // A month-over-month change rests on both months' rows.
+      const rows = [...previous.rows, ...period.rows];
+
+      index.set(
+        period.changeMetricId,
+        rows.length > 0
+          ? rowsOf(rows, `Rows dated in ${previous.period} and ${period.period}`)
+          : columns,
+      );
     }
-  }
+  });
 
   if (analysis.trend) {
-    const columns = [amountColumn, ...(dateColumn ? [dateColumn] : [])];
-
     for (const id of [
       analysis.trend.slopeMetricId,
       analysis.trend.growthMetricId,
@@ -337,16 +345,12 @@ function metricEvidenceIndex(analysis: DataAnalysis): Map<string, EvidenceRefere
   }
 
   for (const anomaly of analysis.anomalies) {
-    const references = rowsOf(anomaly.rows, `Rows dated in ${anomaly.period}`);
+    // The expected value and score come from the whole monthly series, so the columns lead.
+    const references = [...columns, ...rowsOf(anomaly.rows, `Rows dated in ${anomaly.period}`)];
 
-    for (const id of [
-      anomaly.valueMetricId,
-      anomaly.expectedMetricId,
-      anomaly.deviationMetricId,
-      anomaly.scoreMetricId,
-    ]) {
+    for (const id of [anomaly.expectedMetricId, anomaly.deviationMetricId, anomaly.scoreMetricId]) {
       if (id) {
-        index.set(id, references.length > 0 ? references : [amountColumn]);
+        index.set(id, references);
       }
     }
   }
@@ -522,7 +526,7 @@ function deterministicFindings(
       detail: `Flagged with a robust z-score of ${display(analysis, anomaly.scoreMetricId)} against the Theil-Sen trend of monthly totals (threshold 3.5).`,
       severity: "medium",
       confidence: "high",
-      evidence: referencesFor([anomaly.valueMetricId]),
+      evidence: referencesFor([anomaly.scoreMetricId]),
       figures: figuresFor(analysis, [
         anomaly.valueMetricId,
         anomaly.expectedMetricId,
@@ -636,7 +640,7 @@ export function buildDataAnalystTaskOutput(
     const knownIssues = analysis.issues.filter((issue) => insight.issueIds.includes(issue.id));
     let references = uniqueReferences([
       ...knownMetricIds.flatMap((id) => evidence.get(id) ?? []),
-      ...knownAnomalies.flatMap((anomaly) => evidence.get(anomaly.valueMetricId) ?? []),
+      ...knownAnomalies.flatMap((anomaly) => evidence.get(anomaly.scoreMetricId) ?? []),
       ...knownIssues.flatMap((issue) => issueReferences(analysis, issue.id)),
     ]);
     const openQuestions: OpenQuestionDraft[] = insight.openQuestions.map((question) => ({

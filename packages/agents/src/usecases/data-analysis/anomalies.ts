@@ -2,6 +2,7 @@ import { robustZScores, roundTo, theilSenFit, type RobustScoreMethod } from "./s
 
 export const ANOMALY_SCORE_THRESHOLD = 3.5;
 export const MIN_PERIODS_FOR_ANOMALIES = 4;
+const RESIDUAL_NOISE_FACTOR = 1e-9;
 
 export interface PeriodAnomaly {
   id: string;
@@ -55,7 +56,11 @@ export function screenPeriodAnomalies(
   const fit = theilSenFit(values);
   const expected = values.map((_value, index) => fit.intercept + fit.slope * index);
   const residuals = values.map((value, index) => value - (expected[index] as number));
-  const robust = robustZScores(residuals);
+  // Residuals below this are floating-point noise from the fit, not real deviations.
+  const noise = Math.max(...values.map((value) => Math.abs(value))) * RESIDUAL_NOISE_FACTOR;
+  const robust = robustZScores(
+    residuals.map((residual) => (Math.abs(residual) <= noise ? 0 : residual)),
+  );
 
   if (!robust) {
     return { status: "no-variation", periods: periods.length, minPeriods, anomalies: [] };

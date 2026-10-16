@@ -20,6 +20,10 @@ describe("parseNumericCell", () => {
     expect(parseNumericCell("Rs. 1,000")).toBe(1000);
     expect(parseNumericCell("-₹300")).toBe(-300);
     expect(parseNumericCell("(1,200)")).toBe(-1200);
+    expect(parseNumericCell("1e3")).toBe(1000);
+    expect(parseNumericCell("2.5E-1")).toBe(0.25);
+    expect(parseNumericCell("100.")).toBe(100);
+    expect(parseNumericCell("5 EUR")).toBe(5);
     expect(parseNumericCell("pending")).toBeUndefined();
     expect(parseNumericCell("12 boxes")).toBeUndefined();
     expect(parseNumericCell(true)).toBeUndefined();
@@ -107,6 +111,12 @@ describe("robust statistics", () => {
 });
 
 describe("detectPeriodAnomalies", () => {
+  it("does not flag a linear decimal series because of floating-point noise", () => {
+    expect(
+      screenPeriodAnomalies(series([0.1, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16])).anomalies,
+    ).toEqual([]);
+  });
+
   it("does not flag a steady growth trend", () => {
     expect(detectPeriodAnomalies(series([100, 112, 119, 131, 140, 152, 158, 171]))).toEqual([]);
   });

@@ -240,7 +240,11 @@ describe("business data analyst through the orchestrator", () => {
     );
 
     expect(anomaly).toMatchObject({ severity: "medium" });
-    expect(anomaly?.evidence[0]?.location?.cellRange).toBe("A14:G17");
+    expect(anomaly?.evidence.map((item) => item.location?.cellRange)).toEqual([
+      "G2:G29",
+      "B2:B29",
+      "A14:G17",
+    ]);
 
     const overview = findings.find((finding) => finding.summary.startsWith("₹92,000 total"));
     const volume = findings.find((finding) => finding.summary === "Volume reached 265 units");
@@ -335,6 +339,39 @@ describe("buildDataAnalystTaskOutput", () => {
     );
   });
 });
+
+describe("insight evidence", () => {
+  it("cites both months for a month-over-month change", async () => {
+    const buffer = new TextEncoder().encode(salesCsv());
+    const extraction = await extractFixtureAsync(
+      buffer,
+      fixtureMetadata("doc", "sales.csv", CSV_MIME, buffer.byteLength),
+    );
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "sales.csv",
+      table: extraction.tables[0] as ExtractedTable,
+    });
+    const output = buildDataAnalystTaskOutput(
+      analysis,
+      dataAnalystOutputSchema.parse({
+        summary: "Summary.",
+        insights: [
+          {
+            summary: "February grew {{period-2024-02-change-pct}}",
+            severity: "medium",
+            metricIds: ["period-2024-02-change-pct"],
+          },
+        ],
+      }),
+      { usage: { input: 10, output: 5, total: 15 }, cost: 0 },
+    );
+    const insight = output.findings.find((finding) => finding.summary === "February grew 10%");
+
+    expect(insight?.evidence?.map((item) => item.cellRange)).toEqual(["A2:G9"]);
+  });
+});
+
 describe("data analyst registration", () => {
   it("is the default handler and agent for the business-data-analyst role", () => {
     const registry = createAgentRegistry();

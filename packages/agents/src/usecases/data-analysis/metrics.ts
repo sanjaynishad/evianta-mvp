@@ -96,10 +96,17 @@ function nextMonth(period: string): string {
   return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, "0")}`;
 }
 
+export interface MonthlyTotal {
+  period: string;
+  /** Rounded to cents for reporting. */
+  total: number;
+  /** Unrounded sum, used for derived ratios so they are rounded only once. */
+  exactTotal: number;
+  rows: number[];
+}
+
 /** Months from the first to the last, filling months without rows with a zero total. */
-export function monthlyTotals(
-  records: readonly SalesRecord[],
-): Array<{ period: string; total: number; rows: number[] }> {
+export function monthlyTotals(records: readonly SalesRecord[]): MonthlyTotal[] {
   const byMonth = new Map<string, SalesRecord[]>();
 
   for (const record of records) {
@@ -123,14 +130,17 @@ export function monthlyTotals(
     return [];
   }
 
-  const totals: Array<{ period: string; total: number; rows: number[] }> = [];
+  const totals: MonthlyTotal[] = [];
 
   for (let period = first; period <= last; period = nextMonth(period)) {
     const monthRecords = byMonth.get(period) ?? [];
 
+    const exactTotal = sum(monthRecords.map((record) => record.amount as number));
+
     totals.push({
       period,
-      total: roundTo(sum(monthRecords.map((record) => record.amount as number))),
+      total: roundTo(exactTotal),
+      exactTotal,
       rows: monthRecords.map((record) => record.row),
     });
   }
@@ -163,7 +173,8 @@ export function computeSalesMetrics(
 
   const withAmount = records.filter((record) => record.amount !== undefined);
   const amounts = withAmount.map((record) => record.amount as number);
-  const total = roundTo(sum(amounts));
+  const exactTotal = sum(amounts);
+  const total = roundTo(exactTotal);
 
   addMetric(
     "rows-analyzed",
@@ -201,7 +212,7 @@ export function computeSalesMetrics(
       "average-amount",
       {
         label: `Average ${columns.amount} per row`,
-        value: roundTo(total / withAmount.length),
+        value: roundTo(exactTotal / withAmount.length),
         unit: "currency",
         basis: `Total ${columns.amount} divided by ${withAmount.length} rows`,
       },
@@ -231,7 +242,7 @@ export function computeSalesMetrics(
   const months = monthlyTotals(records);
   const periods: PeriodTotal[] = months.map((month, index) => {
     const previous = months[index - 1];
-    const change = previous ? percentChange(previous.total, month.total) : undefined;
+    const change = previous ? percentChange(previous.exactTotal, month.exactTotal) : undefined;
     const totalMetricId = addMetric(`period-${month.period}-total`, {
       label: `${columns.amount} in ${month.period}`,
       value: month.total,
@@ -249,7 +260,9 @@ export function computeSalesMetrics(
         : undefined;
 
     return {
-      ...month,
+      period: month.period,
+      total: month.total,
+      rows: month.rows,
       ...(change !== undefined ? { changePct: roundTo(change) } : {}),
       totalMetricId,
       ...(changeMetricId ? { changeMetricId } : {}),
@@ -274,7 +287,10 @@ export function computeSalesMetrics(
   if (periods.length >= 2) {
     const first = periods[0] as PeriodTotal;
     const last = periods[periods.length - 1] as PeriodTotal;
-    const growth = percentChange(first.total, last.total);
+    const growth = percentChange(
+      (months[0] as MonthlyTotal).exactTotal,
+      (months[months.length - 1] as MonthlyTotal).exactTotal,
+    );
     const growthMetricId =
       growth === undefined
         ? undefined
@@ -349,9 +365,10 @@ export function computeSalesMetrics(
         key,
         label: group.label,
         unassigned: key === "",
-        total: roundTo(sum(group.records.map((record) => record.amount as number))),
+        exactTotal: sum(group.records.map((record) => record.amount as number)),
         rows: group.records.map((record) => record.row),
       }))
+      .map((segment) => ({ ...segment, total: roundTo(segment.exactTotal) }))
       .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label))
       .map((segment): SegmentTotal => {
         const base = `segment-${columnSlug}-${segment.unassigned ? "unassigned" : slugify(segment.label)}`;
@@ -361,7 +378,7 @@ export function computeSalesMetrics(
           unit: "currency",
           basis: `Sum of ${columns.amount} over ${segment.rows.length} rows where ${category.name} is ${segment.unassigned ? "blank" : segment.label}`,
         });
-        const share = total === 0 ? undefined : (segment.total / total) * 100;
+        const share = exactTotal === 0 ? undefined : (segment.exactTotal / exactTotal) * 100;
         const shareMetricId =
           share === undefined
             ? undefined
