@@ -11,11 +11,18 @@ import {
 } from "@evianta/ai";
 import type { Case, CitationInput, DocumentMetadata } from "@evianta/core";
 import { ingestDocumentAsync } from "@evianta/ingest";
-import { createInMemoryDocumentStore, type DocumentStore, type Store } from "@evianta/store";
+import {
+  createInMemoryDocumentStore,
+  createInMemoryStore,
+  type DocumentStore,
+  type Store,
+} from "@evianta/store";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 import type { PriorFinding } from "../agents/specialist.js";
+import { createOrchestrator } from "../orchestrator.js";
 import { REFERENCE_PLANS } from "../plans.js";
+import { seedTasksAsync, type TaskSeed } from "./fixtures.js";
 
 // Synthetic data only: the taxpayer, TANs, DIN, and URLs below are invented for tests.
 
@@ -578,4 +585,43 @@ export function createTaxNoticeAi(overrides: MockScript = {}, options: DraftOpti
   const mock = createMockAi(taxNoticeScript(overrides));
 
   return { mock, ai: withDynamicDraft(mock, options) };
+}
+
+export interface TaxNoticeHarnessOptions {
+  script?: MockScript;
+  draft?: DraftOptions;
+  uploads?: TaxNoticeUploads;
+  /** Seeds these tasks instead of letting the coordinator plan. */
+  tasks?: readonly TaskSeed[];
+}
+
+export async function createTaxNoticeHarnessAsync(options: TaxNoticeHarnessOptions = {}) {
+  const store = createInMemoryStore();
+  const { mock, ai } = createTaxNoticeAi(options.script, options.draft);
+  let counter = 0;
+  const orchestrator = createOrchestrator({
+    store,
+    ai,
+    newId: () => `id-${String(++counter).padStart(4, "0")}`,
+  });
+  const caseRecord = await createTaxNoticeCaseAsync(store);
+
+  await seedTaxNoticeDocumentsAsync(store, caseRecord.id, mock, options.uploads);
+
+  if (options.tasks) {
+    await seedTasksAsync(store, caseRecord.id, options.tasks);
+  }
+
+  const readAsync = async () => {
+    const [tasks, findings, evidence, deliverables] = await Promise.all([
+      store.tasks.getTasksForCaseAsync(caseRecord.id),
+      store.findings.getFindingsForCaseAsync(caseRecord.id),
+      store.evidence.getEvidenceForCaseAsync(caseRecord.id),
+      store.deliverables.getDeliverablesForCaseAsync(caseRecord.id),
+    ]);
+
+    return { tasks, findings, evidence, deliverables };
+  };
+
+  return { store, mock, orchestrator, caseRecord, readAsync };
 }

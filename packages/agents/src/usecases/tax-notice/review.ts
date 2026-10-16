@@ -80,7 +80,7 @@ export function reconciliationRecomputeCheck(
     );
 }
 
-const AMOUNT_PATTERN = /(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.\d+)?)/gi;
+const AMOUNT_PATTERN = /(?:\brs\.?|\binr\b|₹)\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
 
 export interface QuotedAmount {
   text: string;
@@ -90,7 +90,7 @@ export interface QuotedAmount {
 /** Rupee amounts quoted in text, such as "Rs 1,41,000", "Rs. 12,400/-", or "INR 620". */
 export function quotedAmounts(text: string): QuotedAmount[] {
   return [...text.matchAll(AMOUNT_PATTERN)].flatMap((match) => {
-    const digits = (match[1] ?? "").replace(/,/g, "").replace(/\.$/, "");
+    const digits = (match[1] ?? "").replace(/,/g, "");
     const value = Number(digits);
 
     return Number.isFinite(value) && digits.length > 0 ? [{ text: match[0].trim(), value }] : [];
@@ -120,14 +120,19 @@ export function knownFigureValues(
   return [...values];
 }
 
-/** Every rupee amount in the draft must match a computed or sourced figure in the work record. */
+/** Every rupee amount in the draft must match a figure computed or sourced outside the draft. */
 export function draftFiguresCheck(
   draftSections: readonly UpstreamSection[],
   expected: readonly ExpectedFigure[],
   tolerance = DEFAULT_NUMERIC_TOLERANCE,
 ): AdditionalCheck {
+  const draftTaskIds = new Set(draftSections.map((section) => section.taskId));
+
   return (findings) => {
-    const known = knownFigureValues(findings, expected);
+    const known = knownFigureValues(
+      findings.filter((finding) => !draftTaskIds.has(finding.taskId)),
+      expected,
+    );
     const issues: VerificationIssue[] = [];
 
     for (const section of draftSections) {

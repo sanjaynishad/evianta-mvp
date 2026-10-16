@@ -1,0 +1,142 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  createHarness,
+  createCaseAsync,
+  finding,
+  seedTasksAsync,
+  specialistStep,
+} from "../../testing/fixtures.js";
+import type { UpstreamSection } from "../../handlers.js";
+import type { VerificationFinding } from "../../verification.js";
+import { TAX_FIGURE_KEYS } from "./constants.js";
+import {
+  draftFiguresCheck,
+  quotedAmounts,
+  reconciliationRecomputeCheck,
+  type ExpectedFigure,
+} from "./review.js";
+
+const expected: ExpectedFigure[] = [
+  { key: TAX_FIGURE_KEYS.tdsClaimedInReturn, label: "Total TDS per return", value: 141000 },
+  { key: TAX_FIGURE_KEYS.tdsPerTaxCredit, label: "Total TDS per 26AS/AIS", value: 128600 },
+  { key: TAX_FIGURE_KEYS.tdsDifference, label: "Difference", value: 12400 },
+];
+
+function verificationFinding(
+  id: string,
+  taskId: string,
+  figures: VerificationFinding["figures"] = [],
+): VerificationFinding {
+  return { id, taskId, summary: id, severity: "info", evidence: [], figures };
+}
+
+function draftSection(content: string): UpstreamSection {
+  return {
+    taskId: "draft",
+    taskTitle: "Draft",
+    role: "response-preparation",
+    deliverableId: "deliverable-primary",
+    title: "Response draft",
+    content,
+  };
+}
+
+describe("tax-notice review checks", () => {
+  it("reads rupee amounts in common notations", () => {
+    expect(
+      quotedAmounts(
+        "Rs 1,41,000 and Rs. 12,400/- plus INR 620, ₹13,020.50 but not section 143(1).",
+      ),
+    ).toEqual([
+      { text: "Rs 1,41,000", value: 141000 },
+      { text: "Rs. 12,400", value: 12400 },
+      { text: "INR 620", value: 620 },
+      { text: "₹13,020.50", value: 13020.5 },
+    ]);
+  });
+
+  it("flags draft amounts that match no computed figure", () => {
+    const notice = verificationFinding("notice", "analyze", [
+      {
+        key: "demand-total",
+        label: "Demand",
+        value: 13020,
+        components: [
+          { label: "Tax", value: 12400 },
+          { label: "Interest", value: 620 },
+        ],
+      },
+    ]);
+    const ownFigure = verificationFinding("own", "draft", [
+      { key: "draft-difference", label: "Draft difference", value: 12000 },
+    ]);
+    const check = draftFiguresCheck(
+      [
+        draftSection(
+          "Claimed Rs 1,41,000; 26AS Rs 1,28,600; difference Rs 12,000; interest Rs 620.",
+        ),
+      ],
+      expected,
+    );
+    const issues = check([notice, ownFigure]);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        check: "draft-figure",
+        severity: "high",
+        taskIds: ["draft"],
+        message: expect.stringContaining(
+          "quotes Rs 12,000, which does not match any computed or sourced figure (closest: 12,400)",
+        ),
+      }),
+    ]);
+    expect(
+      draftFiguresCheck([draftSection("Rs 12,400 and Rs 13,020")], expected)([notice]),
+    ).toEqual([]);
+  });
+
+  it("recomputes reconciliation figures stated by the reconciliation and draft tasks", () => {
+    const check = reconciliationRecomputeCheck(expected, (item) => item.taskId !== "analyze");
+    const issues = check([
+      verificationFinding("rec", "rec", [
+        { key: TAX_FIGURE_KEYS.tdsClaimedInReturn, label: "Total TDS per return", value: 141000 },
+        { key: TAX_FIGURE_KEYS.tdsDifference, label: "Difference", value: 13400 },
+      ]),
+      verificationFinding("notice", "analyze", [
+        { key: TAX_FIGURE_KEYS.tdsDifference, label: "Per notice", value: 99 },
+      ]),
+    ]);
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        check: "reconciliation-recompute",
+        findingIds: ["rec"],
+        message:
+          '"Difference" is stated as 13,400 but recomputing the reconciliation from the uploaded records gives 12,400.',
+      }),
+    ]);
+  });
+
+  it("keeps the generic reviewer for other use cases", async () => {
+    const { store, ai, orchestrator } = createHarness({
+      "legal-research": specialistStep({ findings: [finding("Route noted")] }),
+      "independent-review": { output: { findings: [], openQuestions: [] } },
+    });
+    const caseRecord = await createCaseAsync(store, "msme-payment");
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "legal", role: "legal-research" },
+      { id: "review", role: "independent-review", dependsOn: ["legal"] },
+    ]);
+
+    const result = await orchestrator.runCaseAsync(caseRecord.id);
+    const findings = await store.findings.getFindingsForCaseAsync(caseRecord.id);
+
+    expect(result.status).toBe("completed");
+    expect(ai.calls.at(-1)?.key).toBe("independent-review");
+    expect(findings.find((item) => item.taskId === "review")?.summary).toMatch(
+      /^Deterministic checks passed/,
+    );
+  });
+});

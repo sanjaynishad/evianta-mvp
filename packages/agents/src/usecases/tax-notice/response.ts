@@ -96,8 +96,9 @@ export function createResponsePreparationAgent(): ResponsePreparationAgent {
   });
 }
 
+// Claims that this response or a filing was made, not facts such as "the return was filed on time".
 const FILING_CLAIM =
-  /\b(has|have|had|was|were|is|are)\s+(been\s+)?(e-?filed|filed|submitted|uploaded)\b|\bwe\s+(have\s+)?(e-?filed|filed|submitted|uploaded)\b|\bhereby\s+(file|submit)\b/i;
+  /\b(has|have)\s+been\s+(e-?filed|filed|submitted|uploaded)\b|\b(is|are)\s+being\s+(e-?filed|filed|submitted|uploaded)\b|\bwe\s+have\s+(e-?filed|filed|submitted|uploaded)\b|\bhereby\s+(file|submit)\b/i;
 
 /** Sentences that claim a filing or submission happened, which the platform never does. */
 export function findFilingClaims(text: string): string[] {

@@ -97,16 +97,15 @@ export function citationsForProvision(provision: Provision, citations: readonly 
 
     return hosts.has(title) || hosts.has(hostnameOf(citation.url) ?? "");
   });
-
-  if (sameSite.length > 0) {
-    return sameSite;
-  }
-
-  const section = sectionNumber(provision.reference);
-
-  return section
-    ? citations.filter((citation) => citation.snippet.toLowerCase().includes(section.toLowerCase()))
+  const section = sectionNumber(provision.reference)?.toLowerCase();
+  const candidates = sameSite.length > 0 ? sameSite : citations;
+  const mentioning = section
+    ? candidates.filter((citation) =>
+        `${citation.title} ${citation.snippet}`.toLowerCase().includes(section),
+      )
     : [];
+
+  return mentioning.length > 0 ? mentioning : sameSite;
 }
 
 export function verifyFlag(provision: Provision): OpenQuestionDraft {
