@@ -58,6 +58,33 @@ export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): Ev
   return "document";
 }
 
+export type DocumentViewKind = "pdf" | "image" | "spreadsheet" | "text";
+
+export function getDocumentKind(
+  document: Pick<CaseDocument, "name" | "mimeType">,
+): DocumentViewKind {
+  const name = document.name.toLowerCase();
+  const mimeType = document.mimeType.toLowerCase();
+  if (mimeType === "application/pdf" || name.endsWith(".pdf")) {
+    return "pdf";
+  }
+
+  if (mimeType.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/.test(name)) {
+    return "image";
+  }
+
+  if (
+    /\.(csv|tsv|xlsx?)$/.test(name) ||
+    mimeType.includes("spreadsheet") ||
+    mimeType.includes("excel") ||
+    mimeType === "text/csv"
+  ) {
+    return "spreadsheet";
+  }
+
+  return "text";
+}
+
 export function getEvidenceLabel(evidence: Evidence, document?: CaseDocument): string {
   if (isWebEvidence(evidence)) {
     return evidence.description;

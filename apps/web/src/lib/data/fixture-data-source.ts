@@ -28,6 +28,7 @@ import { extractionSummary } from "@/fixtures/documents";
 import { getFixtureAssetUrl, getFixtureExtraction } from "@/fixtures/extractions";
 import { buildRunEvents, collectDependents, toFailedCaseState } from "@/fixtures/run-events";
 import { ApiError, SampleReadOnlyError } from "@/lib/api/errors";
+import { applyQuestionUpdate, applySectionUpdate } from "@/lib/review";
 import { getVisitorId } from "@/lib/visitor";
 import type { CaseDataSource, RunStreamHandlers, RunStreamOptions } from "./types";
 
@@ -237,14 +238,9 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
     const resolvedAt = now().toISOString();
     const next: CaseState = {
       ...state,
-      findings: state.findings.map((finding) => ({
-        ...finding,
-        openQuestions: finding.openQuestions.map((question) =>
-          question.id === questionId
-            ? { ...question, status, resolutionNote: note, resolvedAt }
-            : question,
-        ),
-      })),
+      findings: state.findings.map((finding) =>
+        applyQuestionUpdate(finding, questionId, status, note, resolvedAt),
+      ),
     };
     states.set(caseId, next);
     return clone(findQuestionFinding(next, questionId));
@@ -725,19 +721,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
                 }
 
                 found = true;
-                return {
-                  ...section,
-                  ...(update.editedContent !== undefined
-                    ? {
-                        editedContent: update.editedContent ?? undefined,
-                        editedAt: update.editedContent === null ? undefined : reviewedAt,
-                      }
-                    : {}),
-                  ...(update.reviewStatus ? { reviewStatus: update.reviewStatus, reviewedAt } : {}),
-                  ...(update.reviewComment !== undefined
-                    ? { reviewComment: update.reviewComment ?? undefined }
-                    : {}),
-                };
+                return applySectionUpdate(section, update, reviewedAt);
               }),
             },
       );

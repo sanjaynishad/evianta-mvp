@@ -6,6 +6,7 @@ import type {
   Finding,
   OpenQuestion,
   OpenQuestionSeverity,
+  SectionUpdateRequest,
   Task,
 } from "@evianta/core";
 
@@ -232,8 +233,57 @@ export function sectionDomId(sectionId: string): string {
   return `section-${sectionId}`;
 }
 
+export function applySectionUpdate(
+  section: DeliverableSection,
+  update: SectionUpdateRequest,
+  at: string,
+): DeliverableSection {
+  const next: DeliverableSection = { ...section };
+  if (update.editedContent !== undefined) {
+    next.editedContent = update.editedContent ?? undefined;
+    next.editedAt = update.editedContent === null ? undefined : at;
+  }
+
+  if (update.reviewStatus) {
+    next.reviewStatus = update.reviewStatus;
+    next.reviewedAt = at;
+  }
+
+  if (update.reviewComment !== undefined) {
+    next.reviewComment = update.reviewComment ?? undefined;
+  }
+
+  return next;
+}
+
+export function applyQuestionStatus(
+  question: OpenQuestion,
+  status: "resolved" | "dismissed",
+  note: string | undefined,
+  at: string,
+): OpenQuestion {
+  return { ...question, status, resolutionNote: note, resolvedAt: at };
+}
+
+export function applyQuestionUpdate(
+  finding: Finding,
+  questionId: string,
+  status: "resolved" | "dismissed",
+  note: string | undefined,
+  at: string,
+): Finding {
+  return {
+    ...finding,
+    openQuestions: finding.openQuestions.map((question) =>
+      question.id === questionId ? applyQuestionStatus(question, status, note, at) : question,
+    ),
+  };
+}
+
 export function findingDomId(findingId: string): string {
   return `finding-${findingId}`;
 }
 
 export const openQuestionsDomId = "open-questions";
+
+export const findingsDomId = "findings";

@@ -7,6 +7,7 @@ import {
   type DocumentStatus,
   type ExtractionMethod,
   type FindingSeverity,
+  type ModelTier,
   type SectionReviewStatus,
   type TaskStatus,
   type UseCase,
@@ -110,4 +111,10 @@ export const extractionMethodLabels: Record<ExtractionMethod, string> = {
   ocr: "Read with OCR",
   handwriting: "Handwriting read by a model",
   mixed: "Mixed reading methods",
+};
+
+export const modelTierLabels: Record<ModelTier, string> = {
+  cheap: "Cheap tier model",
+  mid: "Mid tier model",
+  high: "High tier model",
 };

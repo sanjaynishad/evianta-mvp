@@ -84,6 +84,7 @@ export interface CaseWorkspaceController {
   // Set when the API would reject an upload, with a reason to show instead of the drop area.
   uploadLockedReason: string | undefined;
   reload: () => void;
+  mutate: (update: (current: CaseState) => CaseState) => void;
   runAsync: () => Promise<void>;
   retryAsync: () => Promise<void>;
   replay: () => void;
@@ -420,6 +421,7 @@ export function useCaseWorkspace(
     uploading: uploads.some((upload) => upload.status === "uploading"),
     uploadLockedReason,
     reload,
+    mutate,
     runAsync: () => startAsync("run"),
     retryAsync: () => startAsync("retry"),
     replay,

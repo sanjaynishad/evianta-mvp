@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useRef, useState, type DragEvent } from "react";
-import { FileText, Lock, ShieldAlert, Upload, X } from "lucide-react";
+import { Eye, FileText, Lock, ShieldAlert, Upload, X } from "lucide-react";
 import type { CaseDocument } from "@evianta/core";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,8 @@ export interface DocumentPanelProps {
   uploadLockedReason?: string;
   onUpload: (files: File[]) => void;
   onDismissUpload: (id: string) => void;
+  onOpenDocument?: (documentId: string) => void;
+  className?: string;
 }
 
 function formatSize(bytes: number): string {
@@ -38,6 +40,8 @@ export function DocumentPanel({
   uploadLockedReason,
   onUpload,
   onDismissUpload,
+  onOpenDocument,
+  className,
 }: DocumentPanelProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -56,7 +60,10 @@ export function DocumentPanel({
   const empty = documents.length === 0 && uploads.length === 0;
 
   return (
-    <section aria-labelledby="documents-heading" className="flex flex-col gap-3 print:hidden">
+    <section
+      aria-labelledby="documents-heading"
+      className={cn("flex flex-col gap-3 print:hidden", className)}
+    >
       <h2 id="documents-heading" className="text-base font-semibold">
         Documents
       </h2>
@@ -162,7 +169,19 @@ export function DocumentPanel({
                 className="flex flex-col gap-1.5 p-3"
                 data-document-id={document.id}
               >
-                <span className="truncate text-sm font-medium">{document.name}</span>
+                {onOpenDocument ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenDocument(document.id)}
+                    aria-label={`Open ${document.name} in the viewer`}
+                    className="flex min-w-0 items-center gap-1.5 rounded-sm text-left text-sm font-medium text-foreground underline-offset-4 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Eye aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{document.name}</span>
+                  </button>
+                ) : (
+                  <span className="truncate text-sm font-medium">{document.name}</span>
+                )}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <DocumentStatusBadge status={document.status} />
                   {extraction?.handwriting ? <HandwritingBadge /> : null}

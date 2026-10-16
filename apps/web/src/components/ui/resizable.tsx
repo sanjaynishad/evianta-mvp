@@ -1,9 +1,11 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
+import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import { GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+export { usePanelRef };
 
 export function ResizablePanelGroup({
   className,
