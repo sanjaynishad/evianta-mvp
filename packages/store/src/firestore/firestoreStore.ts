@@ -9,6 +9,7 @@ import { createEventRepo } from "./eventRepo.js";
 import { createEvidenceRepo } from "./evidenceRepo.js";
 import { createFindingRepo } from "./findingRepo.js";
 import { createTaskRepo } from "./taskRepo.js";
+import { createRunRepo } from "./runRepo.js";
 
 export function createFirestoreStore(db: Firestore): Store {
   return {
@@ -20,5 +21,6 @@ export function createFirestoreStore(db: Firestore): Store {
     deliverables: createDeliverableRepo(db),
     documents: createDocumentRepo(db),
     events: createEventRepo(db),
+    runs: createRunRepo(db),
   };
 }

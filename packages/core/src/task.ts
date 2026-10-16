@@ -18,6 +18,7 @@ export const taskSchema = z.object({
   caseId: z.string(),
   title: z.string(),
   assignedRole: agentRoleSchema,
+  instructions: z.string().optional(),
   status: taskStatusSchema.default("pending"),
   dependsOn: z.array(z.string()).default([]),
   tokenUsage: tokenUsageSchema.optional(),

@@ -77,6 +77,60 @@ export function describeStoreContract(
       ({ store, documentStore } = await createContextAsync());
     });
 
+    it("excludes concurrent lease owners and does not let a non-owner release the lease", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+      const claims = await Promise.all([
+        store.runs.acquireLeaseAsync(created.id, "first", 60_000),
+        store.runs.acquireLeaseAsync(created.id, "second", 60_000),
+      ]);
+      const winner = claims[0] ? "first" : "second";
+      const loser = claims[0] ? "second" : "first";
+
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(await store.runs.renewLeaseAsync(created.id, loser, 60_000)).toBe(false);
+      await store.runs.releaseLeaseAsync(created.id, loser);
+      expect(await store.runs.acquireLeaseAsync(created.id, loser, 60_000)).toBe(false);
+      expect(await store.runs.renewLeaseAsync(created.id, winner, 60_000)).toBe(true);
+      await store.runs.releaseLeaseAsync(created.id, winner);
+      expect(await store.runs.acquireLeaseAsync(created.id, loser, 60_000)).toBe(true);
+    });
+
+    it("allows takeover after lease expiry without letting the old owner renew or release it", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+
+      expect(await store.runs.acquireLeaseAsync(created.id, "first", 1)).toBe(true);
+      await sleepAsync(10);
+      expect(await store.runs.renewLeaseAsync(created.id, "first", 60_000)).toBe(false);
+      expect(await store.runs.acquireLeaseAsync(created.id, "second", 60_000)).toBe(true);
+      await store.runs.releaseLeaseAsync(created.id, "first");
+      expect(await store.runs.acquireLeaseAsync(created.id, "third", 60_000)).toBe(false);
+    });
+
+    it("journals charges idempotently and reconciles them once under contention", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+      const increment = { inputTokens: 100, outputTokens: 20, costEstimate: 0.01 };
+
+      await Promise.all([
+        store.runs.recordChargeAsync(created.id, "run-1", "task:1", increment),
+        store.runs.recordChargeAsync(created.id, "run-1", "task:1", increment),
+      ]);
+      await store.runs.recordChargeAsync(created.id, "run-1", "run", { runCount: 1 });
+      await store.runs.recordChargeAsync(created.id, "run-1", "planning", increment);
+      expect((await store.cases.getCaseAsync(created.id))?.usage?.inputTokens ?? 0).toBe(0);
+      await Promise.all([
+        store.runs.reconcileUsageAsync(created.id),
+        store.runs.reconcileUsageAsync(created.id),
+      ]);
+
+      expect((await store.cases.getCaseAsync(created.id))?.usage).toMatchObject({
+        inputTokens: 200,
+        outputTokens: 40,
+        costEstimate: 0.02,
+        runCount: 1,
+      });
+      expect(await store.runs.reconcileUsageAsync(created.id)).toBe(0);
+    });
+
     async function seedSampleAsync() {
       const sample = await store.cases.createCaseAsync(
         caseInput({ title: "Sample tax notice", isSample: true, status: "review" }),
@@ -469,6 +523,42 @@ export function describeStoreContract(
         expect(await store.tasks.getTasksForCaseAsync("case-2")).toEqual([]);
       });
 
+      it("creates a batch of tasks atomically", async () => {
+        await store.tasks.createTaskAsync({
+          id: "task-existing",
+          caseId: "case-1",
+          title: "Existing",
+          assignedRole: "case-analysis",
+        });
+
+        const created = await store.tasks.createTasksAsync("case-2", [
+          { id: "task-a", caseId: "case-2", title: "A", assignedRole: "case-analysis" },
+          {
+            id: "task-b",
+            caseId: "case-2",
+            title: "B",
+            assignedRole: "reconciliation",
+            dependsOn: ["task-a"],
+          },
+        ]);
+
+        expect(created.map((task) => task.status)).toEqual(["pending", "pending"]);
+        expect((await store.tasks.getTasksForCaseAsync("case-2")).map((task) => task.id)).toEqual([
+          "task-a",
+          "task-b",
+        ]);
+
+        await expect(
+          store.tasks.createTasksAsync("case-1", [
+            { id: "task-new", caseId: "case-1", title: "New", assignedRole: "reconciliation" },
+            { id: "task-existing", caseId: "case-1", title: "Dup", assignedRole: "case-analysis" },
+          ]),
+        ).rejects.toThrow(StoreConflictError);
+        expect((await store.tasks.getTasksForCaseAsync("case-1")).map((task) => task.id)).toEqual([
+          "task-existing",
+        ]);
+      });
+
       it("persists usage, attempts, and errors, and clears the error", async () => {
         await store.tasks.createTaskAsync({
           id: "task-1",
@@ -704,6 +794,49 @@ export function describeStoreContract(
         ]);
         expect(deliverables[0]?.sections).toEqual([]);
         expect(await store.deliverables.getDeliverableAsync("case-1", "missing")).toBeUndefined();
+      });
+
+      it("updates a deliverable atomically from its latest state", async () => {
+        await store.deliverables.updateSectionAsync("case-1", "del-1", "sec-1", {
+          editedContent: "Reviewer summary",
+        });
+
+        const updated = await store.deliverables.updateDeliverableAsync(
+          "case-1",
+          "del-1",
+          (current) =>
+            current && {
+              ...current,
+              sections: current.sections.map((section) =>
+                section.id === "sec-2" ? { ...section, content: '{"rows":[1]}' } : section,
+              ),
+            },
+        );
+        const created = await store.deliverables.updateDeliverableAsync(
+          "case-1",
+          "del-new",
+          (current) =>
+            current ?? { id: "del-new", caseId: "case-1", title: "New", format: "report" },
+        );
+        const unchanged = await store.deliverables.updateDeliverableAsync(
+          "case-1",
+          "del-1",
+          () => undefined,
+        );
+
+        expect(
+          updated?.sections.map((section) => section.editedContent ?? section.content),
+        ).toEqual(["Reviewer summary", '{"rows":[1]}']);
+        expect(created).toMatchObject({ id: "del-new", sections: [] });
+        expect(unchanged).toEqual(updated);
+        expect(
+          (await store.deliverables.getDeliverablesForCaseAsync("case-1")).map((item) => item.id),
+        ).toEqual(["del-1", "del-new"]);
+        await expect(
+          store.deliverables.updateDeliverableAsync("case-1", "del-1", (current) =>
+            current ? { ...current, id: "del-other" } : undefined,
+          ),
+        ).rejects.toThrow(/must keep/);
       });
 
       it("throws not found for an unknown deliverable or section", async () => {

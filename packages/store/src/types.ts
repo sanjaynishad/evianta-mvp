@@ -105,6 +105,8 @@ export interface CaseRepo {
 
 export interface TaskRepo {
   createTaskAsync(task: TaskInput): Promise<Task>;
+  /** Creates every task of one case atomically: all are stored, or none are. */
+  createTasksAsync(caseId: string, tasks: readonly TaskInput[]): Promise<Task[]>;
   getTasksForCaseAsync(caseId: string): Promise<Task[]>;
   updateTaskAsync(caseId: string, taskId: string, update: TaskUpdate): Promise<Task>;
 }
@@ -126,6 +128,15 @@ export interface EvidenceRepo {
 
 export interface DeliverableRepo {
   saveDeliverableAsync(deliverable: DeliverableInput): Promise<Deliverable>;
+  /**
+   * Reads and writes one deliverable atomically, so concurrent section edits are not overwritten.
+   * `update` may run more than once and must be pure; returning undefined leaves it unchanged.
+   */
+  updateDeliverableAsync(
+    caseId: string,
+    deliverableId: string,
+    update: (current: Deliverable | undefined) => DeliverableInput | undefined,
+  ): Promise<Deliverable | undefined>;
   getDeliverablesForCaseAsync(caseId: string): Promise<Deliverable[]>;
   getDeliverableAsync(caseId: string, deliverableId: string): Promise<Deliverable | undefined>;
   updateSectionAsync(
@@ -152,6 +163,21 @@ export interface EventRepo {
   listEventsAsync(caseId: string, afterSeq?: number): Promise<RunEvent[]>;
 }
 
+export interface RunRepo {
+  acquireLeaseAsync(caseId: string, owner: string, ttlMs: number): Promise<boolean>;
+  renewLeaseAsync(caseId: string, owner: string, ttlMs: number): Promise<boolean>;
+  releaseLeaseAsync(caseId: string, owner: string): Promise<void>;
+  /** Immutable, idempotent charges are journaled before completing the associated work. */
+  recordChargeAsync(
+    caseId: string,
+    runId: string,
+    chargeId: string,
+    increment: CaseUsageIncrement,
+  ): Promise<void>;
+  /** Applies unapplied charges and their accounting markers atomically. Returns the count applied. */
+  reconcileUsageAsync(caseId: string): Promise<number>;
+}
+
 export interface Store {
   agents: AgentDirectoryRepo;
   cases: CaseRepo;
@@ -161,4 +187,5 @@ export interface Store {
   deliverables: DeliverableRepo;
   documents: DocumentRepo;
   events: EventRepo;
+  runs: RunRepo;
 }

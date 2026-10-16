@@ -27,6 +27,33 @@ export const findingSeveritySchema = z.enum(["high", "medium", "low", "info"]);
 
 export type FindingSeverity = z.infer<typeof findingSeveritySchema>;
 
+export const figureComponentSchema = z.object({
+  label: z.string(),
+  value: z.number(),
+});
+
+export type FigureComponent = z.infer<typeof figureComponentSchema>;
+
+// A figure stated by a finding. When components are present, value is claimed to equal their sum,
+// so deterministic verification can recompute it. Figures sharing a key must agree across tasks.
+export const findingFigureSchema = z.object({
+  key: z.string().min(1),
+  label: z.string(),
+  value: z.number(),
+  unit: z.string().optional(),
+  components: z.array(figureComponentSchema).optional(),
+});
+
+export type FindingFigure = z.infer<typeof findingFigureSchema>;
+
+export const findingDateSchema = z.object({
+  key: z.string().min(1),
+  label: z.string(),
+  date: z.string(),
+});
+
+export type FindingDate = z.infer<typeof findingDateSchema>;
+
 export const findingSchema = z.object({
   id: z.string(),
   taskId: z.string(),
@@ -37,6 +64,10 @@ export const findingSchema = z.object({
   evidence: z.array(evidenceSchema).default([]),
   assumptions: z.array(z.string()).default([]),
   openQuestions: z.array(openQuestionSchema).default([]),
+  figures: z.array(findingFigureSchema).optional(),
+  dates: z.array(findingDateSchema).optional(),
+  // Attempt of the producing task; readers use only the task's latest completed attempt.
+  attempt: z.number().int().positive().optional(),
 });
 
 export type Finding = z.infer<typeof findingSchema>;
