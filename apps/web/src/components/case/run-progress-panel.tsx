@@ -44,7 +44,6 @@ export function RunProgressPanel({
   return (
     <section
       aria-labelledby="progress-heading"
-      aria-busy={progress.status === "running"}
       className="flex flex-col gap-4 rounded-lg border bg-card p-4 shadow-elevation-1 print:hidden"
     >
       <div className="flex flex-wrap items-center gap-2">

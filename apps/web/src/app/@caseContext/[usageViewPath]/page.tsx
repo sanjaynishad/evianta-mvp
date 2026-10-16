@@ -1,5 +1,5 @@
+import { getUsageViewPath } from "@evianta/env";
 import { CaseContextLabel } from "@/components/shell/app-shell";
-import { getUsageViewPath } from "@/lib/env.server";
 import DefaultCaseContext from "../default";
 
 interface UsageCaseContextProps {

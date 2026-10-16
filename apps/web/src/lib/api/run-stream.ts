@@ -3,7 +3,6 @@ import type { RunStreamHandlers, RunStreamOptions, Unsubscribe } from "@/lib/dat
 import { ApiNetworkError, ApiResponseValidationError } from "./errors";
 
 export interface EventSourceLike {
-  readonly readyState: number;
   onopen: ((event: Event) => void) | null;
   onerror: ((event: Event) => void) | null;
   addEventListener(type: string, listener: (event: MessageEvent) => void): void;
@@ -17,8 +16,6 @@ export interface SubscribeToRunEventsOptions extends RunStreamOptions {
   maxReconnectAttempts?: number;
   reconnectDelayMs?: number;
 }
-
-const eventSourceClosed = 2;
 
 export const lastEventIdParam = "lastEventId";
 
@@ -184,13 +181,10 @@ export function subscribeToRunEvents(
       }
     };
 
+    // Native EventSource retries forever while CONNECTING, so every error goes through the
+    // bounded manual reconnect, which also resumes from the last seen sequence number.
     current.onerror = () => {
       if (closed || source !== current) {
-        return;
-      }
-
-      if (current.readyState !== eventSourceClosed) {
-        handlers.onConnectionChange?.("reconnecting");
         return;
       }
 

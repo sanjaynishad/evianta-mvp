@@ -35,6 +35,8 @@ interface StreamRequest {
 interface LiveProgress {
   progress: RunProgress;
   replay: boolean;
+  // Set once the case state has been refreshed after the terminal event, so it takes over again.
+  settled?: boolean;
 }
 
 export type WorkspaceAction = "run" | "retry";
@@ -109,7 +111,12 @@ export function useCaseWorkspace(
 
   const handleEvent = useLatestCallback((event: RunEvent, replay: boolean) => {
     setLive((current) => {
-      const base = current?.progress ?? (state ? createRunProgress(state) : undefined);
+      const base =
+        current && !current.settled
+          ? current.progress
+          : state
+            ? createRunProgress(state)
+            : undefined;
       return base ? { progress: applyRunEvent(base, event), replay } : current;
     });
   });
@@ -120,8 +127,20 @@ export function useCaseWorkspace(
     }
 
     setStreamRequest(null);
-    reload();
+    void settleAfterRunAsync(runId);
   });
+
+  async function settleAfterRunAsync(runId: string | undefined) {
+    try {
+      const refreshed = await dataSource.getCaseStateAsync(caseId);
+      mutate(() => refreshed);
+      setLive((current) =>
+        current && current.progress.runId === runId ? { ...current, settled: true } : current,
+      );
+    } catch {
+      reload();
+    }
+  }
 
   const handleStreamError = useLatestCallback((error: Error) => {
     toast.error("Live progress was interrupted", { description: describeError(error) });
@@ -180,7 +199,7 @@ export function useCaseWorkspace(
 
     const timer = setTimeout(reload, processingPollMs);
     return () => clearTimeout(timer);
-  }, [hasProcessingDocuments, reload, state]);
+  }, [hasProcessingDocuments, reload, state, caseState.error]);
 
   async function startAsync(action: WorkspaceAction) {
     if (!state) {
@@ -275,7 +294,12 @@ export function useCaseWorkspace(
     );
   }
 
-  const progress = live?.progress ?? (state ? createRunProgress(state) : undefined);
+  let progress: RunProgress | undefined;
+  if (live && !live.settled) {
+    progress = live.progress;
+  } else if (state) {
+    progress = { ...createRunProgress(state), announcement: live?.progress.announcement ?? "" };
+  }
 
   return {
     state,

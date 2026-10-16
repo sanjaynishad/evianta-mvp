@@ -10,7 +10,6 @@ import {
 
 class FakeEventSource implements EventSourceLike {
   static instances: FakeEventSource[] = [];
-  readyState = 0;
   onopen: ((event: Event) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   closed = false;
@@ -26,7 +25,6 @@ class FakeEventSource implements EventSourceLike {
 
   close() {
     this.closed = true;
-    this.readyState = 2;
   }
 
   emit(event: RunEvent, named = true) {
@@ -45,8 +43,7 @@ class FakeEventSource implements EventSourceLike {
     }
   }
 
-  fail(readyState: number) {
-    this.readyState = readyState;
+  fail() {
     this.onerror?.(new Event("error"));
   }
 }
@@ -176,30 +173,34 @@ describe("subscribeToRunEvents", () => {
     expect(source().closed).toBe(false);
   });
 
-  it("reconnects with the last seen id when the browser gives up", () => {
+  it("reconnects with the last seen id when the connection drops", () => {
     const { handlers, source } = subscribe();
     const first = source();
     first.emit(runStarted(1));
     first.emit(taskStarted(2));
 
-    first.fail(0);
-    expect(FakeEventSource.instances).toHaveLength(1);
+    first.fail();
+    expect(first.closed).toBe(true);
     expect(handlers.onConnectionChange).toHaveBeenLastCalledWith("reconnecting");
+    expect(FakeEventSource.instances).toHaveLength(1);
 
-    first.fail(2);
     vi.advanceTimersByTime(100);
 
     expect(FakeEventSource.instances).toHaveLength(2);
     expect(source().url).toBe(`${streamUrl}?lastEventId=2`);
   });
 
-  it("stops after too many reconnect attempts", () => {
-    const { handlers, source } = subscribe({ maxReconnectAttempts: 1 });
+  it("stops after too many reconnect attempts during a persistent outage", () => {
+    const { handlers, source } = subscribe({ maxReconnectAttempts: 2 });
 
-    source().fail(2);
+    source().fail();
     vi.advanceTimersByTime(100);
-    source().fail(2);
+    source().fail();
+    vi.advanceTimersByTime(200);
+    source().fail();
+    vi.advanceTimersByTime(1000);
 
+    expect(FakeEventSource.instances).toHaveLength(3);
     expect(handlers.onError).toHaveBeenCalledTimes(1);
     expect(handlers.onConnectionChange).toHaveBeenLastCalledWith("closed");
   });

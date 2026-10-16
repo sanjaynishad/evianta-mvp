@@ -124,6 +124,7 @@ describe("CaseWorkspace", () => {
       renderWithDataSource(<CaseWorkspace caseId={created.id} />, dataSource);
 
       fireEvent.click(await screen.findByRole("button", { name: /Run case/ }));
+      expect(screen.getByRole("region", { name: "Progress" })).not.toHaveAttribute("aria-busy");
 
       await waitFor(
         () => expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument(),

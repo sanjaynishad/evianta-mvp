@@ -69,6 +69,8 @@ export const runSummarySchema = z.object({
   startedAt: z.string(),
   finishedAt: z.string().optional(),
   lastEventSeq: z.number().int().nonnegative().default(0),
+  // Plain-language reason when the run failed, including failures outside any task.
+  error: z.string().optional(),
 });
 
 export type RunSummary = z.infer<typeof runSummarySchema>;

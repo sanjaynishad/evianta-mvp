@@ -90,17 +90,29 @@ export function createRunProgress(state: CaseState): RunProgress {
     totalTokens: (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
     totalCost: usage?.costEstimate ?? 0,
     lastSeq: state.latestRun?.lastEventSeq ?? 0,
-    error: failedTask?.lastError,
+    error: state.latestRun?.error ?? failedTask?.lastError,
     announcement: "",
   };
 }
 
-// A blank board for replaying a recorded run from its first event.
+// A blank board for replaying a recorded run from its first event. A retry run only carries
+// events for the steps it re-ran, so its board keeps the other steps and lets the run-started
+// event reset the re-run ones.
 export function createReplayProgress(state: CaseState): RunProgress {
   const progress = createRunProgress(state);
-  return {
+  const replayBase: RunProgress = {
     ...progress,
     status: "running",
+    lastSeq: 0,
+    error: undefined,
+    announcement: "Replaying the recorded run.",
+  };
+  if (state.latestRun?.mode === "retry") {
+    return replayBase;
+  }
+
+  return {
+    ...replayBase,
     tasks: progress.tasks.map((task) => ({
       ...task,
       status: "pending",
@@ -113,9 +125,6 @@ export function createReplayProgress(state: CaseState): RunProgress {
     findings: [],
     totalTokens: 0,
     totalCost: 0,
-    lastSeq: 0,
-    error: undefined,
-    announcement: "Replaying the recorded run.",
   };
 }
 
@@ -152,10 +161,12 @@ export function applyRunEvent(progress: RunProgress, event: RunEvent): RunProgre
         mode: event.mode,
         status: "running",
         error: undefined,
-        findings: isRetry ? progress.findings : [],
+        findings: isRetry
+          ? progress.findings.filter((finding) => !restarting.has(finding.taskId))
+          : [],
         tasks: progress.tasks.map((task) =>
           restarting.has(task.id) || !isRetry
-            ? { ...task, status: "pending", lastError: undefined }
+            ? { ...task, status: "pending", lastError: undefined, findingIds: [] }
             : task,
         ),
         announcement: isRetry ? "Retrying the failed steps." : "Run started.",

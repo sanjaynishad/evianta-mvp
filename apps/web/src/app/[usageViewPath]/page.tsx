@@ -2,12 +2,12 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { TriangleAlert } from "lucide-react";
 import type { UsageCasesResponse, UsageSummary } from "@evianta/core";
+import { getUsageViewPath } from "@evianta/env";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { PageContainer } from "@/components/shell/app-shell";
 import { UsageView } from "@/components/usage/usage-view";
 import { describeError } from "@/lib/api/errors";
 import { createServerDataSource } from "@/lib/data/data-source";
-import { getUsageViewPath } from "@/lib/env.server";
 
 export const dynamic = "force-dynamic";
 

@@ -1,8 +1,16 @@
+import type { CaseState } from "@evianta/core";
 import { describe, expect, it } from "vitest";
-import { failedCaseState, fixtureFailure, failedRunEvents } from "@/fixtures";
+import {
+  failedCaseState,
+  fixtureFailure,
+  failedRunEvents,
+  getSampleStateForUseCase,
+} from "@/fixtures";
+import { buildRunEvents } from "@/fixtures/run-events";
 import {
   applyRunEvent,
   canRetry,
+  createReplayProgress,
   createRunProgress,
   getBlockedTasks,
   getFailedTasks,
@@ -57,5 +65,63 @@ describe("run progress", () => {
     ).toBe(true);
     expect(retrying.tasks.find((task) => task.id === "c-task-documents")?.status).toBe("completed");
     expect(canRetry(retrying)).toBe(false);
+  });
+
+  it("replays a retry run without discarding the steps it reused", () => {
+    const sample = getSampleStateForUseCase("msme-payment");
+    const retryIds = [fixtureFailure.taskId, "c-task-prepare", "c-task-review"];
+    const state: CaseState = {
+      ...sample,
+      latestRun: {
+        runId: "retry-1",
+        mode: "retry",
+        status: "completed",
+        startedAt: "2026-10-03T10:00:00.000Z",
+        lastEventSeq: 20,
+      },
+    };
+    const events = buildRunEvents(state, {
+      runId: "retry-1",
+      mode: "retry",
+      taskIds: retryIds,
+      startSeq: 1,
+    });
+
+    const replayed = events.reduce(applyRunEvent, createReplayProgress(state));
+
+    expect(replayed.status).toBe("completed");
+    expect(replayed.tasks.every((task) => task.status === "completed")).toBe(true);
+    expect(new Set(replayed.findings.map((finding) => finding.id))).toEqual(
+      new Set(state.findings.map((finding) => finding.id)),
+    );
+  });
+
+  it("starts a replay of a normal run from a blank board", () => {
+    const sample = getSampleStateForUseCase("data-analysis");
+
+    const replay = createReplayProgress(sample);
+
+    expect(replay.tasks.every((task) => task.status === "pending")).toBe(true);
+    expect(replay.findings).toEqual([]);
+  });
+
+  it("keeps a run-level error when no step failed", () => {
+    const sample = getSampleStateForUseCase("data-analysis");
+    const progress = createRunProgress({
+      ...sample,
+      case: { ...sample.case, status: "failed" },
+      latestRun: {
+        runId: "run-9",
+        mode: "run",
+        status: "failed",
+        startedAt: "2026-10-03T10:00:00.000Z",
+        lastEventSeq: 3,
+        error: "Planning did not finish. Try again.",
+      },
+    });
+
+    expect(progress.status).toBe("failed");
+    expect(getFailedTasks(progress)).toEqual([]);
+    expect(progress.error).toBe("Planning did not finish. Try again.");
   });
 });

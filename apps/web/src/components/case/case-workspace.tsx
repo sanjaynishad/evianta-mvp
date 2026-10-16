@@ -161,6 +161,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
             failedTasks={failedTasks}
             blockedTasks={blockedTasks}
             runError={progress.error}
+            runFailed={progress.status === "failed"}
             canRetry={canRetry(progress) && !workspace.busyAction}
             retrying={workspace.busyAction === "retry"}
             readOnly={readOnly}

@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.join(process.cwd(), "../.."),
   reactStrictMode: true,
   poweredByHeader: false,
-  transpilePackages: ["@evianta/core"],
+  transpilePackages: ["@evianta/core", "@evianta/env"],
   eslint: {
     ignoreDuringBuilds: true,
   },

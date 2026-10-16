@@ -23,7 +23,11 @@ describe("usage view page", () => {
   });
 
   afterEach(() => {
-    process.env.EVIANTA_USAGE_VIEW_PATH = original;
+    if (original === undefined) {
+      delete process.env.EVIANTA_USAGE_VIEW_PATH;
+    } else {
+      process.env.EVIANTA_USAGE_VIEW_PATH = original;
+    }
   });
 
   it("is never indexed", () => {
