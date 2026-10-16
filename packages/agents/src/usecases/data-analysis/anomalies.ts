@@ -21,6 +21,15 @@ export interface PeriodAnomaly {
   rows: number[];
 }
 
+export type AnomalyScreeningStatus = "scored" | "too-few-periods" | "no-variation";
+
+export interface AnomalyScreening {
+  status: AnomalyScreeningStatus;
+  periods: number;
+  minPeriods: number;
+  anomalies: PeriodAnomaly[];
+}
+
 export interface AnomalyOptions {
   threshold?: number;
   minPeriods?: number;
@@ -28,17 +37,18 @@ export interface AnomalyOptions {
 
 /**
  * Flags periods whose total departs from the robust (Theil-Sen) trend by a robust z-score above the
- * threshold, so a steady growth trend is not itself reported as anomalous.
+ * threshold, so a steady growth trend is not itself reported as anomalous. The status says whether
+ * the periods were scored at all: too few periods, or totals that sit exactly on the trend, are not.
  */
-export function detectPeriodAnomalies(
+export function screenPeriodAnomalies(
   periods: ReadonlyArray<{ period: string; total: number; rows?: readonly number[] }>,
   options: AnomalyOptions = {},
-): PeriodAnomaly[] {
+): AnomalyScreening {
   const threshold = options.threshold ?? ANOMALY_SCORE_THRESHOLD;
   const minPeriods = options.minPeriods ?? MIN_PERIODS_FOR_ANOMALIES;
 
   if (periods.length < minPeriods) {
-    return [];
+    return { status: "too-few-periods", periods: periods.length, minPeriods, anomalies: [] };
   }
 
   const values = periods.map((period) => period.total);
@@ -48,10 +58,10 @@ export function detectPeriodAnomalies(
   const robust = robustZScores(residuals);
 
   if (!robust) {
-    return [];
+    return { status: "no-variation", periods: periods.length, minPeriods, anomalies: [] };
   }
 
-  return periods.flatMap((period, index): PeriodAnomaly[] => {
+  const anomalies = periods.flatMap((period, index): PeriodAnomaly[] => {
     const score = robust.scores[index] as number;
 
     if (Math.abs(score) <= threshold) {
@@ -79,4 +89,12 @@ export function detectPeriodAnomalies(
       },
     ];
   });
+  return { status: "scored", periods: periods.length, minPeriods, anomalies };
+}
+
+export function detectPeriodAnomalies(
+  periods: ReadonlyArray<{ period: string; total: number; rows?: readonly number[] }>,
+  options: AnomalyOptions = {},
+): PeriodAnomaly[] {
+  return screenPeriodAnomalies(periods, options).anomalies;
 }

@@ -265,6 +265,60 @@ describe("analyzeTable", () => {
     expect(metricValue(analysis, "total-amount")).toBe(880);
   });
 
+  it("asks to confirm zero-filled months and the order chosen for ambiguous dates", async () => {
+    const table = await csvTableAsync(
+      ["Date,Amount", "2024-01-10,100", "15/03/2024,120", "03/22/2024,50", "05/04/2024,70"].join(
+        "\n",
+      ),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "gaps.csv", table });
+
+    expect(analysis.periods.map((period) => [period.period, period.total])).toEqual([
+      ["2024-01", 100],
+      ["2024-02", 0],
+      ["2024-03", 170],
+      ["2024-04", 70],
+    ]);
+    expect(analysis.questions.map((question) => question.severity)).toEqual(["medium", "medium"]);
+    expect(analysis.questions[0]?.text).toContain("day/month/year");
+    expect(analysis.questions[1]?.text).toContain("(2024-02) mean no sales");
+  });
+
+  it("gives colliding column names distinct issue ids", async () => {
+    const table = await csvTableAsync(
+      [
+        "Sales Region,Sales-Region,Amount",
+        "North,,10",
+        ",East,20",
+        "South,West,30",
+        "North,East,40",
+      ].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "regions.csv", table });
+
+    expect(
+      analysis.issues.map((item) => [item.id, item.column, item.locations[0]?.cellRange]),
+    ).toEqual([
+      ["dq-missing-values-sales-region", "Sales Region", "A3"],
+      ["dq-missing-values-sales-region-2", "Sales-Region", "B2"],
+    ]);
+  });
+
+  it("rounds averages on their decimal value", async () => {
+    const positive = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n10.07\n10.08"),
+    });
+    const negative = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n-10.07\n-10.08"),
+    });
+
+    expect(metricValue(positive, "average-amount")).toBe(10.08);
+    expect(metricValue(negative, "average-amount")).toBe(-10.08);
+  });
   it("fails clearly when a table has no amount column", async () => {
     const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");
 

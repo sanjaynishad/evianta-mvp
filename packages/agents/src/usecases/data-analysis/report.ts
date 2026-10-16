@@ -1,4 +1,5 @@
 import type { DataAnalysis } from "./analysis.js";
+import { ANOMALY_SCORE_THRESHOLD } from "./anomalies.js";
 import { describeLocation } from "./evidence.js";
 import { formatCurrency, formatMetricValue, formatNumber } from "./format.js";
 import { DATA_QUALITY_KIND_LABELS } from "./quality.js";
@@ -64,16 +65,37 @@ export function monthlyTable(analysis: DataAnalysis): string {
   );
 }
 
-export function anomalyList(analysis: DataAnalysis): string {
-  if (analysis.periods.length === 0) {
-    return "Anomaly detection needs a usable date column.";
+/** States whether the months were screened, so an empty anomaly list is not read as clearance. */
+export function anomalyScreeningNote(analysis: DataAnalysis): string {
+  const { status, periods, minPeriods } = analysis.anomalyScreening;
+
+  if (periods === 0) {
+    return "Not screened for anomalies: there are no dated amounts to group by month.";
+  }
+
+  if (status === "too-few-periods") {
+    return `Not screened for anomalies: screening needs at least ${minPeriods} months and the data covers ${periods}.`;
+  }
+
+  if (status === "no-variation") {
+    return `Every one of the ${periods} monthly totals sits exactly on the trend line, so no month departs from it.`;
   }
 
   if (analysis.anomalies.length === 0) {
-    return `No month was flagged: every monthly total stayed within a robust z-score of 3.5 of the trend across ${analysis.periods.length} months.`;
+    return `No month was flagged: each of the ${periods} monthly totals stayed within a robust z-score of ${ANOMALY_SCORE_THRESHOLD} of the trend.`;
   }
 
-  return bulletList(
+  return `${analysis.anomalies.length} of ${periods} months had a robust z-score above ${ANOMALY_SCORE_THRESHOLD} against the trend.`;
+}
+
+export function anomalyList(analysis: DataAnalysis): string {
+  const note = anomalyScreeningNote(analysis);
+
+  if (analysis.anomalies.length === 0) {
+    return note;
+  }
+
+  const items = bulletList(
     analysis.anomalies.map((anomaly) => {
       const deviation =
         anomaly.deviationPct === undefined ? "" : ` (${formatNumber(anomaly.deviationPct)}%)`;
@@ -81,6 +103,8 @@ export function anomalyList(analysis: DataAnalysis): string {
       return `${anomaly.period}: ${formatCurrency(anomaly.value, analysis.currency)} against ${formatCurrency(anomaly.expected, analysis.currency)} expected from the trend${deviation}, robust z-score ${formatNumber(anomaly.score)} (${anomaly.direction}).`;
     }),
   );
+
+  return `${note}\n\n${items}`;
 }
 
 export function dataQualityTable(analysis: DataAnalysis): string {

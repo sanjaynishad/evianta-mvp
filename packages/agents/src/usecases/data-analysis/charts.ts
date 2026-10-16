@@ -9,7 +9,7 @@ export const MAX_SEGMENT_CHARTS = 3;
 export const MAX_PIE_SLICES = 6;
 export const OTHER_SEGMENT = "Other";
 
-export type ChartSubject = "periods" | "segments";
+export type ChartSubject = "overview" | "periods" | "segments";
 
 export interface DashboardChart {
   spec: ChartSpec;
@@ -147,6 +147,26 @@ export function buildDashboardCharts(analysis: DataAnalysis): DashboardChart[] {
       }),
     });
   });
+
+  if (charts.length === 0) {
+    const total = analysis.metricsById.get("total-amount");
+
+    charts.push({
+      subject: "overview",
+      spec: chartSpecSchema.parse({
+        id: allocateId("chart-total"),
+        type: "bar",
+        title: `Total ${amountName}`,
+        description:
+          "The data has no usable date or category column, so only the total is charted.",
+        categoryKey: "measure",
+        series: [{ key: "total", label: amountName }],
+        data: [{ measure: total?.label ?? `Total ${amountName}`, total: total?.value ?? 0 }],
+        yAxis: { label: amountName, format },
+        source: sourceFor(analysis, `Sum of ${amountName} (${amountRange})`),
+      }),
+    });
+  }
 
   return charts;
 }

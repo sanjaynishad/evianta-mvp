@@ -105,7 +105,13 @@ export function monthlyTotals(
   for (const record of records) {
     if (record.date && record.amount !== undefined) {
       const key = monthKey(record.date);
-      byMonth.set(key, [...(byMonth.get(key) ?? []), record]);
+      const monthRecords = byMonth.get(key);
+
+      if (monthRecords) {
+        monthRecords.push(record);
+      } else {
+        byMonth.set(key, [record]);
+      }
     }
   }
 

@@ -3,7 +3,7 @@ import type { EvidenceLocation, ExtractedTable, OpenQuestionSeverity } from "@ev
 import { cellText, isMissingCell, parseNumericCell, type ParsedDate } from "./cells.js";
 import type { ColumnProfile, ColumnProfiling, DatasetRoles } from "./columns.js";
 import { rowLocations } from "./evidence.js";
-import { slugify } from "./ids.js";
+import { createIdAllocator, slugify } from "./ids.js";
 import { median } from "./stats.js";
 
 export const DATA_QUALITY_ISSUE_KINDS = [
@@ -100,13 +100,16 @@ export function medianDayOf(dates: readonly (ParsedDate | undefined)[]): number 
 export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[] {
   const { table, rows, profiling, roles } = input;
   const issues: DataQualityIssue[] = [];
+  const allocateId = createIdAllocator();
   const cellAt = (row: number, column: number) => table.rows[row]?.[column] ?? null;
   const add = (
     issue: Omit<DataQualityIssue, "id" | "locations" | "examples"> & { examples?: string[] },
   ) => {
     issues.push({
       ...issue,
-      id: issue.column ? `dq-${issue.kind}-${slugify(issue.column)}` : `dq-${issue.kind}`,
+      id: allocateId(
+        issue.column ? `dq-${issue.kind}-${slugify(issue.column)}` : `dq-${issue.kind}`,
+      ),
       examples: (issue.examples ?? []).slice(0, MAX_EXAMPLES),
       locations: rowLocations(table, issue.rows, issue.columnIndex),
     });
@@ -298,7 +301,13 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
       const date = resolution.dates[position];
 
       if (date) {
-        rowsByFormat.set(date.format, [...(rowsByFormat.get(date.format) ?? []), row]);
+        const formatRows = rowsByFormat.get(date.format);
+
+        if (formatRows) {
+          formatRows.push(row);
+        } else {
+          rowsByFormat.set(date.format, [row]);
+        }
       }
     });
 

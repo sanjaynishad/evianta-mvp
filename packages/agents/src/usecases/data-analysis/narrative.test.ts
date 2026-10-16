@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Metric } from "./metrics.js";
-import { findUnverifiedNumbers, renderNarrative } from "./narrative.js";
+import { allowedNarrativeValues, findUnverifiedNumbers, renderNarrative } from "./narrative.js";
 
 const metrics = new Map<string, Metric>(
   [
@@ -43,12 +43,17 @@ describe("renderNarrative", () => {
 });
 
 describe("findUnverifiedNumbers", () => {
-  const allowed = [92000, 40.43, 40.4, 40, 50, 53.33, 53.3, 53];
+  const allowed = allowedNarrativeValues([
+    { value: 92000, unit: "currency" },
+    { value: 40.43, unit: "percent" },
+    { value: -53.33, unit: "percent" },
+    { value: 50, unit: "percent" },
+  ]);
 
   it("accepts computed values, rounded forms, small counts, years, and dates", () => {
     expect(
       findUnverifiedNumbers(
-        "Total 92,000 in 2024; share 40.43% (about 40%); fell 53.3% in 2024-05 across 4 regions on 15/03/2024.",
+        "Total ₹92,000 (92,000) in 2024; share 40.43% (about 40%); fell 53.3% or -53.33% in 2024-05 across 4 regions on 15/03/2024.",
         allowed,
       ),
     ).toEqual([]);
@@ -63,5 +68,14 @@ describe("findUnverifiedNumbers", () => {
       "1,05,000",
       "12.5%",
     ]);
+  });
+
+  it("checks signs, currency marks, percent signs, and leading decimals", () => {
+    expect(
+      findUnverifiedNumbers(
+        "Revenue was -92,000, or ₹2024, or Rs. 50, or 92,000%, while margin was .5% and -50%.",
+        allowed,
+      ),
+    ).toEqual(["-92,000", "₹2024", "Rs. 50", "92,000%", ".5%", "-50%"]);
   });
 });

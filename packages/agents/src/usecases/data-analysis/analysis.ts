@@ -1,6 +1,10 @@
-import type { EvidenceLocation, ExtractedTable } from "@evianta/core";
+import type { EvidenceLocation, ExtractedTable, OpenQuestionSeverity } from "@evianta/core";
 
-import { detectPeriodAnomalies, type PeriodAnomaly } from "./anomalies.js";
+import {
+  screenPeriodAnomalies,
+  type AnomalyScreeningStatus,
+  type PeriodAnomaly,
+} from "./anomalies.js";
 import {
   cellText,
   hasInrMarker,
@@ -54,6 +58,11 @@ export class DataAnalysisError extends Error {
 
 export type AnalysisRoles = DatasetRoles & { amount: ColumnProfile };
 
+export interface AnalysisQuestion {
+  text: string;
+  severity: OpenQuestionSeverity;
+}
+
 export interface AnalysisAnomaly extends PeriodAnomaly {
   valueMetricId: string;
   expectedMetricId: string;
@@ -83,8 +92,12 @@ export interface DataAnalysis {
   trend?: TrendSummary;
   segments: SegmentBreakdown[];
   anomalies: AnalysisAnomaly[];
+  /** Whether the monthly totals could be screened for anomalies at all. */
+  anomalyScreening: { status: AnomalyScreeningStatus; periods: number; minPeriods: number };
   /** Assumptions made by the deterministic analysis itself. */
   assumptions: string[];
+  /** Questions that confirm those assumptions. */
+  questions: AnalysisQuestion[];
   locations: {
     amount: EvidenceLocation;
     date?: EvidenceLocation;
@@ -220,7 +233,8 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
   const totalMetricByPeriod = new Map(
     computed.periods.map((period) => [period.period, period.totalMetricId]),
   );
-  const anomalies = detectPeriodAnomalies(computed.periods).map((anomaly): AnalysisAnomaly => {
+  const screening = screenPeriodAnomalies(computed.periods);
+  const anomalies = screening.anomalies.map((anomaly): AnalysisAnomaly => {
     const expectedMetricId = addMetric(`${anomaly.id}-expected`, {
       label: `Expected ${amount.name} in ${anomaly.period} from the trend`,
       value: anomaly.expected,
@@ -264,10 +278,16 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
     `Analyzed ${sourceLabel(source)}: ${amount.name} as the amount${roles.date ? `, ${roles.date.name} as the date` : ""}${roles.categories.length > 0 ? `, and ${roles.categories.map((column) => column.name).join(", ")} as categories` : ""}.`,
   ];
 
+  const questions: AnalysisQuestion[] = [];
+
   if (options.skippedTables && options.skippedTables > 0) {
     assumptions.push(
       `${options.skippedTables} other table(s) in the case were not analyzed; only the table with the most usable sales rows was used.`,
     );
+    questions.push({
+      text: `Should any of the ${options.skippedTables} other table(s) be analyzed instead of, or together with, ${sourceLabel(source)}?`,
+      severity: "low",
+    });
   }
 
   if (blankRows.length > 0) {
@@ -277,13 +297,27 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
   if (!roles.date) {
     assumptions.push("No date column was found, so no monthly trend or anomalies were computed.");
   } else if (dateResolution && dateResolution.ambiguousCount > 0) {
+    const order = dateResolution.order === "dmy" ? "day/month/year" : "month/day/year";
+
     assumptions.push(
-      `${dateResolution.ambiguousCount} date(s) fit both day-month orders and were read as ${dateResolution.order === "dmy" ? "day/month/year" : "month/day/year"}.`,
+      `${dateResolution.ambiguousCount} date(s) fit both day-month orders and were read as ${order}.`,
     );
+    questions.push({
+      text: `Is ${order} the right order for the ${dateResolution.ambiguousCount} ${roles.date.name} value(s) that fit both orders? A wrong order moves sales between months.`,
+      severity: "medium",
+    });
   }
 
-  if (computed.periods.some((period) => period.rows.length === 0)) {
-    assumptions.push("Months with no rows are shown with a zero total.");
+  const emptyMonths = computed.periods
+    .filter((period) => period.rows.length === 0)
+    .map((period) => period.period);
+
+  if (emptyMonths.length > 0) {
+    assumptions.push(`Months with no rows are shown with a zero total: ${emptyMonths.join(", ")}.`);
+    questions.push({
+      text: `Do the months with no rows (${emptyMonths.join(", ")}) mean no sales, or is data missing for them?`,
+      severity: "medium",
+    });
   }
 
   const currency = detectCurrency(table, amount);
@@ -310,7 +344,13 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
     ...(computed.trend ? { trend: computed.trend } : {}),
     segments: computed.segments,
     anomalies,
+    anomalyScreening: {
+      status: screening.status,
+      periods: screening.periods,
+      minPeriods: screening.minPeriods,
+    },
     assumptions,
+    questions,
     locations: {
       amount: columnLocation(table, amount.index),
       ...(roles.date ? { date: columnLocation(table, roles.date.index) } : {}),

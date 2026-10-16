@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detectPeriodAnomalies } from "./anomalies.js";
+import { detectPeriodAnomalies, screenPeriodAnomalies } from "./anomalies.js";
 import { isMissingCell, parseNumericCell, resolveDateColumn } from "./cells.js";
 import { robustZScores, roundTo, theilSenFit } from "./stats.js";
 
@@ -89,6 +89,13 @@ describe("robust statistics", () => {
     expect(roundTo(-1.005)).toBe(-1.01);
     expect(roundTo(130.7692307)).toBe(130.77);
   });
+
+  it("rounds on the decimal value, not the binary approximation", () => {
+    expect(roundTo((10.07 + 10.08) / 2)).toBe(10.08);
+    expect(roundTo((-10.07 - 10.08) / 2)).toBe(-10.08);
+    expect(roundTo(1e-7, 2)).toBe(0);
+    expect(roundTo(123456789.125)).toBe(123456789.13);
+  });
 });
 
 describe("detectPeriodAnomalies", () => {
@@ -109,7 +116,13 @@ describe("detectPeriodAnomalies", () => {
     expect(anomalies[0]?.score).toBeLessThan(-3.5);
   });
 
-  it("needs at least four periods", () => {
-    expect(detectPeriodAnomalies(series([10, 10, 1000]))).toEqual([]);
+  it("reports when periods were not screened", () => {
+    expect(screenPeriodAnomalies(series([10, 10, 1000]))).toMatchObject({
+      status: "too-few-periods",
+      periods: 3,
+      anomalies: [],
+    });
+    expect(screenPeriodAnomalies(series([1, 2, 3, 4])).status).toBe("no-variation");
+    expect(screenPeriodAnomalies(series([1, 2, 3, 5])).status).toBe("scored");
   });
 });

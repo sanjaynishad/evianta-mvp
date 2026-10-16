@@ -1,8 +1,18 @@
-export function roundTo(value: number, decimals = 2): number {
-  const factor = 10 ** decimals;
-  const rounded = Math.sign(value) * Math.round((Math.abs(value) + Number.EPSILON) * factor);
+function shiftDecimal(value: number, places: number): number {
+  const [mantissa, exponent] = value.toExponential().split("e");
 
-  return rounded / factor + 0;
+  return Number(`${mantissa}e${Number(exponent) + places}`);
+}
+
+/** Rounds half away from zero on the shortest decimal form of the value, so 10.075 gives 10.08. */
+export function roundTo(value: number, decimals = 2): number {
+  if (!Number.isFinite(value)) {
+    return value;
+  }
+
+  const rounded = Math.round(shiftDecimal(Math.abs(value), decimals));
+
+  return Math.sign(value) * shiftDecimal(rounded, -decimals) + 0;
 }
 
 export function sum(values: readonly number[]): number {

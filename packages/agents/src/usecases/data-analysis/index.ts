@@ -18,6 +18,7 @@ export {
   selectAnalysisSource,
   type AnalysisAnomaly,
   type AnalysisIssue,
+  type AnalysisQuestion,
   type AnalysisRoles,
   type AnalyzeOptions,
   type DataAnalysis,
@@ -28,7 +29,10 @@ export {
   ANOMALY_SCORE_THRESHOLD,
   detectPeriodAnomalies,
   MIN_PERIODS_FOR_ANOMALIES,
+  screenPeriodAnomalies,
   type AnomalyOptions,
+  type AnomalyScreening,
+  type AnomalyScreeningStatus,
   type PeriodAnomaly,
 } from "./anomalies.js";
 export {
@@ -78,6 +82,7 @@ export {
   allowedNarrativeValues,
   findUnverifiedNumbers,
   renderNarrative,
+  type AllowedValue,
   type NarrativeIssue,
   type NarrativeIssueKind,
   type RenderedNarrative,

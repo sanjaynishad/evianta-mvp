@@ -42,8 +42,10 @@ import { describeLocation, MAX_LOCATIONS_PER_ITEM, rowLocations, rowRuns } from 
 import { formatMetricValue } from "./format.js";
 import { allowedNarrativeValues, renderNarrative, type NarrativeIssue } from "./narrative.js";
 import { DATA_QUALITY_KIND_LABELS } from "./quality.js";
+import { ANOMALY_SCORE_THRESHOLD } from "./anomalies.js";
 import {
   anomalyList,
+  anomalyScreeningNote,
   bulletList,
   dataQualityTable,
   keyMetricsTable,
@@ -198,9 +200,15 @@ export function buildAnalystContext(
     periods,
     ...(trend ? { trend } : {}),
     segments,
+    anomalyScreening: {
+      ...analysis.anomalyScreening,
+      threshold: ANOMALY_SCORE_THRESHOLD,
+      note: anomalyScreeningNote(analysis),
+    },
     anomalies,
     dataQuality,
     assumptions: analysis.assumptions,
+    openQuestions: analysis.questions,
     sampleRows,
   };
 }
@@ -264,6 +272,20 @@ function metricEvidenceIndex(analysis: DataAnalysis): Map<string, EvidenceRefere
 
   for (const metric of analysis.metrics) {
     index.set(metric.id, [amountColumn]);
+  }
+
+  if (analysis.locations.quantity && analysis.metricsById.has("total-quantity")) {
+    index.set("total-quantity", [
+      toReference(
+        analysis,
+        analysis.locations.quantity,
+        `${analysis.roles.quantity?.name ?? "Quantity"} column (${describeLocation(analysis.locations.quantity)})`,
+      ),
+    ]);
+  }
+
+  if (dateColumn && analysis.metricsById.has("period-count")) {
+    index.set("period-count", [dateColumn]);
   }
 
   for (const period of analysis.periods) {
@@ -413,20 +435,10 @@ function deterministicFindings(
       .join("\n"),
     severity: "info",
     confidence: "high",
-    evidence: uniqueReferences([
-      ...referencesFor(["total-amount"]),
-      ...(analysis.locations.date
-        ? [
-            toReference(
-              analysis,
-              analysis.locations.date,
-              `${analysis.roles.date?.name ?? "Date"} column (${describeLocation(analysis.locations.date)})`,
-            ),
-          ]
-        : []),
-    ]),
+    evidence: referencesFor(["total-amount", ...headline]),
     figures: figuresFor(analysis, headline),
     assumptions: [...analysis.assumptions, ...modelAssumptions],
+    openQuestions: analysis.questions.map((question) => ({ ...question })),
   });
   let trend: number | undefined;
 
@@ -690,6 +702,7 @@ export function buildDataAnalystTaskOutput(
     ...assumptions,
   ];
   const allQuestions = [
+    ...analysis.questions,
     ...analysis.anomalies.map((anomaly) => ({
       text: `What explains the ${anomaly.direction} in ${anomaly.period}?`,
       severity: "medium" as OpenQuestionSeverity,
@@ -767,9 +780,11 @@ export function buildDataAnalystTaskOutput(
 
   for (const chart of charts) {
     const findingIndex =
-      chart.subject === "periods"
-        ? (built.trend ?? built.overview)
-        : (built.segments.get(chart.columnIndex ?? -1) ?? built.overview);
+      chart.subject === "overview"
+        ? built.overview
+        : chart.subject === "periods"
+          ? (built.trend ?? built.overview)
+          : (built.segments.get(chart.columnIndex ?? -1) ?? built.overview);
 
     sections.push({
       title: chart.spec.title,

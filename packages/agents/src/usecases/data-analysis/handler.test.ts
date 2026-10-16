@@ -1,4 +1,4 @@
-import type { Deliverable, Finding } from "@evianta/core";
+import type { Deliverable, ExtractedTable, Finding } from "@evianta/core";
 import { parseChartSpecContent } from "@evianta/core";
 import { ingestDocumentAsync } from "@evianta/ingest";
 import { createInMemoryDocumentStore } from "@evianta/store";
@@ -8,15 +8,21 @@ import { createAgentRegistry, createDefaultTaskHandlers } from "../../registry.j
 import { addDocumentAsync, createCaseAsync, createHarness } from "../../testing/fixtures.js";
 import {
   CSV_MIME,
+  extractFixtureAsync,
+  fixtureMetadata,
   SALES_EXPECTED,
   salesCsv,
   salesWorkbook,
   XLSX_MIME,
 } from "../../testing/salesFixture.js";
 import { isMaterialFinding, runDeterministicChecks } from "../../verification.js";
-import { isDataAnalystAgent, type DataAnalystOutputInput } from "./agent.js";
+import {
+  dataAnalystOutputSchema,
+  isDataAnalystAgent,
+  type DataAnalystOutputInput,
+} from "./agent.js";
 import { analyzeTable } from "./analysis.js";
-import { DATA_ANALYST_REPORT_SECTIONS } from "./handler.js";
+import { buildDataAnalystTaskOutput, DATA_ANALYST_REPORT_SECTIONS } from "./handler.js";
 
 const analystOutput: DataAnalystOutputInput = {
   summary:
@@ -41,6 +47,11 @@ const analystOutput: DataAnalystOutputInput = {
       issueIds: ["dq-duplicate-rows", "dq-type-mismatch-amount-inr"],
     },
     { summary: "Most customers buy again", severity: "medium" },
+    {
+      summary: "Volume reached {{total-quantity}} units",
+      severity: "low",
+      metricIds: ["total-quantity"],
+    },
   ],
   assumptions: ["Negative amounts are returns."],
   openQuestions: [{ text: "Is June complete?", severity: "low" }],
@@ -231,6 +242,19 @@ describe("business data analyst through the orchestrator", () => {
     expect(anomaly).toMatchObject({ severity: "medium" });
     expect(anomaly?.evidence[0]?.location?.cellRange).toBe("A14:G17");
 
+    const overview = findings.find((finding) => finding.summary.startsWith("₹92,000 total"));
+    const volume = findings.find((finding) => finding.summary === "Volume reached 265 units");
+
+    expect(overview?.evidence.map((item) => item.location?.cellRange)).toEqual([
+      "G2:G29",
+      "F2:F29",
+      "B2:B29",
+    ]);
+    expect(volume?.evidence.map((item) => item.location?.cellRange)).toEqual(["F2:F29"]);
+    expect(section(report, "Anomalies")?.content).toContain(
+      "1 of 6 months had a robust z-score above 3.5 against the trend.",
+    );
+
     const unsupported = findings.find((finding) => finding.summary === "Most customers buy again");
 
     expect(unsupported?.evidence.length).toBeGreaterThan(0);
@@ -278,6 +302,39 @@ describe("business data analyst through the orchestrator", () => {
   });
 });
 
+describe("buildDataAnalystTaskOutput", () => {
+  it("always produces a dashboard, charting the total when there are no dates or categories", async () => {
+    const buffer = new TextEncoder().encode("Order ID,Amount\nA-1,100\nA-2,250");
+    const extraction = await extractFixtureAsync(
+      buffer,
+      fixtureMetadata("doc", "orders.csv", CSV_MIME, buffer.byteLength),
+    );
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "orders.csv",
+      table: extraction.tables[0] as ExtractedTable,
+    });
+    const output = buildDataAnalystTaskOutput(
+      analysis,
+      dataAnalystOutputSchema.parse({ summary: "Sales were {{total-amount}}." }),
+      { usage: { input: 10, output: 5, total: 15 }, cost: 0 },
+    );
+    const charts = (output.sections ?? []).filter((item) => item.kind === "chart");
+
+    expect(output.deliverables).toEqual([
+      { key: "dashboard", title: "Dashboard", format: "dashboard" },
+    ]);
+    expect(charts).toHaveLength(1);
+    expect(JSON.parse(charts[0]?.content ?? "{}")).toMatchObject({
+      id: "chart-total",
+      type: "bar",
+      data: [{ measure: "Total Amount", total: 350 }],
+    });
+    expect(output.sections?.find((item) => item.title === "Anomalies")?.content).toBe(
+      "Not screened for anomalies: there are no dated amounts to group by month.",
+    );
+  });
+});
 describe("data analyst registration", () => {
   it("is the default handler and agent for the business-data-analyst role", () => {
     const registry = createAgentRegistry();
