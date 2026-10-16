@@ -396,12 +396,13 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
     // The store adds a task charge to the task totals when it applies it, exactly once, so an
     // attempt interrupted after journaling is still counted when a later run reconciles.
+    // Resolves true when the charge, and any charge journaled before it, has been applied.
     const chargeTaskAsync = async (
       taskId: string,
       attempt: number,
       usage: TokenUsage,
       cost: Cost,
-    ) => {
+    ): Promise<boolean> => {
       await store.runs.recordChargeAsync(caseId, runId, `task:${taskId}:${attempt}`, {
         taskId,
         inputTokens: usage.input,
@@ -412,11 +413,15 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
       try {
         await store.runs.reconcileUsageAsync(caseId);
+
+        return true;
       } catch (error) {
         logger.warn("Could not apply a task charge; it is applied when the run ends.", {
           taskId,
           error: messageOf(error),
         });
+
+        return false;
       }
     };
 
@@ -681,9 +686,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         let attemptUsage = emptyUsage();
         let attemptCost = 0;
         let charged = false;
+        let chargeApplied = false;
         let record: TaskRecord;
-        // Completion events add this attempt to these totals, so they stay accurate even when
-        // applying the attempt's charge to the task is deferred to the end of the run.
+        // When applying the attempt's charge is deferred to the end of the run, completion events
+        // add the attempt to these totals instead of reading the stored task totals.
         let priorUsage = initial.tokenUsage ?? emptyUsage();
         let priorCost = initial.costEstimate ?? 0;
 
@@ -735,7 +741,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           attemptCost = output.cost;
           charged = true;
           addRunUsage(output.usage, output.cost);
-          await chargeTaskAsync(task.id, attempt, attemptUsage, attemptCost);
+          chargeApplied = await chargeTaskAsync(task.id, attempt, attemptUsage, attemptCost);
           await ensureLeaseAsync();
           record = await persistOutputAsync(task, output, attempt, context.upstreamFindings);
           task = await store.tasks.updateTaskAsync(
@@ -822,8 +828,12 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             runId,
             taskId: task.id,
             findingIds: record.findings.map((finding) => finding.id),
-            tokenUsage: addUsage(priorUsage, attemptUsage),
-            costEstimate: roundCost(priorCost + attemptCost),
+            tokenUsage: chargeApplied
+              ? (task.tokenUsage ?? emptyUsage())
+              : addUsage(priorUsage, attemptUsage),
+            costEstimate: roundCost(
+              chargeApplied ? (task.costEstimate ?? 0) : priorCost + attemptCost,
+            ),
             runningCostEstimate: caseTotals().cost,
           });
 

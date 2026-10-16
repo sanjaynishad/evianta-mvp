@@ -1252,4 +1252,41 @@ describe("orchestrator", () => {
     expect(task?.tokenUsage).toEqual(expectedUsage);
     expect(task?.costEstimate).toBeCloseTo(0.004 + retry.costEstimate, 10);
   });
+
+  it("includes a late charge from a previous worker in the completion totals", async () => {
+    const handlers = createDefaultTaskHandlers();
+    const { store, orchestrator } = createHarness({}, { handlers });
+    const caseRecord = await createCaseAsync(store);
+
+    handlers.register({
+      role: "case-analysis",
+      async executeAsync() {
+        // The worker that lost the lease journals its billed attempt while this one runs.
+        await store.runs.recordChargeAsync(caseRecord.id, "previous-run", "task:a:1", {
+          taskId: "a",
+          inputTokens: 100,
+          outputTokens: 0,
+          costEstimate: 0.01,
+        });
+
+        return { findings: [], usage: { input: 50, output: 0, total: 50 }, cost: 0.005 };
+      },
+    });
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", { status: "in-progress", attempts: 1 });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const events = await store.events.listEventsAsync(caseRecord.id);
+    const completed = events.find((event) => event.type === "task-completed");
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(retry.status).toBe("completed");
+    expect(task?.tokenUsage).toEqual({ input: 150, output: 0, total: 150 });
+    expect(task?.costEstimate).toBeCloseTo(0.015, 10);
+    expect(completed).toMatchObject({ tokenUsage: { input: 150, output: 0, total: 150 } });
+    expect(completed?.type === "task-completed" ? completed.costEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+  });
 });
