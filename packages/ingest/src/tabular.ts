@@ -35,7 +35,8 @@ const LEADING_ZERO = /^[+-]?0\d/;
 const MAX_SAFE_DIGITS = 15;
 const BOOLEAN = /^(true|false)$/i;
 const ISO_DATE =
-  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):?(\d{2}))?)?$/;
+const MAX_UTC_OFFSET_HOURS = 14;
 const NUMERIC_DATE = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/;
 const DAY_MONTH_NAME_DATE = /^(\d{1,2})[\s-]([A-Za-z]{3,9})\.?[\s,-]+(\d{4})$/;
 const MONTH_NAME_DAY_DATE = /^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/;
@@ -141,13 +142,22 @@ function parseIsoDate(text: string): string | undefined {
     return undefined;
   }
 
-  const [, year, month, day, hours] = match;
+  const [, year, month, day, hours, minutes, seconds, offsetHours, offsetMinutes] = match;
 
   if (!isValidDate(Number(year), Number(month), Number(day))) {
     return undefined;
   }
 
-  return hours === undefined ? `${year}-${month}-${day}` : text.replace(" ", "T");
+  if (hours === undefined) {
+    return `${year}-${month}-${day}`;
+  }
+
+  const validTime = Number(hours) <= 23 && Number(minutes) <= 59 && Number(seconds ?? 0) <= 59;
+  const validOffset =
+    offsetHours === undefined ||
+    (Number(offsetHours) <= MAX_UTC_OFFSET_HOURS && Number(offsetMinutes) <= 59);
+
+  return validTime && validOffset ? text.replace(" ", "T") : undefined;
 }
 
 function classifyText(text: string): Candidate {
@@ -338,14 +348,23 @@ function displayText(cell: RawCell | undefined): string {
 }
 
 function uniqueHeaders(names: string[], firstColumnIndex: number): string[] {
-  const seen = new Map<string, number>();
+  const used = new Set<string>();
+  const nextSuffix = new Map<string, number>();
 
   return names.map((rawName, offset) => {
     const base = rawName || `Column ${columnLetters(firstColumnIndex + offset)}`;
-    const count = (seen.get(base) ?? 0) + 1;
-    seen.set(base, count);
+    let name = base;
+    let suffix = nextSuffix.get(base) ?? 2;
 
-    return count === 1 ? base : `${base} (${count})`;
+    while (used.has(name)) {
+      name = `${base} (${suffix})`;
+      suffix += 1;
+    }
+
+    nextSuffix.set(base, suffix);
+    used.add(name);
+
+    return name;
   });
 }
 

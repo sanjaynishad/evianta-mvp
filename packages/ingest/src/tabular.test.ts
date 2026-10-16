@@ -53,6 +53,26 @@ describe("resolveColumn", () => {
     });
   });
 
+  it("accepts valid timestamps and keeps invalid times or offsets as strings", () => {
+    expect(
+      resolveColumn(["2024-03-01T23:59:59Z", "2024-03-01 10:30+05:30"].map(text), "dmy"),
+    ).toEqual({
+      type: "date",
+      cells: ["2024-03-01T23:59:59Z", "2024-03-01T10:30+05:30"],
+    });
+
+    for (const value of [
+      "2024-03-01T99:99:99Z",
+      "2024-03-01T24:00",
+      "2024-03-01T10:60",
+      "2024-03-01T10:00:60",
+      "2024-03-01T10:00+15:00",
+      "2024-03-01T10:00-05:60",
+    ]) {
+      expect(resolveColumn([text(value)], "dmy")).toEqual({ type: "string", cells: [value] });
+    }
+  });
+
   it("resolves numeric date order per column", () => {
     expect(resolveColumn(["03/04/2024", "25/12/2024"].map(text), "mdy").cells).toEqual([
       "2024-04-03",
@@ -132,6 +152,26 @@ describe("buildTable", () => {
 
   it("returns undefined for an empty grid", () => {
     expect(buildTable(grid([[""], []]), { name: "t", dateOrder: "dmy" })).toBeUndefined();
+  });
+
+  it("keeps generated header suffixes unique across literal suffixed headers", () => {
+    const names = (headers: string[]) =>
+      buildTable(grid([headers, headers.map(() => "x")]), {
+        name: "t",
+        dateOrder: "dmy",
+      })?.columns.map((column) => column.name);
+
+    expect(names(["Amount", "Amount", "Amount (2)"])).toEqual([
+      "Amount",
+      "Amount (2)",
+      "Amount (2) (2)",
+    ]);
+    expect(names(["Amount (2)", "Amount", "Amount"])).toEqual([
+      "Amount (2)",
+      "Amount",
+      "Amount (3)",
+    ]);
+    expect(names(["", "Column A"])).toEqual(["Column A", "Column A (2)"]);
   });
 });
 

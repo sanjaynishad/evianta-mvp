@@ -11,7 +11,7 @@ export interface TabularParseResult {
 
 const EMPTY_CELL: RawCell = { kind: "empty" };
 const MAX_PARSE_WARNINGS = 5;
-const MAX_WORKBOOK_CELL_SLOTS = 1_000_000;
+const MAX_EXPANDED_CELL_SLOTS = 1_000_000;
 
 export function decodeText(buffer: Uint8Array): { text: string; warning?: string } {
   try {
@@ -62,6 +62,14 @@ export function parseDelimitedText(
         error.row === undefined ? error.message : `Row ${error.row + 1}: ${error.message}`,
       ),
   );
+  const columnCount = parsed.data.reduce((widest, row) => Math.max(widest, row.length), 0);
+
+  if (parsed.data.length * columnCount > MAX_EXPANDED_CELL_SLOTS) {
+    throw new RangeError(
+      `File exceeds the ${MAX_EXPANDED_CELL_SLOTS.toLocaleString("en-US")}-cell expanded grid limit.`,
+    );
+  }
+
   const grid = parsed.data.map((row) =>
     row.map((value): RawCell => ({ kind: "text", text: value })),
   );
@@ -170,7 +178,7 @@ function sheetGrid(sheet: WorkSheet, date1904: boolean, remainingCellSlots: numb
 
   if (!Number.isSafeInteger(cellSlots) || cellSlots > remainingCellSlots) {
     throw new RangeError(
-      `Workbook exceeds the ${MAX_WORKBOOK_CELL_SLOTS.toLocaleString("en-US")}-cell expanded grid limit.`,
+      `Workbook exceeds the ${MAX_EXPANDED_CELL_SLOTS.toLocaleString("en-US")}-cell expanded grid limit.`,
     );
   }
 
@@ -197,7 +205,7 @@ export function parseWorkbook(
   const date1904 = Boolean(workbook.Workbook?.WBProps?.date1904);
   const tables: ExtractedTable[] = [];
   const warnings: string[] = [];
-  let remainingCellSlots = MAX_WORKBOOK_CELL_SLOTS;
+  let remainingCellSlots = MAX_EXPANDED_CELL_SLOTS;
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];

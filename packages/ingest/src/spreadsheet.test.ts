@@ -112,4 +112,13 @@ describe("parseDelimitedText", () => {
       warnings: ["The file has no data."],
     });
   });
+
+  it("rejects input whose expanded grid exceeds the cell budget before building the table", () => {
+    const header = Array.from({ length: 10_000 }, (_unused, index) => `H${index}`).join(",");
+    const text = `${header}\n${"1\n".repeat(10_000)}`;
+
+    expect(() => parseDelimitedText(text, { name: "wide", dateOrder: "dmy" })).toThrow(
+      /1,000,000-cell expanded grid limit/,
+    );
+  });
 });

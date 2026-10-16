@@ -41,11 +41,34 @@ function asciiAt(buffer: Uint8Array, offset: number, length: number): string {
   return Buffer.from(buffer.subarray(offset, offset + length)).toString("latin1");
 }
 
-function sniffMagic(buffer: Uint8Array): string | undefined {
-  if (Buffer.from(buffer.subarray(0, 1024)).includes("%PDF-")) {
-    return "application/pdf";
+const PDF_HEADER = "%PDF-";
+const PDF_HEADER_WINDOW = 1024;
+const PDF_TRAILER_WINDOW = 1024;
+
+// Readers tolerate leading junk before the PDF header, so an offset header is accepted only
+// when it starts a line and the file also ends with a PDF trailer.
+function isPdf(buffer: Uint8Array): boolean {
+  const bytes = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const offset = bytes.subarray(0, PDF_HEADER_WINDOW).indexOf(PDF_HEADER);
+
+  if (offset === 0) {
+    return true;
   }
 
+  if (offset === -1) {
+    return false;
+  }
+
+  const previous = bytes[offset - 1];
+
+  if (previous !== 0x0a && previous !== 0x0d) {
+    return false;
+  }
+
+  return bytes.subarray(Math.max(0, bytes.length - PDF_TRAILER_WINDOW)).includes("%%EOF");
+}
+
+function sniffMagic(buffer: Uint8Array): string | undefined {
   if (startsWithBytes(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
     return "image/png";
   }
@@ -77,6 +100,10 @@ function sniffMagic(buffer: Uint8Array): string | undefined {
 
   if (startsWithBytes(buffer, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) {
     return "application/x-ole-storage";
+  }
+
+  if (isPdf(buffer)) {
+    return "application/pdf";
   }
 
   return undefined;
@@ -145,13 +172,24 @@ export function detectDocumentFormat(
     throw unsupported;
   }
 
-  if (TSV_MIME_TYPES.has(declared) || extension === "tsv" || extension === "tab") {
-    return { format: "tsv", mimeType: "text/tab-separated-values" };
+  const tsv: DetectedFormat = { format: "tsv", mimeType: "text/tab-separated-values" };
+  const csv: DetectedFormat = { format: "csv", mimeType: "text/csv" };
+
+  if (TSV_MIME_TYPES.has(declared)) {
+    return tsv;
+  }
+
+  if (CSV_MIME_TYPES.has(declared)) {
+    return csv;
+  }
+
+  if (extension === "tsv" || extension === "tab") {
+    return tsv;
   }
 
   // Browsers on Windows often report .csv uploads as application/vnd.ms-excel.
-  if (CSV_MIME_TYPES.has(declared) || extension === "csv") {
-    return { format: "csv", mimeType: "text/csv" };
+  if (extension === "csv") {
+    return csv;
   }
 
   if (declared.startsWith("image/") || declared === "application/pdf") {

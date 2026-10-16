@@ -33,6 +33,12 @@ export class DocumentExtractionError extends Error {
   }
 }
 
+export interface OcrAccounting {
+  usage: TokenUsage;
+  cost: Cost;
+  pageUsage: PageOcrUsage[];
+}
+
 export class OcrExtractionError extends DocumentExtractionError {
   readonly usage: TokenUsage;
   readonly cost: Cost;
@@ -41,20 +47,35 @@ export class OcrExtractionError extends DocumentExtractionError {
 
   constructor(
     documentId: string,
-    accounting: { usage: TokenUsage; cost: Cost; pageUsage: PageOcrUsage[] },
+    accounting: OcrAccounting,
     errors: unknown[],
+    options: { message?: string; cause?: unknown } = {},
   ) {
     const first = errors[0];
 
     super(
       documentId,
-      `All OCR pages failed: ${first instanceof Error ? first.message : String(first)}`,
-      { cause: new AggregateError(errors, "All OCR pages failed.") },
+      options.message ??
+        `All OCR pages failed: ${first instanceof Error ? first.message : String(first)}`,
+      { cause: options.cause ?? new AggregateError(errors, "All OCR pages failed.") },
     );
     this.name = "OcrExtractionError";
     this.usage = accounting.usage;
     this.cost = accounting.cost;
     this.pageUsage = accounting.pageUsage;
     this.errors = errors;
+  }
+}
+
+/** OCR stopped because the model is not configured or access was denied; `cause` is the original error. */
+export class OcrConfigurationError extends OcrExtractionError {
+  constructor(documentId: string, accounting: OcrAccounting, errors: unknown[]) {
+    const first = errors[0];
+
+    super(documentId, accounting, errors, {
+      message: `OCR is unavailable: ${first instanceof Error ? first.message : String(first)}`,
+      cause: first,
+    });
+    this.name = "OcrConfigurationError";
   }
 }

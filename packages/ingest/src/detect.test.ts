@@ -33,6 +33,37 @@ describe("detectDocumentFormat", () => {
       detectDocumentFormat(csv, { name: "a", mimeType: "text/csv; charset=utf-8" }).format,
     ).toBe("csv");
     expect(detectDocumentFormat(csv, { name: "a.tsv", mimeType: "text/plain" }).format).toBe("tsv");
+    expect(detectDocumentFormat(csv, { name: "data.tsv", mimeType: "text/csv" }).format).toBe(
+      "csv",
+    );
+    expect(
+      detectDocumentFormat(csv, { name: "data.csv", mimeType: "text/tab-separated-values" }).format,
+    ).toBe("tsv");
+  });
+
+  it("does not treat an embedded %PDF- string as a PDF header", () => {
+    const signed = Buffer.from("Label,Value\nSignature,%PDF-1.7\n");
+    const png = Buffer.concat([createPng(), Buffer.from("tEXt%PDF-1.7")]);
+
+    expect(detectDocumentFormat(signed, { name: "signed.csv", mimeType: "text/csv" })).toEqual({
+      format: "csv",
+      mimeType: "text/csv",
+    });
+    expect(detectDocumentFormat(png, { name: "scan.png", mimeType: "image/png" }).mimeType).toBe(
+      "image/png",
+    );
+  });
+
+  it("accepts a PDF header after leading junk when the file ends with a PDF trailer", () => {
+    const pdf = Buffer.from("junk bytes\n%PDF-1.7\n1 0 obj\nendobj\n%%EOF\n");
+    const noTrailer = Buffer.from("notes\n%PDF-1.7 mentioned here\n");
+
+    expect(detectDocumentFormat(pdf, { name: "a.pdf", mimeType: "application/pdf" }).format).toBe(
+      "pdf",
+    );
+    expect(detectDocumentFormat(noTrailer, { name: "a.csv", mimeType: "text/csv" }).format).toBe(
+      "csv",
+    );
   });
 
   it("detects zip-based workbooks and legacy xls", () => {

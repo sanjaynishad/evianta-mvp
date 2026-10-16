@@ -21,7 +21,12 @@ import {
 } from "@evianta/ai";
 
 import { detectDocumentFormat } from "./detect.js";
-import { DocumentExtractionError, OcrExtractionError } from "./errors.js";
+import {
+  DocumentExtractionError,
+  OcrConfigurationError,
+  OcrExtractionError,
+  type OcrAccounting,
+} from "./errors.js";
 import {
   createPdfPageSplitterAsync,
   MIN_TEXT_LAYER_CHARS,
@@ -153,6 +158,8 @@ interface PageResult {
   warnings: string[];
   usage?: PageOcrUsage;
   error?: unknown;
+  /** The page was not sent to OCR because of the page limit. */
+  skipped?: boolean;
 }
 
 function isConfigurationError(error: unknown): boolean {
@@ -164,6 +171,34 @@ function isConfigurationError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function failedPageUsage(
+  pageIndex: number,
+  settings: ResolvedOptions,
+  error: unknown,
+): PageOcrUsage {
+  const aiError = error instanceof AiError ? error : undefined;
+
+  return {
+    pageIndex,
+    method: settings.mode === "handwriting" ? "handwriting" : "ocr",
+    tier: settings.tier,
+    usage: aiError?.usage ?? emptyUsage(),
+    cost: aiError?.cost ?? 0,
+    attempts: aiError?.attempts ?? 0,
+    failed: true,
+  };
+}
+
+function summarizeAccounting(pageUsage: readonly PageOcrUsage[]): OcrAccounting {
+  const sorted = [...pageUsage].sort((left, right) => left.pageIndex - right.pageIndex);
+
+  return {
+    usage: sorted.reduce((total, entry) => addUsage(total, entry.usage), emptyUsage()),
+    cost: roundCost(sorted.reduce((total, entry) => total + entry.cost, 0)),
+    pageUsage: sorted,
+  };
 }
 
 async function ocrPageAsync(
@@ -240,48 +275,66 @@ async function ocrPageAsync(
       throw error;
     }
 
-    const aiError = error instanceof AiError ? error : undefined;
-
     return {
       page: { index: pageIndex, text: "", ...size, method: expectedMethod, confidence: 0 },
       warnings: [
         `Page ${pageIndex}: extraction failed (${errorMessage(error)}); the page content is missing.`,
       ],
-      usage: {
-        pageIndex,
-        method: expectedMethod,
-        tier: settings.tier,
-        usage: aiError?.usage ?? emptyUsage(),
-        cost: aiError?.cost ?? 0,
-        attempts: aiError?.attempts ?? 0,
-        failed: true,
-      },
+      usage: failedPageUsage(pageIndex, settings, error),
       error,
     };
   }
 }
 
-async function mapWithConcurrencyAsync<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  mapper: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
+/** Runs OCR with bounded concurrency and stops scheduling pages after the first fatal error. */
+async function ocrPagesAsync(
+  deps: ExtractionDeps,
+  metadata: DocumentMetadata,
+  requests: readonly OcrPageRequest[],
+  settings: ResolvedOptions,
+): Promise<PageResult[]> {
+  const results: PageResult[] = [];
+  const fatalErrors: unknown[] = [];
+  const fatalUsage: PageOcrUsage[] = [];
   let next = 0;
 
   async function workerAsync(): Promise<void> {
-    while (next < items.length) {
-      const index = next;
+    while (next < requests.length && fatalErrors.length === 0) {
+      const request = requests[next] as OcrPageRequest;
       next += 1;
-      results[index] = await mapper(items[index] as T);
+
+      try {
+        results.push(await ocrPageAsync(deps, request, settings));
+      } catch (error) {
+        fatalErrors.push(error);
+        fatalUsage.push(failedPageUsage(request.pageIndex, settings, error));
+      }
     }
   }
 
   await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, () => workerAsync()),
+    Array.from({ length: Math.min(settings.concurrency, requests.length) }, () => workerAsync()),
   );
 
-  return results;
+  const [fatal] = fatalErrors;
+
+  if (fatalErrors.length === 0) {
+    return results;
+  }
+
+  if (!isConfigurationError(fatal)) {
+    throw fatal;
+  }
+
+  const accounting = summarizeAccounting([
+    ...results.flatMap((result) => (result.usage ? [result.usage] : [])),
+    ...fatalUsage,
+  ]);
+  const pageErrors = results.flatMap((result) =>
+    result.error === undefined ? [] : [result.error],
+  );
+
+  throw new OcrConfigurationError(metadata.id, accounting, [...fatalErrors, ...pageErrors]);
 }
 
 function documentMethod(pages: readonly ExtractedPage[]): ExtractionMethod {
@@ -299,12 +352,13 @@ function buildOutcome(
   const pages = results
     .map((result) => result.page)
     .sort((left, right) => left.index - right.index);
-  const pageUsage = results.flatMap((result) => (result.usage ? [result.usage] : []));
   const failed = results.filter((result) => result.error !== undefined);
-  const usage = pageUsage.reduce((total, entry) => addUsage(total, entry.usage), emptyUsage());
-  const cost = roundCost(pageUsage.reduce((total, entry) => total + entry.cost, 0));
+  const { usage, cost, pageUsage } = summarizeAccounting(
+    results.flatMap((result) => (result.usage ? [result.usage] : [])),
+  );
+  const anyExtracted = results.some((result) => result.error === undefined && !result.skipped);
 
-  if (pages.length > 0 && failed.length === pages.length) {
+  if (failed.length > 0 && !anyExtracted) {
     throw new OcrExtractionError(
       metadata.id,
       { usage, cost, pageUsage },
@@ -346,19 +400,23 @@ function textLayerPage(page: PdfTextPage): PageResult {
   };
 }
 
-function skippedPage(page: PdfTextPage, settings: ResolvedOptions): PageResult {
+function skippedPage(
+  page: { index: number; text?: string; width?: number; height?: number },
+  settings: ResolvedOptions,
+): PageResult {
   return {
     page: {
       index: page.index,
-      text: page.text,
-      width: page.width,
-      height: page.height,
+      text: page.text ?? "",
+      ...(page.width === undefined ? {} : { width: page.width }),
+      ...(page.height === undefined ? {} : { height: page.height }),
       method: "ocr",
       confidence: 0,
     },
     warnings: [
       `Page ${page.index}: not sent to OCR because the document exceeds the ${settings.maxOcrPages}-page OCR limit; the page content is missing.`,
     ],
+    skipped: true,
   };
 }
 
@@ -396,18 +454,17 @@ async function extractPdfAsync(
     return splitter.then((value) => value.pageBytesAsync(pageIndex));
   };
 
-  const ocrResults = await mapWithConcurrencyAsync(ocrPages, settings.concurrency, (page) =>
-    ocrPageAsync(
-      deps,
-      {
-        pageIndex: page.index,
-        mimeType: "application/pdf",
-        bytesAsync: () => pageBytesAsync(page.index),
-        width: page.width,
-        height: page.height,
-      },
-      settings,
-    ),
+  const ocrResults = await ocrPagesAsync(
+    deps,
+    metadata,
+    ocrPages.map((page) => ({
+      pageIndex: page.index,
+      mimeType: "application/pdf",
+      bytesAsync: () => pageBytesAsync(page.index),
+      width: page.width,
+      height: page.height,
+    })),
+    settings,
   );
   const ocrByIndex = new Map(ocrResults.map((result) => [result.page.index, result]));
   const results = textPages.map((page) => {
@@ -461,11 +518,21 @@ export async function extractDocumentAsync(
     case "csv":
     case "tsv": {
       const decoded = decodeText(buffer);
-      const parsed = parseDelimitedText(decoded.text, {
-        name: tableNameFor(metadata),
-        delimiter: detected.format === "tsv" ? "\t" : undefined,
-        dateOrder: settings.dateOrder,
-      });
+      let parsed: TabularParseResult;
+
+      try {
+        parsed = parseDelimitedText(decoded.text, {
+          name: tableNameFor(metadata),
+          delimiter: detected.format === "tsv" ? "\t" : undefined,
+          dateOrder: settings.dateOrder,
+        });
+      } catch (error) {
+        throw new DocumentExtractionError(
+          metadata.id,
+          `"${metadata.name}" could not be read as delimited text: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
 
       return tabularOutcome(metadata, {
         tables: parsed.tables,
@@ -493,13 +560,18 @@ export async function extractDocumentAsync(
     case "pdf":
       return extractPdfAsync(buffer, metadata, deps, settings);
     case "image": {
-      const result = await ocrPageAsync(
+      if (settings.maxOcrPages === 0) {
+        return buildOutcome(metadata, [skippedPage({ index: 1 }, settings)]);
+      }
+
+      const results = await ocrPagesAsync(
         deps,
-        { pageIndex: 1, mimeType: detected.mimeType, bytesAsync: async () => buffer },
+        metadata,
+        [{ pageIndex: 1, mimeType: detected.mimeType, bytesAsync: async () => buffer }],
         settings,
       );
 
-      return buildOutcome(metadata, [result]);
+      return buildOutcome(metadata, results);
     }
   }
 }

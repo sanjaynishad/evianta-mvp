@@ -6,8 +6,10 @@ export {
 } from "./detect.js";
 export {
   DocumentExtractionError,
+  OcrConfigurationError,
   OcrExtractionError,
   UnsupportedDocumentTypeError,
+  type OcrAccounting,
 } from "./errors.js";
 export {
   createGeminiExtractor,

@@ -46,6 +46,8 @@ The store reads `GCS_BUCKET` for uploaded file bytes. `EVIANTA_USAGE_VIEW_PATH` 
 
 ## Document ingestion
 
-`@evianta/ingest` accepts CSV, TSV, XLSX, XLS, PDF, PNG, JPEG, and WEBP. Convert TIFF and GIF before uploading, preserving multi-page documents as PDFs. Workbooks are limited to 1,000,000 expanded cell slots across all sheets, including gaps between populated cells; larger workbooks fail with a `DocumentExtractionError`.
+`@evianta/ingest` accepts CSV, TSV, XLSX, XLS, PDF, PNG, JPEG, and WEBP. Convert TIFF and GIF before uploading, preserving multi-page documents as PDFs. Workbooks and delimited text are each limited to 1,000,000 expanded cell slots (workbooks across all sheets, including gaps between populated cells); larger inputs fail with a `DocumentExtractionError`.
 
-If every OCR page fails, `OcrExtractionError` exposes aggregate `usage`, `cost`, and `pageUsage`. Its `errors` array and `AggregateError` cause retain the original page failures, including their AI error types and retry classification. Partial OCR failures remain in the returned outcome and are not cached.
+If every OCR page that was sent to the model fails, `OcrExtractionError` exposes aggregate `usage`, `cost`, and `pageUsage`. Pages skipped by `maxOcrPages` do not count as extracted. Its `errors` array and `AggregateError` cause retain the original page failures, including their AI error types and retry classification. Partial OCR failures remain in the returned outcome and are not cached.
+
+If OCR reports that the model is not configured or access was denied, no further pages are scheduled. In-flight pages finish, then `OcrConfigurationError` (a subclass of `OcrExtractionError`) is thrown with their combined accounting; its `cause` is the original AI error.

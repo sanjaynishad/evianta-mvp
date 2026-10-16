@@ -1,4 +1,5 @@
 import {
+  AiNonTransientError,
   AiOutputValidationError,
   AiTransientError,
   createMockAi,
@@ -16,6 +17,7 @@ import {
 } from "./__fixtures__/fixtures.js";
 import {
   DocumentExtractionError,
+  OcrConfigurationError,
   OcrExtractionError,
   UnsupportedDocumentTypeError,
 } from "./errors.js";
@@ -482,6 +484,91 @@ describe("extractDocumentAsync: OCR paths", () => {
       "Page 2: not sent to OCR because the document exceeds the 0-page OCR limit; the page content is missing.",
     ]);
   });
+
+  it("honors a zero OCR page limit for images without calling the model", async () => {
+    const ai = createMockAi({ [IMAGE_EXTRACTION_KEY]: scannedPageStep() });
+    const outcome = await extractDocumentAsync(
+      createPng(),
+      documentMetadata({ name: "a.png", mimeType: "image/png" }),
+      { ai },
+      { maxOcrPages: 0 },
+    );
+
+    expect(ai.calls).toEqual([]);
+    expect(outcome.usage).toEqual({ input: 0, output: 0, total: 0 });
+    expect(outcome.failedPages).toEqual([]);
+    expect(outcome.extraction.pages).toEqual([
+      { index: 1, text: "", method: "ocr", confidence: 0 },
+    ]);
+    expect(outcome.extraction.warnings).toEqual([
+      "Page 1: not sent to OCR because the document exceeds the 0-page OCR limit; the page content is missing.",
+    ]);
+  });
+
+  it("throws when every OCR page failed even if other pages were skipped", async () => {
+    const ai = createMockAi({ [IMAGE_EXTRACTION_KEY]: { error: "non-transient" } });
+    const pdf = await createPdfAsync([{ image: true }, { image: true }]);
+
+    await expect(
+      extractDocumentAsync(
+        pdf,
+        documentMetadata({ name: "scanned.pdf", mimeType: "application/pdf" }),
+        { ai },
+        { maxOcrPages: 1 },
+      ),
+    ).rejects.toBeInstanceOf(OcrExtractionError);
+  });
+
+  it("stops scheduling OCR after a configuration error and keeps in-flight accounting", async () => {
+    const configurationError = new AiNonTransientError("Model not configured", {
+      reason: "not-configured",
+      usage: { input: 10, output: 0, total: 10 },
+      cost: 0.0001,
+      attempts: 1,
+    });
+    const inFlightError = new AiTransientError("Unavailable", {
+      usage: { input: 200, output: 30, total: 230 },
+      cost: 0.002,
+      attempts: 2,
+    });
+    const ai = {
+      extractFromImageAsync: vi
+        .fn()
+        .mockRejectedValueOnce(configurationError)
+        .mockImplementationOnce(
+          () =>
+            new Promise((_resolve, reject) => {
+              setTimeout(() => reject(inFlightError), 20);
+            }),
+        ),
+    };
+    const pdf = await createPdfAsync([
+      { image: true },
+      { image: true },
+      { image: true },
+      { image: true },
+    ]);
+    const error = await extractDocumentAsync(
+      pdf,
+      documentMetadata({ name: "scanned.pdf", mimeType: "application/pdf" }),
+      { ai },
+      { ocrConcurrency: 2 },
+    ).catch((failure: unknown) => failure);
+
+    expect(ai.extractFromImageAsync).toHaveBeenCalledTimes(2);
+    expect(error).toBeInstanceOf(OcrConfigurationError);
+
+    if (!(error instanceof OcrConfigurationError)) {
+      throw new Error("Expected OcrConfigurationError");
+    }
+
+    expect(error.cause).toBe(configurationError);
+    expect(error.errors).toEqual([configurationError, inFlightError]);
+    expect(error.usage).toEqual({ input: 210, output: 30, total: 240 });
+    expect(error.cost).toBe(0.0021);
+    expect(error.pageUsage.map((entry) => entry.pageIndex)).toEqual([1, 2]);
+    expect(error.pageUsage.every((entry) => entry.failed)).toBe(true);
+  });
 });
 
 describe("extractDocumentAsync: errors", () => {
@@ -529,6 +616,18 @@ describe("extractDocumentAsync: errors", () => {
         Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("xl/workbook.xml")]),
         documentMetadata({ name: "broken.xlsx", mimeType: "application/zip" }),
         { ai },
+      ),
+    ).rejects.toBeInstanceOf(DocumentExtractionError);
+  });
+
+  it("reports oversized delimited text as a DocumentExtractionError", async () => {
+    const header = Array.from({ length: 10_000 }, (_unused, index) => `H${index}`).join(",");
+
+    await expect(
+      extractDocumentAsync(
+        Buffer.from(`${header}\n${"1\n".repeat(10_000)}`),
+        documentMetadata({ name: "wide.csv", mimeType: "text/csv" }),
+        { ai: createMockAi() },
       ),
     ).rejects.toBeInstanceOf(DocumentExtractionError);
   });
