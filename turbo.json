@@ -9,7 +9,15 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "passThroughEnv": [
+        "GCS_BUCKET",
+        "EVIANTA_USAGE_VIEW_PATH",
+        "FIRESTORE_EMULATOR_HOST",
+        "STORAGE_EMULATOR_HOST",
+        "FIREBASE_STORAGE_EMULATOR_HOST",
+        "GCLOUD_PROJECT"
+      ]
     },
     "dev": {
       "cache": false,
@@ -20,7 +28,13 @@
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "GOOGLE_CLOUD_PROJECT",
-        "GOOGLE_CLOUD_LOCATION"
+        "GOOGLE_CLOUD_LOCATION",
+        "GCS_BUCKET",
+        "EVIANTA_USAGE_VIEW_PATH",
+        "FIRESTORE_EMULATOR_HOST",
+        "STORAGE_EMULATOR_HOST",
+        "FIREBASE_STORAGE_EMULATOR_HOST",
+        "GCLOUD_PROJECT"
       ]
     },
     "lint": {}

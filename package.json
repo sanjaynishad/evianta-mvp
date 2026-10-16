@@ -15,6 +15,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:emulators": "turbo run build && pnpm -r --workspace-concurrency=1 --if-present run test:emulators",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky"

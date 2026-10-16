@@ -35,3 +35,32 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  emulators:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache Firebase emulators
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ runner.os }}-firebase-tools-13
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Emulator integration tests
+        run: pnpm test:emulators
