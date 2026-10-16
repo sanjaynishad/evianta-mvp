@@ -1,4 +1,9 @@
-import { createDefaultTaskHandlers, type TaskHandler } from "@evianta/agents";
+import {
+  createDefaultTaskHandlers,
+  createSpecialistAgent,
+  createSpecialistTaskHandler,
+  type TaskHandler,
+} from "@evianta/agents";
 import {
   DocumentExtractionError,
   OcrConfigurationError,
@@ -41,6 +46,14 @@ async function createCaseAsync(app: Parameters<typeof request>[0], useCase = "da
   return response.body.id as string;
 }
 
+// These tests cover the HTTP lifecycle, so they pin the generic specialist instead of the
+// spreadsheet-driven data analyst; dataAnalysis.test.ts covers that flow.
+function genericAnalystHandlers() {
+  return createDefaultTaskHandlers().register(
+    createSpecialistTaskHandler(createSpecialistAgent("business-data-analyst")),
+  );
+}
+
 function gatedAnalystHandler(): { handler: TaskHandler; release: () => void } {
   let release: () => void = () => {};
 
@@ -68,7 +81,7 @@ function gatedAnalystHandler(): { handler: TaskHandler; release: () => void } {
 
 describe("case lifecycle over HTTP", () => {
   it("creates a case, uploads a CSV, runs it, streams to a terminal event, and serves the deliverable", async () => {
-    const { app, ai } = createTestHarness();
+    const { app, ai } = createTestHarness({ handlers: genericAnalystHandlers() });
     const caseId = await createCaseAsync(app);
     const upload = await request(app)
       .post(`/cases/${caseId}/documents`)
@@ -230,7 +243,7 @@ describe("case lifecycle over HTTP", () => {
   });
 
   it("closes a stream for a finished run after replaying it and stays open for a new run", async () => {
-    const { app, ai } = createTestHarness();
+    const { app, ai } = createTestHarness({ handlers: genericAnalystHandlers() });
     const caseId = await createCaseAsync(app);
 
     ai.script("business-data-analyst", specialistStep([finding("First pass")]));
