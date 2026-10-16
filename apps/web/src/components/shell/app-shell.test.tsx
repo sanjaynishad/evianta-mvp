@@ -196,9 +196,25 @@ describe("CommandPalette focus", () => {
 });
 
 describe("isCommandPaletteShortcut", () => {
+  const modifiers = { ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
+
   it("matches Ctrl+K and Cmd+K only", () => {
-    expect(isCommandPaletteShortcut({ key: "k", ctrlKey: true, metaKey: false })).toBe(true);
-    expect(isCommandPaletteShortcut({ key: "K", ctrlKey: false, metaKey: true })).toBe(true);
-    expect(isCommandPaletteShortcut({ key: "k", ctrlKey: false, metaKey: false })).toBe(false);
+    expect(isCommandPaletteShortcut({ ...modifiers, key: "k", ctrlKey: true })).toBe(true);
+    expect(isCommandPaletteShortcut({ ...modifiers, key: "K", metaKey: true })).toBe(true);
+    expect(isCommandPaletteShortcut({ ...modifiers, key: "k" })).toBe(false);
+    expect(isCommandPaletteShortcut({ ...modifiers, key: "j", ctrlKey: true })).toBe(false);
+  });
+
+  it.each([
+    { ctrlKey: true, shiftKey: true },
+    { ctrlKey: true, altKey: true },
+    { metaKey: true, shiftKey: true },
+    { metaKey: true, altKey: true },
+  ])("does not intercept other shortcuts (%o)", (extraModifiers) => {
+    const eventOptions = { ...modifiers, key: "k", ...extraModifiers };
+    expect(isCommandPaletteShortcut(eventOptions)).toBe(false);
+    renderShell();
+    expect(fireEvent.keyDown(window, eventOptions)).toBe(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

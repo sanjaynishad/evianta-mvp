@@ -5,9 +5,10 @@ import {
   ShieldQuestion,
   type LucideIcon,
 } from "lucide-react";
+import type { ConfidenceLevel } from "@evianta/core";
 import { cn } from "@/lib/utils";
 
-export type ConfidenceLevel = "high" | "medium" | "low" | "unassessed";
+export type { ConfidenceLevel } from "@evianta/core";
 
 interface ConfidenceMeta {
   label: string;

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { confidenceLevelSchema } from "@evianta/core";
 import { ConfidenceBadge } from "./confidence-badge";
 import { DataTable } from "./data-table";
 import { EmptyState } from "./empty-state";
@@ -24,6 +25,14 @@ describe("StatusBadge", () => {
 });
 
 describe("ConfidenceBadge", () => {
+  it.each(confidenceLevelSchema.options)("renders the domain confidence level %s", (level) => {
+    render(<ConfidenceBadge level={level} />);
+    const badge = screen.getByTitle(/^Evidence confidence:/);
+    expect(badge).toHaveAttribute("data-confidence", level);
+    expect(badge).not.toBeEmptyDOMElement();
+    expect(badge.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("renders a full text label", () => {
     render(<ConfidenceBadge level="unassessed" />);
     expect(screen.getByText("Not assessed")).toHaveAttribute("data-confidence", "unassessed");

@@ -425,8 +425,15 @@ function FormFields() {
       </div>
       <div className="flex flex-col gap-2">
         <Label htmlFor="case-pan">PAN</Label>
-        <Input id="case-pan" aria-invalid defaultValue="ABCDE1234" />
-        <p className="text-xs text-danger">PAN must have 10 characters.</p>
+        <Input
+          id="case-pan"
+          aria-invalid
+          aria-describedby="case-pan-error"
+          defaultValue="ABCDE1234"
+        />
+        <p id="case-pan-error" className="text-xs text-danger">
+          PAN must have 10 characters.
+        </p>
       </div>
       <div className="flex flex-col gap-2 md:col-span-2">
         <Label htmlFor="case-description">Description</Label>

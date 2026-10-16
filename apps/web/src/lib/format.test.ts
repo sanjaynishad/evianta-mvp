@@ -24,6 +24,20 @@ describe("en-IN number formatting", () => {
     expect(formatInr(-42_000)).toBe("-₹42,000");
   });
 
+  it.each([
+    { format: formatNumber, prefix: "" },
+    { format: formatInr, prefix: "₹" },
+  ])("supports minimum precision above two digits ($format.name)", ({ format, prefix }) => {
+    expect(format(1.234, { minimumFractionDigits: 3 })).toBe(`${prefix}1.234`);
+    expect(format(1.2, { minimumFractionDigits: 3 })).toBe(`${prefix}1.200`);
+    expect(format(1.23456, { minimumFractionDigits: 3, maximumFractionDigits: 4 })).toBe(
+      `${prefix}1.2346`,
+    );
+    expect(() => format(1.234, { minimumFractionDigits: 3, maximumFractionDigits: 2 })).toThrow(
+      RangeError,
+    );
+  });
+
   it("abbreviates large rupee amounts to lakh and crore", () => {
     expect(formatInrCompact(48_200_000)).toBe("₹4.82 crore");
     expect(formatInrCompact(10_000_000)).toBe("₹1 crore");

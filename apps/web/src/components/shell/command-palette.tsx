@@ -18,9 +18,15 @@ import { cn } from "@/lib/utils";
 import { primaryNavItems, secondaryNavItems } from "./nav-items";
 
 export function isCommandPaletteShortcut(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey">,
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey"> &
+    Partial<Pick<KeyboardEvent, "shiftKey" | "altKey">>,
 ) {
-  return event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey);
+  return (
+    event.key.toLowerCase() === "k" &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.shiftKey &&
+    !event.altKey
+  );
 }
 
 export interface CommandPaletteProps {

@@ -11,7 +11,8 @@ export interface NumberFormatOptions {
 export function formatNumber(value: number, options: NumberFormatOptions = {}): string {
   return new Intl.NumberFormat(locale, {
     minimumFractionDigits: options.minimumFractionDigits ?? 0,
-    maximumFractionDigits: options.maximumFractionDigits ?? 2,
+    maximumFractionDigits:
+      options.maximumFractionDigits ?? Math.max(2, options.minimumFractionDigits ?? 0),
   }).format(value);
 }
 
@@ -20,7 +21,8 @@ export function formatInr(amount: number, options: NumberFormatOptions = {}): st
     style: "currency",
     currency: "INR",
     minimumFractionDigits: options.minimumFractionDigits ?? 0,
-    maximumFractionDigits: options.maximumFractionDigits ?? 2,
+    maximumFractionDigits:
+      options.maximumFractionDigits ?? Math.max(2, options.minimumFractionDigits ?? 0),
   }).format(amount);
 }
 
