@@ -11,6 +11,7 @@ import {
   type AgentLookup,
   type TaskHandlerRegistry,
 } from "./handlers.js";
+import { registerTaxNoticeHandlers } from "./usecases/tax-notice/index.js";
 import type { DeterministicCheckOptions } from "./verification.js";
 
 export interface AgentRegistry extends AgentLookup {
@@ -69,10 +70,12 @@ export function createAgentRegistry(
 export function createDefaultTaskHandlers(
   reviewOptions: DeterministicCheckOptions = {},
 ): TaskHandlerRegistry {
-  return createTaskHandlerRegistry([
+  const generic = createTaskHandlerRegistry([
     ...SPECIALIST_ROLES.map((role) => createSpecialistTaskHandler(role)),
     createReviewTaskHandler(reviewOptions),
   ]);
+
+  return registerTaxNoticeHandlers(generic, { review: reviewOptions });
 }
 
 /** Upserts every agent profile into the persistent directory. Safe to run repeatedly. */
