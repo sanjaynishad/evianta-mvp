@@ -2,6 +2,7 @@ import type { AiClient, Cost } from "@evianta/ai";
 import type { DocumentMetadata, ExtractedDocument, TokenUsage } from "@evianta/core";
 import {
   DocumentExtractionError,
+  OcrConfigurationError,
   OcrExtractionError,
   UnsupportedDocumentTypeError,
   type IngestDocumentRequest,
@@ -16,7 +17,9 @@ export type IngestFunction = (request: IngestDocumentRequest) => Promise<IngestR
 /** In-process ingestion state; a stored extraction means the document is ready. */
 export interface DocumentIngestionState {
   status: "processing" | "partial" | "failed";
+  /** Client-safe text; provider and parser diagnostics are only logged. */
   error?: string;
+  errorCode?: DocumentErrorCode;
   /** False when the file itself cannot be read, so extracting it again would not help. */
   retryable?: boolean;
   /** The uncached result of a partial extraction, kept so the UI can show what was read. */
@@ -71,12 +74,51 @@ function isPermanentIngestError(error: unknown): boolean {
   );
 }
 
-function describeIngestError(error: unknown): string {
-  if (error instanceof UnsupportedDocumentTypeError || error instanceof DocumentExtractionError) {
-    return error.message;
+export type DocumentErrorCode =
+  | "unsupported-type"
+  | "ocr-unavailable"
+  | "ocr-failed"
+  | "ocr-partial"
+  | "extraction-failed"
+  | "read-failed";
+
+interface DescribedIngestError {
+  code: DocumentErrorCode;
+  message: string;
+}
+
+// Only messages composed from the file's own name and type reach clients; OCR and parser errors
+// can carry provider or library diagnostics, so they are logged and replaced with fixed text.
+function describeIngestError(error: unknown): DescribedIngestError {
+  if (error instanceof UnsupportedDocumentTypeError) {
+    return { code: "unsupported-type", message: error.message };
   }
 
-  return "The document could not be read. It will be retried when the case runs.";
+  if (error instanceof OcrConfigurationError) {
+    return {
+      code: "ocr-unavailable",
+      message: "Text recognition is not available right now. It is retried when the case runs.",
+    };
+  }
+
+  if (error instanceof OcrExtractionError) {
+    return {
+      code: "ocr-failed",
+      message: "Text recognition failed for this document. It is retried when the case runs.",
+    };
+  }
+
+  if (error instanceof DocumentExtractionError) {
+    return {
+      code: "extraction-failed",
+      message: "The document could not be read. Check that the file opens, then upload it again.",
+    };
+  }
+
+  return {
+    code: "read-failed",
+    message: "The document could not be read. It is retried when the case runs.",
+  };
 }
 
 export function createIngestionService(options: IngestionServiceOptions): IngestionService {
@@ -131,6 +173,7 @@ export function createIngestionService(options: IngestionServiceOptions): Ingest
           states.set(key, {
             status: "partial",
             error: `OCR failed on page(s) ${result.failedPages.join(", ")}. They are retried when the case runs.`,
+            errorCode: "ocr-partial",
             retryable: true,
             extraction: result.extraction,
           });
@@ -142,15 +185,20 @@ export function createIngestionService(options: IngestionServiceOptions): Ingest
           await recordUsageAsync(document.caseId, error.usage, error.cost);
         }
 
+        const described = describeIngestError(error);
+
         states.set(key, {
           status: "failed",
-          error: describeIngestError(error),
+          error: described.message,
+          errorCode: described.code,
           retryable: !isPermanentIngestError(error),
         });
         logger.warn("Document extraction failed.", {
           caseId: document.caseId,
           documentId: document.id,
+          code: described.code,
           error: messageOf(error),
+          cause: error instanceof Error && error.cause ? messageOf(error.cause) : undefined,
         });
       } finally {
         inFlight.delete(key);

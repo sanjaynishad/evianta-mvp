@@ -108,7 +108,7 @@ export function toApiError(error: unknown): ApiError | undefined {
   }
 
   if (error instanceof DocumentExtractionError) {
-    return new ApiError(422, "extraction-failed", error.message);
+    return new ApiError(422, "extraction-failed", "The document could not be read.");
   }
 
   if (error instanceof multer.MulterError) {

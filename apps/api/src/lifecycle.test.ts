@@ -1,5 +1,9 @@
 import { createDefaultTaskHandlers, type TaskHandler } from "@evianta/agents";
-import { DocumentExtractionError } from "@evianta/ingest";
+import {
+  DocumentExtractionError,
+  OcrConfigurationError,
+  OcrExtractionError,
+} from "@evianta/ingest";
 import { createInMemoryStore } from "@evianta/store";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -141,6 +145,7 @@ describe("case lifecycle over HTTP", () => {
       lastEventSeq: frames.length,
       lastRunId: run.body.runId,
       lastEventType: "run-completed",
+      lastRunMode: "run",
     });
 
     const deliverable = await request(app)
@@ -277,6 +282,11 @@ describe("case lifecycle over HTTP", () => {
       "response-preparation": "blocked",
       "independent-review": "blocked",
     });
+    expect(before.body.run).toMatchObject({
+      lastEventType: "run-failed",
+      lastRunMode: "run",
+      lastRunError: expect.any(String),
+    });
 
     const callsBefore = ai.calls.length;
     const retry = await request(app).post(`/cases/${caseId}/retry`).expect(202);
@@ -359,7 +369,7 @@ describe("case lifecycle over HTTP", () => {
         handwriting: true,
       },
     });
-    expect(byName["broken.pdf"]).toMatchObject({ status: "failed" });
+    expect(byName["broken.pdf"]).toMatchObject({ status: "failed", errorCode: "read-failed" });
     expect(byName["broken.pdf"].error).not.toContain("/var/secret");
     expect(state.body.case.usage).toMatchObject({
       inputTokens: 900,
@@ -379,6 +389,75 @@ describe("case lifecycle over HTTP", () => {
 
     expect(file.headers["content-type"]).toBe("application/pdf");
     expect(file.headers["content-disposition"]).toContain('inline; filename="receipt.pdf"');
+  });
+
+  it("returns client-safe document errors without provider or parser diagnostics", async () => {
+    const providerDetail =
+      "PERMISSION_DENIED: API key AIzaSy-secret-key for project evianta-prod-123 at https://aiplatform.googleapis.com/v1/internal";
+    const accounting = {
+      usage: { input: 258, output: 0, total: 258 },
+      cost: 0.0001,
+      pageUsage: [],
+    };
+    const { app } = createTestHarness({
+      async ingest({ document }) {
+        if (document.name === "config.pdf") {
+          throw new OcrConfigurationError(document.id, accounting, [new Error(providerDetail)]);
+        }
+
+        if (document.name === "ocr.pdf") {
+          throw new OcrExtractionError(document.id, accounting, [new Error(providerDetail)]);
+        }
+
+        throw new DocumentExtractionError(
+          document.id,
+          `"${document.name}" could not be read as a PDF: ${providerDetail}`,
+        );
+      },
+    });
+    const caseId = await createCaseAsync(app);
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF");
+
+    await request(app)
+      .post(`/cases/${caseId}/documents`)
+      .attach("files", pdf, { filename: "config.pdf", contentType: "application/pdf" })
+      .attach("files", pdf, { filename: "ocr.pdf", contentType: "application/pdf" })
+      .attach("files", pdf, { filename: "parser.pdf", contentType: "application/pdf" })
+      .expect(201);
+    await app.idleAsync();
+
+    const state = await request(app).get(`/cases/${caseId}`).expect(200);
+    const codes = Object.fromEntries(
+      state.body.documents.map((document: { name: string; errorCode: string }) => [
+        document.name,
+        document.errorCode,
+      ]),
+    );
+    const detail = await request(app)
+      .get(`/cases/${caseId}/documents/${state.body.documents[0].id}`)
+      .expect(200);
+
+    await request(app).post(`/cases/${caseId}/run`).expect(202);
+
+    const stream = await asText(request(app).get(`/cases/${caseId}/stream`)).expect(200);
+    const after = await request(app).get(`/cases/${caseId}`).expect(200);
+
+    expect(codes).toEqual({
+      "config.pdf": "ocr-unavailable",
+      "ocr.pdf": "ocr-failed",
+      "parser.pdf": "extraction-failed",
+    });
+    expect(state.body.case.usage.inputTokens).toBe(516);
+    expect(sseFramesOf(stream).at(-1)?.event).toBe("run-failed");
+    expect(after.body.run).toMatchObject({ lastEventType: "run-failed" });
+    expect(after.body.run.lastRunMode).toBeUndefined();
+    expect(after.body.run.lastRunError).toContain('"config.pdf"');
+
+    for (const body of [state.text, detail.text, stream.body as string, after.text]) {
+      for (const secret of ["PERMISSION_DENIED", "AIzaSy", "evianta-prod-123", "googleapis"]) {
+        expect(body).not.toContain(secret);
+      }
+    }
   });
 
   it("does not start a run while a document is unread for a retryable reason", async () => {

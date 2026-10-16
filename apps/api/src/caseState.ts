@@ -13,7 +13,7 @@ import type {
 import { pagesNeedingReview } from "@evianta/ingest";
 import type { Store } from "@evianta/store";
 
-import type { IngestionService } from "./ingestion.js";
+import type { DocumentErrorCode, IngestionService } from "./ingestion.js";
 import type { RunLauncher } from "./runs.js";
 
 export type DocumentStatus = "pending" | "processing" | "ready" | "partial" | "failed";
@@ -34,6 +34,7 @@ export interface ExtractionSummary {
 export interface DocumentView extends Omit<DocumentMetadata, "gcsPath"> {
   status: DocumentStatus;
   error?: string;
+  errorCode?: DocumentErrorCode;
   extraction?: ExtractionSummary;
 }
 
@@ -50,6 +51,10 @@ export interface CaseRunView {
   lastEventSeq: number;
   lastRunId?: string;
   lastEventType?: RunEvent["type"];
+  /** Absent when the last run failed before it started. */
+  lastRunMode?: "run" | "retry";
+  /** Present when the last run ended with run-failed. */
+  lastRunError?: string;
 }
 
 export interface CaseStateView {
@@ -98,6 +103,7 @@ export function toDocumentView(
       ...rest,
       status: state.status,
       ...(state.error ? { error: state.error } : {}),
+      ...(state.errorCode ? { errorCode: state.errorCode } : {}),
       ...(state.extraction ? { extraction: summarizeExtraction(state.extraction) } : {}),
     };
   }
@@ -163,7 +169,11 @@ export async function loadCaseStateAsync(
   caseId: string,
 ): Promise<CaseStateView | undefined> {
   const active = runs.isActive(caseId);
-  const lastEvent = (await store.events.listEventsAsync(caseId)).at(-1);
+  const events = await store.events.listEventsAsync(caseId);
+  const lastEvent = events.at(-1);
+  const lastRunStart = lastEvent
+    ? events.find((event) => event.type === "run-started" && event.runId === lastEvent.runId)
+    : undefined;
   const [caseRecord, record, deliverables, documents] = await Promise.all([
     store.cases.getCaseAsync(caseId),
     loadActiveRecordAsync(store, caseId),
@@ -187,6 +197,8 @@ export async function loadCaseStateAsync(
       active,
       lastEventSeq: lastEvent?.seq ?? 0,
       ...(lastEvent ? { lastRunId: lastEvent.runId, lastEventType: lastEvent.type } : {}),
+      ...(lastRunStart?.type === "run-started" ? { lastRunMode: lastRunStart.mode } : {}),
+      ...(lastEvent?.type === "run-failed" ? { lastRunError: lastEvent.error } : {}),
     },
   };
 }
