@@ -547,6 +547,28 @@ describe("periods, TCS, and corroborating statements", () => {
     ).toBe(12400);
   });
 
+  it("does not infer a year for a table whose date columns are ambiguous", async () => {
+    const ledger = [
+      "Date,Entry date,Party,Section,Gross amount,TDS deducted",
+      "2024-06-30,2024-07-02,Asha Salaries Ltd,192,900000,90000",
+    ].join("\n");
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ ledger })),
+    );
+    const asha = reconciliation.lines.filter((line) => line.tan === "BLRA30003C");
+
+    expect(reconciliation.assumedPeriods).toEqual([]);
+    expect(reconciliation.warnings).toEqual([
+      expect.stringContaining("transaction dates were not used"),
+    ]);
+    expect(reconciliation.undatedRows).toEqual([
+      expect.objectContaining({ documentId: "doc-ledger" }),
+    ]);
+    expect(asha.map((line) => [line.period, line.status])).toEqual([
+      ["FY 2023-24", "missing"],
+      [PERIOD_NOT_STATED, "missing"],
+    ]);
+  });
   it("deduplicates repeated AIS exports before comparing them with 26AS", async () => {
     const documents = [
       ...(await fixtureDocumentsAsync()),

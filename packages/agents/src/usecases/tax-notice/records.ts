@@ -74,6 +74,8 @@ export interface TaxRecordTable {
   skippedRowIndexes: number[];
   /** Total and subtotal rows, excluded so they are not counted as transactions. */
   aggregateRowIndexes: number[];
+  /** True when any header looks like a date, quarter, or financial year, even if none was used. */
+  hasPeriodHeaders: boolean;
   warnings: string[];
 }
 
@@ -557,6 +559,10 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
         rows,
         skippedRowIndexes,
         aggregateRowIndexes,
+        hasPeriodHeaders:
+          candidates.date !== undefined ||
+          candidates.quarter !== undefined ||
+          candidates.financialYear !== undefined,
         warnings,
       });
     }

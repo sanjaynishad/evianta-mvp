@@ -235,7 +235,7 @@ export interface AssumedPeriod {
 }
 
 /**
- * A table with no date, quarter, or financial-year column (such as a return schedule, which
+ * A table with no date, quarter, or financial-year header (such as a return schedule, which
  * covers one year) is assigned the financial year of the other records when they all share one.
  */
 function assignFinancialYears(tables: readonly TaxRecordTable[]) {
@@ -245,12 +245,8 @@ function assignFinancialYears(tables: readonly TaxRecordTable[]) {
   const [onlyYear] = years;
   const assumed: AssumedPeriod[] = [];
   const assigned = tables.map((table) => {
-    const hasPeriodColumn =
-      table.columns.date !== undefined ||
-      table.columns.quarter !== undefined ||
-      table.columns.financialYear !== undefined;
-
-    if (hasPeriodColumn || years.size !== 1 || !onlyYear || table.rows.length === 0) {
+    // Headers are checked rather than selected columns, so an ambiguous date stays unresolved.
+    if (table.hasPeriodHeaders || years.size !== 1 || !onlyYear || table.rows.length === 0) {
       return table;
     }
 
