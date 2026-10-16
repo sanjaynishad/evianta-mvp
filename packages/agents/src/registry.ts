@@ -12,6 +12,10 @@ import {
   type TaskHandlerRegistry,
 } from "./handlers.js";
 import type { DeterministicCheckOptions } from "./verification.js";
+import {
+  createMsmePaymentAgents,
+  createMsmePaymentTaskHandlers,
+} from "./usecases/msme-payment/index.js";
 
 export interface AgentRegistry extends AgentLookup {
   list(): AnyAgent[];
@@ -25,6 +29,7 @@ export function createDefaultAgents(): AnyAgent[] {
     createCoordinatorAgent(),
     ...SPECIALIST_ROLES.map((role) => createSpecialistAgent(role)),
     createReviewerAgent(),
+    ...createMsmePaymentAgents(),
   ];
 }
 
@@ -72,6 +77,7 @@ export function createDefaultTaskHandlers(
   return createTaskHandlerRegistry([
     ...SPECIALIST_ROLES.map((role) => createSpecialistTaskHandler(role)),
     createReviewTaskHandler(reviewOptions),
+    ...createMsmePaymentTaskHandlers({ review: reviewOptions }),
   ]);
 }
 
