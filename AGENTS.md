@@ -23,7 +23,7 @@
 ## Project structure
 
 - `apps/api` - HTTP service deployed to Cloud Run (Express + Genkit entry point).
-- `apps/web` - frontend placeholder; full framework scaffold is deferred until design is ready.
+- `apps/web` - Next.js App Router frontend (Tailwind, shadcn/ui) with the Evidence Atlas design system; tokens live in `src/app/globals.css` and the gallery is at `/design`.
 - `packages/config` - shared `tsconfig.base.json` extended by every package.
 - `packages/env` - single source for environment variables, exported as typed constants.
 - `packages/core` - domain model and Zod schemas (`Case`, `Task`, `Finding`, `Evidence`, `Deliverable`, `AgentRole`). No runtime side effects.

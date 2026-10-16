@@ -4,3 +4,5 @@
 coverage/**
 pnpm-lock.yaml
 .husky/_/**
+**/.next/**
+**/next-env.d.ts
