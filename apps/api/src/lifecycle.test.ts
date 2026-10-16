@@ -520,6 +520,7 @@ describe("case lifecycle over HTTP", () => {
   it("does not start a run while a document is unread for a retryable reason", async () => {
     let ocrAvailable = false;
     const { app, ai } = createTestHarness({
+      handlers: genericAnalystHandlers(),
       async ingest({ caseId, document, store }) {
         if (document.name === "corrupt.xlsx") {
           throw new DocumentExtractionError(document.id, "The workbook is damaged.");
