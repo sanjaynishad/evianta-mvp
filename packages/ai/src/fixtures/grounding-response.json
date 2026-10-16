@@ -1,0 +1,71 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "{\"answer\":\"Section 143(1) intimations must be issued within nine months from the end of the financial year in which the return was filed.\"}"
+          }
+        ]
+      },
+      "finishReason": "STOP",
+      "groundingMetadata": {
+        "webSearchQueries": ["section 143(1) intimation time limit"],
+        "searchEntryPoint": {
+          "renderedContent": "<div class=\"container\">search suggestions</div>"
+        },
+        "groundingChunks": [
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc123",
+              "title": "incometaxindia.gov.in"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/def456",
+              "title": "Section 143 of the Income-tax Act"
+            }
+          },
+          {
+            "web": {
+              "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc123",
+              "title": "incometaxindia.gov.in"
+            }
+          },
+          {
+            "web": {
+              "title": "missing uri"
+            }
+          }
+        ],
+        "groundingSupports": [
+          {
+            "segment": {
+              "startIndex": 0,
+              "endIndex": 60,
+              "text": "Section 143(1) intimations must be issued within nine months"
+            },
+            "groundingChunkIndices": [0, 1],
+            "confidenceScores": [0.92, 0.81]
+          },
+          {
+            "segment": {
+              "startIndex": 61,
+              "endIndex": 126,
+              "text": "from the end of the financial year in which the return was filed."
+            },
+            "groundingChunkIndices": [2],
+            "confidenceScores": [0.88]
+          }
+        ]
+      }
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 412,
+    "candidatesTokenCount": 64,
+    "totalTokenCount": 476
+  }
+}
