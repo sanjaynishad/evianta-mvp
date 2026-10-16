@@ -22,12 +22,13 @@ const NUMERIC_TEXT = new RegExp(
   String.raw`^([+-]?)\s*${CURRENCY_TOKEN}?\s*([+-]?)\s*(${GROUPED_DIGITS})\s*${CURRENCY_TOKEN}?$`,
   "i",
 );
-const INR_MARKER = /₹|\brs\.?(?=\s|\d|$)|\binr\b/i;
+// Codes may touch the digits (`USD100`, `100inr`) but not other letters.
+const INR_MARKER = /₹|(?<![a-z])rs\.?(?=\s|\d|$)|(?<![a-z])inr(?![a-z])/i;
 const CURRENCY_MARKERS: ReadonlyArray<[CurrencyCode, RegExp]> = [
   ["INR", INR_MARKER],
-  ["USD", /\$|\busd\b/i],
-  ["EUR", /€|\beur\b/i],
-  ["GBP", /£|\bgbp\b/i],
+  ["USD", /\$|(?<![a-z])usd(?![a-z])/i],
+  ["EUR", /€|(?<![a-z])eur(?![a-z])/i],
+  ["GBP", /£|(?<![a-z])gbp(?![a-z])/i],
 ];
 
 export type CurrencyCode = "INR" | "USD" | "EUR" | "GBP";

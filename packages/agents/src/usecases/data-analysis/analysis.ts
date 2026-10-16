@@ -315,7 +315,7 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
     });
   }
 
-  const baseCurrency = amountCurrency(table, rows, amount).base;
+  const baseCurrency = amountCurrency(table, rows, amount, analyzedRows).base;
   const currency: Currency | undefined = baseCurrency === "INR" ? "INR" : undefined;
 
   if (!baseCurrency) {

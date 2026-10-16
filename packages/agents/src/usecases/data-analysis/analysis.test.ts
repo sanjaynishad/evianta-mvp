@@ -333,6 +333,31 @@ describe("analyzeTable", () => {
     ]);
   });
 
+  it("recognizes currency codes written against the digits", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "fx.csv",
+      table: await csvTableAsync("Amount\n₹100\nUSD100\n₹50\n100usd"),
+    });
+
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.find((item) => item.kind === "mixed-currencies")?.rows).toEqual([1, 3]);
+  });
+
+  it("does not let exact repeats choose the base currency", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "fx.csv",
+      table: await csvTableAsync("Amount\n₹100\n₹50\n$200\n$200\n$200"),
+    });
+
+    expect(analysis.currency).toBe("INR");
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.map((item) => [item.kind, item.rows])).toEqual([
+      ["duplicate-rows", [3, 4]],
+      ["mixed-currencies", [2, 3, 4]],
+    ]);
+  });
   it("does not let exact repeats move the date baseline", async () => {
     const repeated = Array.from({ length: 5 }, () => "1924-03-11,500");
     const analysis = analyzeTable({

@@ -116,9 +116,12 @@ export function amountCurrency(
   table: Pick<ExtractedTable, "rows">,
   rows: readonly number[],
   amount: Pick<ColumnProfile, "index" | "name">,
+  /** Rows that vote for the base currency; pass deduplicated rows so repeats count once. */
+  baseRows: readonly number[] = rows,
 ): AmountCurrency {
   const marked: Array<{ row: number; code: CurrencyCode }> = [];
   const counts = new Map<CurrencyCode, number>();
+  const voters = new Set(baseRows);
 
   for (const row of rows) {
     const cell = table.rows[row]?.[amount.index];
@@ -129,7 +132,10 @@ export function amountCurrency(
 
     if (code) {
       marked.push({ row, code });
-      counts.set(code, (counts.get(code) ?? 0) + 1);
+
+      if (voters.has(row)) {
+        counts.set(code, (counts.get(code) ?? 0) + 1);
+      }
     }
   }
 
@@ -269,7 +275,13 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
   const amountColumn = roles.amount;
 
   if (amountColumn) {
-    const currency = amountCurrency(table, rows, amountColumn);
+    const duplicateSet = new Set(duplicates);
+    const currency = amountCurrency(
+      table,
+      rows,
+      amountColumn,
+      rows.filter((row) => !duplicateSet.has(row)),
+    );
 
     if (currency.foreignRows.length > 0 && currency.base) {
       const examples = currency.foreignRows.map((row) => cellText(cellAt(row, amountColumn.index)));
