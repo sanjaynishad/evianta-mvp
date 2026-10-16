@@ -61,6 +61,14 @@ describe("resolveDateColumn", () => {
     expect(resolution.dates[1]?.iso).toBe("2024-05-06");
   });
 
+  it("reads monthly values as the first day of the month", () => {
+    expect(
+      resolveDateColumn(["2024-01", "Feb 2024", "2024/03", "Apr-2024"]).dates.map(
+        (date) => date?.iso,
+      ),
+    ).toEqual(["2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01"]);
+  });
+
   it("reads named-month dates and rejects impossible ones", () => {
     const resolution = resolveDateColumn(["7 Mar 2024", "Mar 8, 2024", "31/02/2024", 45000]);
 

@@ -81,6 +81,9 @@ const YEAR_FIRST_DATE = /^(\d{4})([/.])(\d{1,2})\2(\d{1,2})$/;
 const NUMERIC_DATE = /^(\d{1,2})([/.-])(\d{1,2})\2(\d{4})$/;
 const DAY_MONTH_NAME_DATE = /^(\d{1,2})([\s-])([A-Za-z]{3,9})\.?[\s,-]+(\d{4})$/;
 const MONTH_NAME_DAY_DATE = /^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/;
+// Monthly data, read as the first day of the month.
+const YEAR_MONTH = /^(\d{4})([-/])(\d{1,2})$/;
+const MONTH_NAME_YEAR = /^([A-Za-z]{3,9})\.?[\s-](\d{4})$/;
 const MONTH_NAMES = [
   "january",
   "february",
@@ -191,6 +194,24 @@ function dateCandidate(text: string): DateCandidate | undefined {
       month === undefined
         ? undefined
         : toParsed(Number(monthFirst[3]), month, Number(monthFirst[2]), "mon d, yyyy");
+
+    return date ? { kind: "parsed", date } : undefined;
+  }
+
+  const yearMonth = YEAR_MONTH.exec(text);
+
+  if (yearMonth) {
+    const date = toParsed(Number(yearMonth[1]), Number(yearMonth[3]), 1, `yyyy${yearMonth[2]}mm`);
+
+    return date ? { kind: "parsed", date } : undefined;
+  }
+
+  const monthYear = MONTH_NAME_YEAR.exec(text);
+
+  if (monthYear) {
+    const month = monthFromName(monthYear[1] as string);
+    const date =
+      month === undefined ? undefined : toParsed(Number(monthYear[2]), month, 1, "mon yyyy");
 
     return date ? { kind: "parsed", date } : undefined;
   }
