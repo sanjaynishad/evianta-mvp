@@ -1,0 +1,9 @@
+{
+  "extends": "@evianta/config/tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/__fixtures__", "dist", "node_modules"]
+}
