@@ -165,41 +165,64 @@ export function createCaseRoutes(ctx: ApiContext): Router {
     "/cases/:caseId/documents",
     asyncRoute(async (req, res) => {
       const { caseId } = caseParamsSchema.parse(req.params);
-
-      await getMutableCaseAsync(ctx, caseId);
-
-      const files = await parseUploadAsync(req, res);
-
-      if (files.length === 0) {
-        throw new ApiError(
-          400,
-          "no-files",
-          'Send one or more files as multipart/form-data in the "files" field.',
-        );
-      }
-
-      const uploads = files.map(validateUpload);
+      // Registered before the checks so a run cannot start between them and the stored metadata.
+      const endUpload = ctx.uploads.begin(caseId);
       const documents: DocumentMetadata[] = [];
 
-      for (const item of uploads) {
-        const gcsPath = await ctx.documentStore.uploadAsync(
-          caseId,
-          item.name,
-          item.mimeType,
-          item.buffer,
-        );
+      try {
+        await getMutableCaseAsync(ctx, caseId);
 
-        documents.push(
-          await store.documents.addDocumentMetadataAsync({
-            id: ctx.newId(),
+        if (ctx.runs.isActive(caseId)) {
+          throw new ApiError(
+            409,
+            "run-in-progress",
+            "Wait for the run to finish before uploading.",
+          );
+        }
+
+        // Completed tasks are reused by later runs, so documents added after planning would be ignored.
+        if ((await store.tasks.getTasksForCaseAsync(caseId)).length > 0) {
+          throw new ApiError(
+            409,
+            "case-already-planned",
+            "Documents cannot be added after the case has been planned. Start a new case to use different documents.",
+          );
+        }
+
+        const files = await parseUploadAsync(req, res);
+
+        if (files.length === 0) {
+          throw new ApiError(
+            400,
+            "no-files",
+            'Send one or more files as multipart/form-data in the "files" field.',
+          );
+        }
+
+        const uploads = files.map(validateUpload);
+
+        for (const item of uploads) {
+          const gcsPath = await ctx.documentStore.uploadAsync(
             caseId,
-            name: item.name,
-            mimeType: item.mimeType,
-            size: item.buffer.length,
-            gcsPath,
-            uploadedAt: ctx.now().toISOString(),
-          }),
-        );
+            item.name,
+            item.mimeType,
+            item.buffer,
+          );
+
+          documents.push(
+            await store.documents.addDocumentMetadataAsync({
+              id: ctx.newId(),
+              caseId,
+              name: item.name,
+              mimeType: item.mimeType,
+              size: item.buffer.length,
+              gcsPath,
+              uploadedAt: ctx.now().toISOString(),
+            }),
+          );
+        }
+      } finally {
+        endUpload();
       }
 
       for (const document of documents) {

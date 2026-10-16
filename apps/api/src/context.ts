@@ -18,6 +18,43 @@ export interface ApiConfig {
   maxFilesPerUpload: number;
 }
 
+export interface UploadTracker {
+  /** Marks an upload in progress for the case; call the returned function when it ends. */
+  begin(caseId: string): () => void;
+  isUploading(caseId: string): boolean;
+}
+
+export function createUploadTracker(): UploadTracker {
+  const counts = new Map<string, number>();
+
+  return {
+    begin(caseId) {
+      counts.set(caseId, (counts.get(caseId) ?? 0) + 1);
+
+      let ended = false;
+
+      return () => {
+        if (ended) {
+          return;
+        }
+
+        ended = true;
+
+        const remaining = (counts.get(caseId) ?? 1) - 1;
+
+        if (remaining > 0) {
+          counts.set(caseId, remaining);
+        } else {
+          counts.delete(caseId);
+        }
+      };
+    },
+    isUploading(caseId) {
+      return counts.has(caseId);
+    },
+  };
+}
+
 export interface ApiContext {
   store: Store;
   documentStore: DocumentStore;
@@ -26,6 +63,7 @@ export interface ApiContext {
   events: RunEventBus;
   ingestion: IngestionService;
   runs: RunLauncher;
+  uploads: UploadTracker;
   logger: ApiLogger;
   config: ApiConfig;
   newId: () => string;

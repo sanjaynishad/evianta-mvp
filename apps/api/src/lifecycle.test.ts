@@ -160,6 +160,13 @@ describe("case lifecycle over HTTP", () => {
       }),
     ]);
 
+    const afterPlanning = await request(app)
+      .post(`/cases/${caseId}/documents`)
+      .attach("files", Buffer.from(SALES_CSV), { filename: "q2.csv", contentType: "text/csv" })
+      .expect(409);
+
+    expect(afterPlanning.body).toMatchObject({ error: "case-already-planned" });
+
     const replay = await asText(
       request(app)
         .get(`/cases/${caseId}/stream`)
@@ -181,6 +188,13 @@ describe("case lifecycle over HTTP", () => {
       const conflict = await request(app).post(`/cases/${caseId}/run`).expect(409);
 
       expect(conflict.body).toMatchObject({ error: "run-in-progress" });
+
+      const lateUpload = await request(app)
+        .post(`/cases/${caseId}/documents`)
+        .attach("files", Buffer.from(SALES_CSV), { filename: "late.csv", contentType: "text/csv" })
+        .expect(409);
+
+      expect(lateUpload.body).toMatchObject({ error: "run-in-progress" });
 
       const first = openLiveSse(`${baseUrl}/cases/${caseId}/stream`);
       const received = await first.waitForFramesAsync(2);

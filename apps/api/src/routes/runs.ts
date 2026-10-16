@@ -36,6 +36,14 @@ export function createRunRoutes(ctx: ApiContext): Router {
       throw new ApiError(409, "run-in-progress", "This case already has a run in progress.");
     }
 
+    if (ctx.uploads.isUploading(caseId)) {
+      throw new ApiError(
+        409,
+        "upload-in-progress",
+        "Wait for the upload to finish before running.",
+      );
+    }
+
     if (mode === "retry") {
       const tasks = await ctx.store.tasks.getTasksForCaseAsync(caseId);
 
