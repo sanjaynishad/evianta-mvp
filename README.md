@@ -115,3 +115,9 @@ gcloud run deploy evianta-api --image <image> --timeout=3600 --no-cpu-throttling
 ```
 
 `GEMINI_API_KEY` is only needed with `googleai`; Vertex AI uses the service account. Because events are persisted, a client that reconnects after a restart still replays the whole run.
+
+## Data analysis (use case A)
+
+The `business-data-analyst` task analyzes the case's spreadsheet in plain TypeScript before any model call: it infers column roles, runs data-quality checks (duplicates, missing values, type mismatches, negative and out-of-range values, mixed date formats), computes totals, averages, monthly changes, a Theil-Sen trend, and segment shares, and flags months whose robust z-score against the trend exceeds 3.5. One mid-tier call receives only these aggregates and five sample rows, and writes the narrative with `{{metric-id}}` placeholders that are replaced with the computed values; any other figure it states is flagged as an open question. The task produces a report deliverable and a dashboard deliverable whose chart sections hold `ChartSpec` JSON from `@evianta/core`. Every finding cites the cell ranges it was computed from.
+
+Mixed date formats are only detectable when ingestion keeps the column as text; columns that ingestion normalizes to ISO dates are treated as consistent.

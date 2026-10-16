@@ -5,7 +5,7 @@ import { roundTo } from "./stats.js";
 const PLACEHOLDER = /\{\{\s*([^{}\s]+)\s*\}\}/g;
 // A number not glued to a word, identifier, or date, for example "40.5%", "₹92,000", or "-3".
 const LITERAL_NUMBER =
-  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)\d[\d,]*(?:\.\d+)?%?(?![\p{L}\p{N}_])/gu;
+  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)\d(?:[\d,]*\d)?(?:\.\d+)?%?(?![\p{L}\p{N}_])/gu;
 const DATE_LIKE = /\b\d{4}-\d{2}(?:-\d{2})?\b|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g;
 const MAX_FREE_INTEGER = 12;
 const MIN_YEAR = 1900;

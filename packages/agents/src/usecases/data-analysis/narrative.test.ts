@@ -1,0 +1,67 @@
+import { describe, expect, it } from "vitest";
+
+import type { Metric } from "./metrics.js";
+import { findUnverifiedNumbers, renderNarrative } from "./narrative.js";
+
+const metrics = new Map<string, Metric>(
+  [
+    { id: "total-amount", label: "Total", value: 92000, unit: "currency" as const },
+    { id: "growth", label: "Growth", value: 50, unit: "percent" as const },
+    { id: "change", label: "Change", value: -53.33, unit: "percent" as const },
+    { id: "share", label: "Share", value: 40.43, unit: "percent" as const },
+  ].map((metric) => [metric.id, { ...metric, basis: "test" }]),
+);
+
+describe("renderNarrative", () => {
+  it("replaces placeholders with exact formatted values", () => {
+    const rendered = renderNarrative(
+      "Sales reached {{total-amount}}, up {{ growth }}; May fell {{change}}.",
+      "summary",
+      metrics,
+      { currency: "INR" },
+    );
+
+    expect(rendered.text).toBe("Sales reached ₹92,000, up 50%; May fell -53.33%.");
+    expect(rendered.metricIds).toEqual(["total-amount", "growth", "change"]);
+    expect(rendered.issues).toEqual([]);
+  });
+
+  it("flags unknown placeholders and numbers that match no metric", () => {
+    const rendered = renderNarrative(
+      "Sales reached 95,000 ({{total-revenue}}), with South at 41% and 3 regions growing.",
+      "trends",
+      metrics,
+    );
+
+    expect(rendered.text).toContain("[figure not computed]");
+    expect(rendered.issues.map((issue) => [issue.kind, issue.token])).toEqual([
+      ["unverified-number", "95,000"],
+      ["unverified-number", "41%"],
+      ["unknown-metric", "{{total-revenue}}"],
+    ]);
+  });
+});
+
+describe("findUnverifiedNumbers", () => {
+  const allowed = [92000, 40.43, 40.4, 40, 50, 53.33, 53.3, 53];
+
+  it("accepts computed values, rounded forms, small counts, years, and dates", () => {
+    expect(
+      findUnverifiedNumbers(
+        "Total 92,000 in 2024; share 40.43% (about 40%); fell 53.3% in 2024-05 across 4 regions on 15/03/2024.",
+        allowed,
+      ),
+    ).toEqual([]);
+  });
+
+  it("ignores digits inside identifiers", () => {
+    expect(findUnverifiedNumbers("Order SO-1027 and FY2025 and Q3", allowed)).toEqual([]);
+  });
+
+  it("flags other figures", () => {
+    expect(findUnverifiedNumbers("Revenue was 1,05,000 and margin 12.5%", allowed)).toEqual([
+      "1,05,000",
+      "12.5%",
+    ]);
+  });
+});

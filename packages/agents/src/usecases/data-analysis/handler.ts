@@ -38,7 +38,7 @@ import {
 } from "./analysis.js";
 import { buildDashboardCharts } from "./charts.js";
 import { cellText } from "./cells.js";
-import { describeLocation, MAX_LOCATIONS_PER_ITEM, rowLocations } from "./evidence.js";
+import { describeLocation, MAX_LOCATIONS_PER_ITEM, rowLocations, rowRuns } from "./evidence.js";
 import { formatMetricValue } from "./format.js";
 import { allowedNarrativeValues, renderNarrative, type NarrativeIssue } from "./narrative.js";
 import { DATA_QUALITY_KIND_LABELS } from "./quality.js";
@@ -436,7 +436,7 @@ function deterministicFindings(
     const growth = analysis.trend?.growthMetricId;
 
     trend = push({
-      summary: `Monthly ${amountName} moved from ${display(analysis, first?.totalMetricId)} in ${first?.period} to ${display(analysis, last?.totalMetricId)} in ${last?.period}${growth ? ` (${display(analysis, growth)})` : ""}.`,
+      summary: `Monthly ${amountName} moved from ${display(analysis, first?.totalMetricId)} in ${first?.period} to ${display(analysis, last?.totalMetricId)} in ${last?.period}${growth ? `, a change of ${display(analysis, growth)}` : ""}.`,
       detail: analysis.periods
         .map(
           (period) =>
@@ -528,7 +528,7 @@ function deterministicFindings(
   const issues = analysis.issues.map((issue) =>
     push({
       summary: issue.message,
-      detail: `Cells: ${issue.locations.map(describeLocation).join(", ")}${issue.rows.length > issue.locations.length ? " (first ranges shown)" : ""}. ${issue.treatment}`,
+      detail: `Cells: ${issue.locations.map(describeLocation).join(", ")}${rowRuns(issue.rows).length > issue.locations.length ? " (first ranges shown)" : ""}. ${issue.treatment}`,
       severity: issue.severity,
       confidence: "high",
       evidence: uniqueReferences(issueReferences(analysis, issue.id)),

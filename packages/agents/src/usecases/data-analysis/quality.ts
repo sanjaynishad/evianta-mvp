@@ -66,6 +66,10 @@ function plural(count: number, singular: string, pluralForm = `${singular}s`): s
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+function agree(count: number, singular: string, pluralForm: string): string {
+  return count === 1 ? singular : pluralForm;
+}
+
 function quoted(values: readonly string[]): string {
   return values.map((value) => `"${value}"`).join(", ");
 }
@@ -126,9 +130,9 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
       kind: "duplicate-rows",
       severity: "medium",
       rows: duplicates,
-      message: `${plural(duplicates.length, "row")} exactly repeat an earlier row.`,
+      message: `${plural(duplicates.length, "row")} exactly ${agree(duplicates.length, "repeats", "repeat")} an earlier row.`,
       treatment: "Exact repeats were counted once.",
-      question: `Are the ${plural(duplicates.length, "repeated row")} genuine repeat transactions? They were counted once.`,
+      question: "Are the repeated rows genuine repeat transactions? They were counted once.",
     });
   }
 
@@ -172,9 +176,9 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
       column: column.name,
       columnIndex: column.index,
       rows: missing,
-      message: `${plural(missing.length, "row")} have no ${column.name}.`,
+      message: `${plural(missing.length, "row")} ${agree(missing.length, "has", "have")} no ${column.name}.`,
       treatment,
-      question: `Can the missing ${column.name} values in ${plural(missing.length, "row")} be supplied?`,
+      question: `Can the missing ${column.name} values be supplied?`,
     });
   }
 
@@ -201,7 +205,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
         columnIndex: column.index,
         rows: mismatched,
         examples,
-        message: `${plural(mismatched.length, `${column.name} value`)} are not numbers, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
+        message: `${plural(mismatched.length, `${column.name} value`)} ${agree(mismatched.length, "is not a number", "are not numbers")}, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
         treatment: `Non-numeric ${column.name} values were left out of ${column.name} metrics.`,
         question: `What should the non-numeric ${column.name} values (${quoted(examples.slice(0, MAX_EXAMPLES))}) be?`,
       });
@@ -227,7 +231,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
         columnIndex: dateColumn.index,
         rows: unreadable,
         examples,
-        message: `${plural(unreadable.length, `${dateColumn.name} value`)} are not readable dates, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
+        message: `${plural(unreadable.length, `${dateColumn.name} value`)} ${agree(unreadable.length, "is not a readable date", "are not readable dates")}, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
         treatment: `Rows with unreadable ${dateColumn.name} values were left out of the monthly trend.`,
         question: `What dates should the unreadable ${dateColumn.name} values (${quoted(examples.slice(0, MAX_EXAMPLES))}) be?`,
       });
@@ -257,7 +261,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
         columnIndex: column.index,
         rows: negative,
         examples,
-        message: `${plural(negative.length, `${column.name} value`)} are negative, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
+        message: `${plural(negative.length, `${column.name} value`)} ${agree(negative.length, "is", "are")} negative, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
         treatment: `Negative ${column.name} values were included as reductions, for example returns or credit notes.`,
         question: `Are the negative ${column.name} values returns or credit notes, or entry errors?`,
       });
@@ -282,7 +286,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
         columnIndex: dateColumn.index,
         rows: outOfRange,
         examples,
-        message: `${plural(outOfRange.length, `${dateColumn.name} value`)} fall far outside the period the data covers, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
+        message: `${plural(outOfRange.length, `${dateColumn.name} value`)} ${agree(outOfRange.length, "falls", "fall")} far outside the period the data covers, for example ${quoted(examples.slice(0, MAX_EXAMPLES))}.`,
         treatment: `Out-of-range ${dateColumn.name} values were left out of the monthly trend.`,
         question: `Are the out-of-range ${dateColumn.name} values (${quoted(examples.slice(0, MAX_EXAMPLES))}) entry errors?`,
       });
