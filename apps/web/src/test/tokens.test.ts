@@ -198,6 +198,12 @@ describe("design tokens", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
   });
 
+  it("provides a visible focus fallback for controls without a custom indicator", () => {
+    const focusRule = css.match(/:focus-visible\s*\{([^}]+)\}/)?.[1];
+    expect(focusRule).toMatch(/outline:\s*2px solid hsl\(var\(--ring\)\)/);
+    expect(focusRule).toMatch(/outline-offset:\s*2px/);
+  });
+
   it("uses the class strategy so next-themes can toggle the dark token set", () => {
     expect(tailwindConfig.darkMode).toBe("class");
   });
