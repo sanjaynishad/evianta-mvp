@@ -41,6 +41,7 @@ import {
   findingHasQuestion,
   isLeaseHeld,
   resolvePageSize,
+  usageChargeSchema,
   type StoredLease,
 } from "./mutations.js";
 import type { LeaseFence, Store, UsageCharge } from "./types.js";
@@ -174,6 +175,7 @@ export function createInMemoryStore(): Store {
         }
       },
       async recordChargeAsync(caseId, runId, chargeId, charge) {
+        const parsed = usageChargeSchema.parse(charge);
         let journal = charges.get(caseId);
 
         if (!journal) {
@@ -184,7 +186,7 @@ export function createInMemoryStore(): Store {
         const key = JSON.stringify([runId, chargeId]);
 
         if (!journal.has(key)) {
-          journal.set(key, { charge: structuredClone(charge), applied: false });
+          journal.set(key, { charge: parsed, applied: false });
         }
       },
       async reconcileUsageAsync(caseId) {
@@ -199,11 +201,12 @@ export function createInMemoryStore(): Store {
           const { taskId } = entry.charge;
           const caseUpdate = applyCaseUsageIncrement(getCaseOrThrow(caseId), entry.charge);
           const task = taskId === undefined ? undefined : tasks.get(caseId, taskId);
+          const taskUpdate = task ? applyTaskCharge(task, entry.charge) : undefined;
 
           putCase(caseUpdate);
 
-          if (task) {
-            tasks.put(caseId, task.id, applyTaskCharge(task, entry.charge));
+          if (taskUpdate) {
+            tasks.put(caseId, taskUpdate.id, taskUpdate);
           }
 
           entry.applied = true;

@@ -159,6 +159,13 @@ export function describeStoreContract(
         taskId: "task-2",
         inputTokens: 7,
       });
+      await expect(
+        store.runs.recordChargeAsync(created.id, "run-1", "task:task-1:2", {
+          taskId: "task-1",
+          inputTokens: 10,
+          totalTokens: 0.5,
+        }),
+      ).rejects.toThrow();
 
       const [task] = await store.tasks.getTasksForCaseAsync(created.id);
 

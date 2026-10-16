@@ -3,7 +3,12 @@ import type { Firestore } from "firebase-admin/firestore";
 import { z } from "zod";
 
 import { StoreNotFoundError } from "../errors.js";
-import { applyCaseUsageIncrement, applyTaskCharge, isLeaseHeld } from "../mutations.js";
+import {
+  applyCaseUsageIncrement,
+  applyTaskCharge,
+  isLeaseHeld,
+  usageChargeSchema,
+} from "../mutations.js";
 import type { RunRepo } from "../types.js";
 import { caseSubcollection, casesCollection, toFirestoreData } from "./helpers.js";
 import { leaseRef, leaseSchema } from "./lease.js";
@@ -11,14 +16,7 @@ import { leaseRef, leaseSchema } from "./lease.js";
 const chargeSchema = z.object({
   applied: z.boolean(),
   taskId: z.string().optional(),
-  increment: z.object({
-    inputTokens: z.number().nonnegative().optional(),
-    outputTokens: z.number().nonnegative().optional(),
-    totalTokens: z.number().nonnegative().optional(),
-    costEstimate: z.number().nonnegative().optional(),
-    runCount: z.number().int().nonnegative().optional(),
-    lastRunAt: z.string().optional(),
-  }),
+  increment: usageChargeSchema.omit({ taskId: true }),
 });
 
 export function createRunRepo(db: Firestore): RunRepo {
@@ -67,7 +65,8 @@ export function createRunRepo(db: Firestore): RunRepo {
         }
       });
     },
-    async recordChargeAsync(caseId, runId, chargeId, { taskId, ...increment }) {
+    async recordChargeAsync(caseId, runId, chargeId, input) {
+      const { taskId, ...increment } = usageChargeSchema.parse(input);
       const ref = cases
         .doc(caseId)
         .collection("runCharges")

@@ -682,6 +682,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         let attemptCost = 0;
         let charged = false;
         let record: TaskRecord;
+        // Completion events add this attempt to these totals, so they stay accurate even when
+        // applying the attempt's charge to the task is deferred to the end of the run.
+        let priorUsage = initial.tokenUsage ?? emptyUsage();
+        let priorCost = initial.costEstimate ?? 0;
 
         await ensureLeaseAsync();
 
@@ -699,6 +703,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             fence,
           );
           taskById.set(task.id, task);
+          priorUsage = task.tokenUsage ?? emptyUsage();
+          priorCost = task.costEstimate ?? 0;
 
           try {
             await emitAsync({
@@ -816,10 +822,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             runId,
             taskId: task.id,
             findingIds: record.findings.map((finding) => finding.id),
-            ...(task.tokenUsage ? { tokenUsage: task.tokenUsage } : {}),
-            ...(task.costEstimate !== undefined
-              ? { costEstimate: roundCost(task.costEstimate) }
-              : {}),
+            tokenUsage: addUsage(priorUsage, attemptUsage),
+            costEstimate: roundCost(priorCost + attemptCost),
             runningCostEstimate: caseTotals().cost,
           });
 

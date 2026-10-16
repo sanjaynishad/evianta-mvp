@@ -16,6 +16,7 @@ import {
   type RunEvent,
   type Task,
 } from "@evianta/core";
+import { z } from "zod";
 
 import { StoreNotFoundError } from "./errors.js";
 import type {
@@ -28,6 +29,18 @@ import type {
   TaskUpdate,
   UsageCharge,
 } from "./types.js";
+
+const tokenCountSchema = z.number().int().nonnegative().optional();
+
+export const usageChargeSchema = z.object({
+  taskId: z.string().min(1).optional(),
+  inputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  totalTokens: tokenCountSchema,
+  costEstimate: z.number().nonnegative().optional(),
+  runCount: z.number().int().nonnegative().optional(),
+  lastRunAt: z.string().optional(),
+});
 
 export const defaultCasePageSize = 50;
 

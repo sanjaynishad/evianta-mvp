@@ -1208,4 +1208,48 @@ describe("orchestrator", () => {
     expect(streamedTotals).toEqual([...streamedTotals].sort((left, right) => left - right));
     expect(streamedTotals.at(-1)).toBeCloseTo(0.003, 10);
   });
+
+  it("publishes accurate task totals when applying the task charge is deferred", async () => {
+    const { store, orchestrator } = createHarness({ "case-analysis": specialistStep() });
+    const caseRecord = await createCaseAsync(store);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+    let reconciles = 0;
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", {
+      status: "failed",
+      attempts: 1,
+      tokenUsage: { input: 40, output: 10, total: 50 },
+      costEstimate: 0.004,
+    });
+    vi.spyOn(store.runs, "reconcileUsageAsync").mockImplementation(async (caseId) => {
+      reconciles += 1;
+
+      if (reconciles === 2) {
+        throw new Error("Usage write failed");
+      }
+
+      return reconcileUsageAsync(caseId);
+    });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const events = await store.events.listEventsAsync(caseRecord.id);
+    const completed = events.find((event) => event.type === "task-completed");
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+    const expectedUsage = {
+      input: 40 + retry.usage.input,
+      output: 10 + retry.usage.output,
+      total: 50 + retry.usage.total,
+    };
+
+    expect(retry.status).toBe("completed");
+    expect(reconciles).toBe(3);
+    expect(completed).toMatchObject({ tokenUsage: expectedUsage });
+    expect(completed?.type === "task-completed" ? completed.costEstimate : 0).toBeCloseTo(
+      0.004 + retry.costEstimate,
+      10,
+    );
+    expect(task?.tokenUsage).toEqual(expectedUsage);
+    expect(task?.costEstimate).toBeCloseTo(0.004 + retry.costEstimate, 10);
+  });
 });
