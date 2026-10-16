@@ -121,6 +121,24 @@ function describeIngestError(error: unknown): DescribedIngestError {
   };
 }
 
+const FAILED_PAGE_WARNING = /^Page \d+: extraction failed\b/;
+
+// Failed-page warnings from OCR embed the provider error, so they are replaced with fixed text.
+export function withClientSafeWarnings(
+  extraction: ExtractedDocument,
+  failedPages: readonly number[],
+): ExtractedDocument {
+  return {
+    ...extraction,
+    warnings: [
+      ...extraction.warnings.filter((warning) => !FAILED_PAGE_WARNING.test(warning)),
+      ...failedPages.map(
+        (page) => `Page ${page}: text recognition failed; the page content is missing.`,
+      ),
+    ],
+  };
+}
+
 export function createIngestionService(options: IngestionServiceOptions): IngestionService {
   const { store, documentStore, ai, ingest, logger } = options;
   const inFlight = new Map<string, Promise<void>>();
@@ -175,7 +193,13 @@ export function createIngestionService(options: IngestionServiceOptions): Ingest
             error: `OCR failed on page(s) ${result.failedPages.join(", ")}. They are retried when the case runs.`,
             errorCode: "ocr-partial",
             retryable: true,
-            extraction: result.extraction,
+            extraction: withClientSafeWarnings(result.extraction, result.failedPages),
+          });
+          logger.warn("Document extraction was partial.", {
+            caseId: document.caseId,
+            documentId: document.id,
+            failedPages: result.failedPages,
+            warnings: result.extraction.warnings,
           });
         } else {
           states.delete(key);

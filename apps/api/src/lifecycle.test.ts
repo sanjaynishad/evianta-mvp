@@ -423,6 +423,28 @@ describe("case lifecycle over HTTP", () => {
           throw new OcrExtractionError(document.id, accounting, [new Error(providerDetail)]);
         }
 
+        if (document.name === "partial.pdf") {
+          return {
+            extraction: {
+              documentId: document.id,
+              kind: "text",
+              method: "mixed",
+              confidence: 0.5,
+              pages: [
+                { index: 1, text: "Readable page", method: "pdf-text", confidence: 0.99 },
+                { index: 2, text: "", method: "ocr", confidence: 0 },
+              ],
+              tables: [],
+              warnings: [
+                `Page 2: extraction failed (${providerDetail}); the page content is missing.`,
+              ],
+            },
+            ...accounting,
+            failedPages: [2],
+            cached: false,
+          };
+        }
+
         throw new DocumentExtractionError(
           document.id,
           `"${document.name}" could not be read as a PDF: ${providerDetail}`,
@@ -437,6 +459,7 @@ describe("case lifecycle over HTTP", () => {
       .attach("files", pdf, { filename: "config.pdf", contentType: "application/pdf" })
       .attach("files", pdf, { filename: "ocr.pdf", contentType: "application/pdf" })
       .attach("files", pdf, { filename: "parser.pdf", contentType: "application/pdf" })
+      .attach("files", pdf, { filename: "partial.pdf", contentType: "application/pdf" })
       .expect(201);
     await app.idleAsync();
 
@@ -447,9 +470,10 @@ describe("case lifecycle over HTTP", () => {
         document.errorCode,
       ]),
     );
-    const detail = await request(app)
-      .get(`/cases/${caseId}/documents/${state.body.documents[0].id}`)
-      .expect(200);
+    const partial = state.body.documents.find(
+      (document: { name: string }) => document.name === "partial.pdf",
+    );
+    const detail = await request(app).get(`/cases/${caseId}/documents/${partial.id}`).expect(200);
 
     await request(app).post(`/cases/${caseId}/run`).expect(202);
 
@@ -460,8 +484,14 @@ describe("case lifecycle over HTTP", () => {
       "config.pdf": "ocr-unavailable",
       "ocr.pdf": "ocr-failed",
       "parser.pdf": "extraction-failed",
+      "partial.pdf": "ocr-partial",
     });
-    expect(state.body.case.usage.inputTokens).toBe(516);
+    expect(partial).toMatchObject({ status: "partial" });
+    expect(detail.body.extraction.warnings).toEqual([
+      "Page 2: text recognition failed; the page content is missing.",
+    ]);
+    expect(detail.body.extraction.pages[0].text).toBe("Readable page");
+    expect(state.body.case.usage.inputTokens).toBe(774);
     expect(sseFramesOf(stream).at(-1)?.event).toBe("run-failed");
     expect(after.body.run).toMatchObject({ lastEventType: "run-failed" });
     expect(after.body.run.lastRunMode).toBeUndefined();
