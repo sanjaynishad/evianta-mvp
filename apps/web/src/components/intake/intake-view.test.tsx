@@ -92,4 +92,21 @@ describe("IntakeView", () => {
     expect(startRun).toHaveBeenCalledTimes(1);
     expect(await dataSource.listCasesAsync()).toHaveLength(1);
   });
+
+  it("does not start the run when a file fails to upload", async () => {
+    const dataSource = createTestDataSource();
+    const startRun = vi.spyOn(dataSource, "startRunAsync");
+    vi.spyOn(dataSource, "uploadDocumentAsync").mockRejectedValue(new Error("Upload failed"));
+    const { container } = renderWithDataSource(<IntakeView />, dataSource);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Business data analysis/ }));
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    addFiles(inputs[inputs.length - 1]!, [new File(["a,b"], "sales.csv", { type: "text/csv" })]);
+    fireEvent.click(screen.getByRole("button", { name: /Create and run/ }));
+
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/cases\/case-/)),
+    );
+    expect(startRun).not.toHaveBeenCalled();
+  });
 });

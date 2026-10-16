@@ -122,13 +122,17 @@ export function IntakeView() {
         }
       }
 
-      if (failedUploads.length > 0) {
+      const uploadsFailed = failedUploads.length > 0;
+      if (uploadsFailed) {
         toast.error("Some files did not upload", {
-          description: `${failedUploads.join(", ")}. You can add them again in the workspace.`,
+          description: runAfterCreate
+            ? `${failedUploads.join(", ")}. The run was not started; add the files again in the workspace, then run the case.`
+            : `${failedUploads.join(", ")}. You can add them again in the workspace.`,
         });
       }
 
-      if (runAfterCreate) {
+      // Uploads close once a run plans the case, so a run only starts with every file in place.
+      if (runAfterCreate && !uploadsFailed) {
         setStatusMessage("Starting the run");
         try {
           await retryWhileUploadingAsync(() => dataSource.startRunAsync(created.id));
