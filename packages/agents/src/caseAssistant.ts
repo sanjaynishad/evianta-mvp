@@ -24,6 +24,7 @@ export const caseAssistantInputSchema = z.object({
       figures: z
         .array(z.object({ label: z.string(), value: z.number(), unit: z.string().optional() }))
         .optional(),
+      dates: z.array(z.object({ label: z.string(), date: z.string() })).optional(),
       evidence: z.array(
         z.object({
           evidenceId: z.string(),
@@ -107,6 +108,7 @@ function findingSearchFields(finding: Finding, evidenceById: ReadonlyMap<string,
     figures: (finding.figures ?? [])
       .map((figure) => `${figure.label} ${figure.key} ${figure.value}`)
       .join(" "),
+    dates: (finding.dates ?? []).map((date) => `${date.label} ${date.key} ${date.date}`).join(" "),
     evidence: evidence
       .map((item) => `${item.sourceRef} ${item.description} ${item.excerpt ?? ""}`)
       .join(" "),
@@ -135,6 +137,7 @@ export function retrieveRelevantFindings(
       const score =
         countMatchingTerms(terms, fields.summary) * 3 +
         countMatchingTerms(terms, fields.figures) * 2 +
+        countMatchingTerms(terms, fields.dates) * 2 +
         countMatchingTerms(terms, fields.detail) +
         countMatchingTerms(terms, fields.evidence) +
         countMatchingTerms(terms, fields.questions);
@@ -210,6 +213,9 @@ export async function askCaseAsync(
               ...(unit ? { unit } : {}),
             })),
           }
+        : {}),
+      ...(finding.dates
+        ? { dates: finding.dates.map(({ label, date }) => ({ label, date })) }
         : {}),
       evidence: finding.evidence.map((item) => {
         const stored = evidenceById.get(item.id) ?? item;

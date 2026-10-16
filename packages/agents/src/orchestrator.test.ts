@@ -2,7 +2,7 @@ import type { AgentRole, RunEvent } from "@evianta/core";
 import { describe, expect, it, vi } from "vitest";
 
 import { OrchestratorError } from "./errors.js";
-import type { TaskHandler } from "./handlers.js";
+import { createSpecialistTaskHandler, type TaskHandler } from "./handlers.js";
 import { createDefaultTaskHandlers } from "./registry.js";
 import {
   addDocumentAsync,
@@ -634,7 +634,7 @@ describe("orchestrator", () => {
     const caseRecord = await createCaseAsync(store);
 
     await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
-    vi.spyOn(store.deliverables, "saveDeliverableAsync").mockRejectedValueOnce(
+    vi.spyOn(store.deliverables, "updateDeliverableAsync").mockRejectedValueOnce(
       new Error("Deliverable write failed"),
     );
 
@@ -673,6 +673,104 @@ describe("orchestrator", () => {
       error: expect.stringContaining("Usage write failed"),
     });
     expect((await store.cases.getCaseAsync(caseRecord.id))?.status).toBe("failed");
+  });
+
+  it("retries pending work left behind an interrupted task", async () => {
+    const { store, ai, orchestrator } = createHarness({
+      "case-analysis": specialistStep(),
+      reconciliation: specialistStep(),
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "a", role: "case-analysis" },
+      { id: "b", role: "reconciliation", dependsOn: ["a"] },
+    ]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", { status: "in-progress", attempts: 1 });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+
+    expect(retry.status).toBe("completed");
+    expect(retry.completedTaskIds).toEqual(["a", "b"]);
+    expect(ai.calls.map((call) => call.key)).toEqual(["case-analysis", "reconciliation"]);
+  });
+
+  it("charges the model call when a post-processing hook fails", async () => {
+    const handlers = createDefaultTaskHandlers().register(
+      createSpecialistTaskHandler("case-analysis", {
+        async postProcessAsync() {
+          throw new Error("Post-processing failed");
+        },
+      }),
+    );
+    const { store, orchestrator } = createHarness(
+      { "case-analysis": specialistStep() },
+      { handlers },
+    );
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+
+    const result = await orchestrator.runCaseAsync(caseRecord.id);
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(result.failedTaskIds).toEqual(["a"]);
+    expect(result.costEstimate).toBeGreaterThan(0);
+    expect(task).toMatchObject({ status: "failed", lastError: "Post-processing failed" });
+    expect(task?.tokenUsage?.input).toBe(1000);
+    expect(task?.costEstimate).toBeCloseTo(result.costEstimate, 10);
+  });
+
+  it("keeps reviewer edits made while a later task saves its sections", async () => {
+    const { store, orchestrator } = createHarness({
+      "case-analysis": specialistStep(),
+      reconciliation: specialistStep(),
+    });
+    const caseRecord = await createCaseAsync(store);
+    const listDeliverablesAsync = store.deliverables.getDeliverablesForCaseAsync.bind(
+      store.deliverables,
+    );
+    let edits = 0;
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "a", role: "case-analysis" },
+      { id: "b", role: "reconciliation", dependsOn: ["a"] },
+    ]);
+    vi.spyOn(store.deliverables, "getDeliverablesForCaseAsync").mockImplementation(
+      async (caseId) => {
+        const snapshot = await listDeliverablesAsync(caseId);
+
+        if (
+          snapshot.some((item) => item.sections.some((section) => section.id === "a-section-1"))
+        ) {
+          edits += 1;
+          await store.deliverables.updateSectionAsync(
+            caseId,
+            "deliverable-primary",
+            "a-section-1",
+            {
+              editedContent: `Reviewer edit ${edits}`,
+            },
+          );
+        }
+
+        return snapshot;
+      },
+    );
+
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const deliverable = await store.deliverables.getDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+    );
+
+    expect(edits).toBeGreaterThan(1);
+    expect(deliverable?.sections.map((section) => section.id)).toEqual([
+      "a-section-1",
+      "b-section-1",
+    ]);
+    expect(deliverable?.sections[0]?.editedContent).toBe(`Reviewer edit ${edits}`);
   });
 
   it("charges usage when output persistence fails and reads only the retried output", async () => {

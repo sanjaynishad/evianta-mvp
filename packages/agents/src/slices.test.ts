@@ -105,4 +105,53 @@ describe("sliceDocuments", () => {
       1000,
     );
   });
+
+  it("reserves room for the truncation marker in table slices", () => {
+    const sheet: ExtractedDocument = {
+      documentId: "sheet",
+      kind: "tabular",
+      method: "parse",
+      confidence: 1,
+      pages: [],
+      tables: [
+        {
+          name: "Values",
+          columns: [{ name: "Value", type: "string" }],
+          rows: [["a".repeat(460)], ["b".repeat(460)]],
+        },
+      ],
+      warnings: [],
+    };
+
+    for (let tokenBudget = 120; tokenBudget <= 130; tokenBudget += 1) {
+      const slices = sliceDocuments([{ metadata: metadata("sheet"), extraction: sheet }], {
+        tokenBudget,
+      });
+      const used = slices.reduce((sum, slice) => sum + estimateTokens(slice.text), 0);
+
+      expect(used).toBeLessThanOrEqual(tokenBudget);
+    }
+
+    const [slice] = sliceDocuments([{ metadata: metadata("sheet"), extraction: sheet }], {
+      tokenBudget: 130,
+    });
+
+    expect(slice?.text).toContain("(showing rows 1-1 of 2)");
+  });
+
+  it("builds truncated slices from unused budget when every share is too small", () => {
+    const page = "lorem ipsum ".repeat(333);
+    const slices = sliceDocuments(
+      ["a", "b", "c"].map((id) => ({
+        metadata: metadata(id),
+        extraction: textExtraction(id, [page]),
+      })),
+      { tokenBudget: 300 },
+    );
+    const used = slices.reduce((sum, slice) => sum + estimateTokens(slice.text), 0);
+
+    expect(slices.length).toBeGreaterThan(0);
+    expect(slices.every((slice) => slice.truncated)).toBe(true);
+    expect(used).toBeLessThanOrEqual(300);
+  });
 });

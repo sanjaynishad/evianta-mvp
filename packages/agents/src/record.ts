@@ -159,6 +159,16 @@ export function toEvidence(
     }
 
     const extraction = ctx.extractionsById.get(metadata.id);
+    const page = location?.page;
+
+    if (
+      extraction &&
+      page !== undefined &&
+      !extraction.pages.some((item) => item.index === page) &&
+      !extraction.tables.some((table) => table.pageIndex === page)
+    ) {
+      return { reference, reason: `Page ${page} is not in the extraction of "${metadata.name}".` };
+    }
 
     return {
       id: ctx.newId(),

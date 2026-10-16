@@ -742,6 +742,49 @@ export function describeStoreContract(
         expect(await store.deliverables.getDeliverableAsync("case-1", "missing")).toBeUndefined();
       });
 
+      it("updates a deliverable atomically from its latest state", async () => {
+        await store.deliverables.updateSectionAsync("case-1", "del-1", "sec-1", {
+          editedContent: "Reviewer summary",
+        });
+
+        const updated = await store.deliverables.updateDeliverableAsync(
+          "case-1",
+          "del-1",
+          (current) =>
+            current && {
+              ...current,
+              sections: current.sections.map((section) =>
+                section.id === "sec-2" ? { ...section, content: '{"rows":[1]}' } : section,
+              ),
+            },
+        );
+        const created = await store.deliverables.updateDeliverableAsync(
+          "case-1",
+          "del-new",
+          (current) =>
+            current ?? { id: "del-new", caseId: "case-1", title: "New", format: "report" },
+        );
+        const unchanged = await store.deliverables.updateDeliverableAsync(
+          "case-1",
+          "del-1",
+          () => undefined,
+        );
+
+        expect(
+          updated?.sections.map((section) => section.editedContent ?? section.content),
+        ).toEqual(["Reviewer summary", '{"rows":[1]}']);
+        expect(created).toMatchObject({ id: "del-new", sections: [] });
+        expect(unchanged).toEqual(updated);
+        expect(
+          (await store.deliverables.getDeliverablesForCaseAsync("case-1")).map((item) => item.id),
+        ).toEqual(["del-1", "del-new"]);
+        await expect(
+          store.deliverables.updateDeliverableAsync("case-1", "del-1", (current) =>
+            current ? { ...current, id: "del-other" } : undefined,
+          ),
+        ).rejects.toThrow(/must keep/);
+      });
+
       it("throws not found for an unknown deliverable or section", async () => {
         await expect(
           store.deliverables.updateSectionAsync("case-1", "del-1", "sec-404", {

@@ -51,6 +51,10 @@ function renderRow(cells: readonly unknown[]): string {
   return cells.map((cell) => (cell === null || cell === undefined ? "" : String(cell))).join(" | ");
 }
 
+function truncationMarker(included: number, total: number): string {
+  return `(showing rows 1-${included} of ${total})`;
+}
+
 function tableUnit(
   metadata: DocumentMetadata,
   extraction: ExtractedDocument,
@@ -68,13 +72,15 @@ function tableUnit(
     fullTokens: estimateTokens(fullText),
     build(maxTokens) {
       const lines = [header];
+      const markerCost = estimateTokens(truncationMarker(rows.length, rows.length)) + 1;
       let used = estimateTokens(header);
       let included = 0;
 
-      for (const row of rows) {
+      for (const [index, row] of rows.entries()) {
         const cost = estimateTokens(row) + 1;
+        const reserve = index === rows.length - 1 ? 0 : markerCost;
 
-        if (used + cost > maxTokens) {
+        if (used + cost + reserve > maxTokens) {
           break;
         }
 
@@ -90,7 +96,7 @@ function tableUnit(
       const truncated = included < rows.length;
 
       if (truncated) {
-        lines.push(`(showing rows 1-${included} of ${rows.length})`);
+        lines.push(truncationMarker(included, rows.length));
       }
 
       return {
@@ -230,15 +236,30 @@ export function sliceDocuments(
 
   perDocument.forEach((units, documentIndex) => {
     for (const unit of units) {
-      if (taken[documentIndex]?.has(unit) || unit.fullTokens > budget - used) {
+      const remaining = budget - used;
+
+      if (taken[documentIndex]?.has(unit)) {
         continue;
       }
 
-      const slice = unit.build(Number.POSITIVE_INFINITY);
+      if (unit.fullTokens <= remaining) {
+        const slice = unit.build(Number.POSITIVE_INFINITY);
 
-      if (slice) {
-        selected.push({ documentIndex, order: unit.order, slice });
-        used += unit.fullTokens;
+        if (slice) {
+          selected.push({ documentIndex, order: unit.order, slice });
+          used += unit.fullTokens;
+        }
+
+        continue;
+      }
+
+      if (remaining >= MIN_TRUNCATED_SLICE_TOKENS) {
+        const slice = unit.build(remaining);
+
+        if (slice) {
+          selected.push({ documentIndex, order: unit.order, slice });
+          used += estimateTokens(slice.text);
+        }
       }
     }
   });

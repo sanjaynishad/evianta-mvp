@@ -21,6 +21,7 @@ import type {
   SpecialistOutput,
 } from "./findings.js";
 import type { DocumentSlice } from "./slices.js";
+import { withBilledUsageAsync } from "./errors.js";
 import { truncate } from "./text.js";
 
 export interface AgentLookup {
@@ -250,8 +251,11 @@ export function createSpecialistTaskHandler(
         : defaultInput;
       const result = await agent.runAsync(input, agentContextFor(ctx));
       const output = specialistResultToTaskOutput(result, agent.grounding === true);
+      const { postProcessAsync } = hooks;
 
-      return hooks.postProcessAsync ? hooks.postProcessAsync(output, ctx, result) : output;
+      return postProcessAsync
+        ? withBilledUsageAsync(result, () => postProcessAsync(output, ctx, result))
+        : output;
     },
   };
 }
@@ -272,7 +276,7 @@ export function createAgentTaskHandler<I, O>(
       const input = await hooks.prepareInputAsync(ctx);
       const result = await agent.runAsync(input, agentContextFor(ctx));
 
-      return hooks.toTaskOutput(result, ctx);
+      return withBilledUsageAsync(result, () => hooks.toTaskOutput(result, ctx));
     },
   };
 }

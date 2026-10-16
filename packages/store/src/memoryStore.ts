@@ -21,6 +21,7 @@ import {
 import { StoreConflictError, StoreNotFoundError, type StoreEntity } from "./errors.js";
 import {
   applyCaseApproval,
+  assertDeliverableIdentity,
   applyCaseStatus,
   applyCaseUsageIncrement,
   applyOpenQuestionUpdate,
@@ -294,6 +295,20 @@ export function createInMemoryStore(): Store {
         const deliverable = deliverableSchema.parse(input);
 
         return deliverables.put(deliverable.caseId, deliverable.id, deliverable);
+      },
+      async updateDeliverableAsync(caseId, deliverableId, update) {
+        const current = deliverables.get(caseId, deliverableId);
+        const input = update(current);
+
+        if (input === undefined) {
+          return current;
+        }
+
+        const next = deliverableSchema.parse(input);
+
+        assertDeliverableIdentity(next, caseId, deliverableId);
+
+        return deliverables.put(caseId, deliverableId, next);
       },
       async getDeliverablesForCaseAsync(caseId) {
         return deliverables.list(caseId);

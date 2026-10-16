@@ -241,6 +241,18 @@ export function applySectionUpdate(
   return deliverableSchema.parse({ ...deliverable, sections });
 }
 
+export function assertDeliverableIdentity(
+  deliverable: Deliverable,
+  caseId: string,
+  deliverableId: string,
+): void {
+  if (deliverable.caseId !== caseId || deliverable.id !== deliverableId) {
+    throw new Error(
+      `Deliverable update must keep case "${caseId}" and id "${deliverableId}", got "${deliverable.caseId}" and "${deliverable.id}".`,
+    );
+  }
+}
+
 export function buildRunEvent(caseId: string, seq: number, input: NewRunEvent): RunEvent {
   return runEventSchema.parse({
     ...input,

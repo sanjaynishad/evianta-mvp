@@ -29,6 +29,8 @@ const extraction = {
   method: "ocr",
   confidence: 0.9,
   pages: [{ index: 1, text: "Blurry", method: "ocr", confidence: 0.4 }],
+  tables: [],
+  warnings: [],
 } as ExtractedDocument;
 
 const researchEvidence: Evidence = {
@@ -74,6 +76,13 @@ describe("buildTaskRecord", () => {
     ]);
 
     expect(record.evidence[0]).toMatchObject({ documentId: "doc-scan", confidence: "low" });
+  });
+
+  it("rejects a page that is not in the cached extraction", () => {
+    const record = recordFor([{ documentId: "doc-scan", description: "Invented page", page: 999 }]);
+
+    expect(record.evidence).toEqual([]);
+    expect(record.dropped[0]?.reason).toBe('Page 999 is not in the extraction of "scan.pdf".');
   });
 
   it("reuses validated upstream evidence by id or URL and rejects unknown sources", () => {

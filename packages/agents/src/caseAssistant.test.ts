@@ -197,6 +197,31 @@ describe("askCaseAsync", () => {
     await expect(askCaseAsync(question, { store, ai })).rejects.toThrow(/Model misconfigured/);
   });
 
+  it("retrieves and passes structured dates", async () => {
+    const store = await seedRecordAsync();
+
+    await store.findings.addFindingAsync("case-1", {
+      id: "f-notice",
+      taskId: "analyze",
+      summary: "Intimation received",
+      severity: "medium",
+      dates: [{ key: "reply-deadline", label: "Reply deadline", date: "2026-11-15" }],
+    });
+
+    const ai = createMockAi({
+      [CASE_ASSISTANT_KEY]: {
+        output: { supported: false, answer: "", evidenceIds: [], findingIds: [] },
+      },
+    });
+    const result = await askCaseAsync(
+      { caseId: "case-1", question: "When is the reply deadline?" },
+      { store, ai },
+    );
+
+    expect(result.retrievedFindingIds).toEqual(["f-notice"]);
+    expect(ai.calls[0]?.prompt).toContain("2026-11-15");
+  });
+
   it("ignores findings left by superseded or unfinished task attempts", async () => {
     const store = await seedRecordAsync();
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { AiError, addUsage, emptyUsage, roundCost, type AiClient, type Cost } from "@evianta/ai";
+import { addUsage, emptyUsage, roundCost, type AiClient, type Cost } from "@evianta/ai";
 import type {
   Case,
   DocumentMetadata,
@@ -19,8 +19,8 @@ import {
   type PlanDraft,
 } from "./agents/coordinator.js";
 import { collectAncestors, collectDependents, topologicalOrder } from "./dag.js";
-import { assembleDeliverables } from "./deliverables.js";
-import { describeTaskError, OrchestratorError } from "./errors.js";
+import { assembleDeliverables, deliverableIdFor } from "./deliverables.js";
+import { billedUsageOf, describeTaskError, OrchestratorError } from "./errors.js";
 import { createRunEventBus, createRunEventEmitter, type RunEventBus } from "./events.js";
 import type { DeliverableSpec } from "./findings.js";
 import type {
@@ -93,7 +93,7 @@ export interface Orchestrator {
   planCaseAsync(caseId: string): Promise<PlanResult>;
   /** Plans if needed, then runs every task that is not completed. */
   runCaseAsync(caseId: string): Promise<RunResult>;
-  /** Re-runs only failed and blocked tasks in dependency order, reusing completed work. */
+  /** Re-runs failed, blocked, and interrupted tasks plus any pending work, reusing completed work. */
   retryFailedAsync(caseId: string): Promise<RunResult>;
   isRunning(caseId: string): boolean;
 }
@@ -308,7 +308,6 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     const completedTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
     const blockedTaskIds: string[] = [];
-    let deliverableQueue: Promise<unknown> = Promise.resolve();
     let plan: PlanResult | undefined;
     let runError: string | undefined;
     let selectedIds: string[] = [];
@@ -322,11 +321,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         tasks = plan.tasks;
       }
 
-      selectedIds = tasks
-        .filter((task) =>
-          mode === "retry" ? RETRYABLE_STATUSES.has(task.status) : task.status !== "completed",
-        )
-        .map((task) => task.id);
+      // Retry also picks up pending tasks left behind when an upstream task was interrupted.
+      selectedIds = tasks.filter((task) => task.status !== "completed").map((task) => task.id);
       reusedTaskIds = tasks
         .filter((task) => task.status === "completed" && !selectedIds.includes(task.id))
         .map((task) => task.id);
@@ -465,30 +461,41 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         };
       };
 
-      // Serialized so concurrent tasks do not overwrite each other's sections.
-      const saveSectionsAsync = (
+      // Each deliverable is rebuilt from its latest stored state so concurrent reviewer edits survive.
+      const saveSectionsAsync = async (
         taskId: string,
         sections: PlannedSection[],
         specs: readonly DeliverableSpec[],
       ): Promise<void> => {
-        const saved = deliverableQueue.then(async () => {
-          const assembled = assembleDeliverables({
-            caseId,
-            orderedTasks,
-            existing: await store.deliverables.getDeliverablesForCaseAsync(caseId),
-            producedByTask: new Map([[taskId, sections]]),
-            primary: primaryDeliverable,
-            specs,
-          });
+        const sectionPrefix = `${taskId}-section-`;
+        const keys = new Set([
+          ...sections.map((section) => section.deliverableKey),
+          ...specs.map((spec) => spec.key),
+        ]);
 
-          for (const deliverable of assembled) {
-            await store.deliverables.saveDeliverableAsync(deliverable);
+        for (const deliverable of await store.deliverables.getDeliverablesForCaseAsync(caseId)) {
+          if (deliverable.sections.some((section) => section.id.startsWith(sectionPrefix))) {
+            keys.add(deliverable.id.replace(/^deliverable-/, ""));
           }
-        });
+        }
 
-        deliverableQueue = saved.catch(() => undefined);
-
-        return saved;
+        for (const key of keys) {
+          await store.deliverables.updateDeliverableAsync(
+            caseId,
+            deliverableIdFor(key),
+            (current) =>
+              assembleDeliverables({
+                caseId,
+                orderedTasks,
+                existing: current ? [current] : [],
+                producedByTask: new Map([
+                  [taskId, sections.filter((section) => section.deliverableKey === key)],
+                ]),
+                primary: primaryDeliverable,
+                specs: specs.filter((spec) => spec.key === key),
+              })[0],
+          );
+        }
       };
 
       const persistOutputAsync = async (
@@ -596,10 +603,11 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           completedTaskIds.push(task.id);
         } catch (error) {
           const lastError = describeTaskError(error);
+          const billed = charged ? undefined : billedUsageOf(error);
 
-          if (!charged && error instanceof AiError) {
-            attemptUsage = error.usage;
-            attemptCost = error.cost;
+          if (billed) {
+            attemptUsage = billed.usage;
+            attemptCost = billed.cost;
             addRunUsage(attemptUsage, attemptCost);
           }
 

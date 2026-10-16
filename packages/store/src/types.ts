@@ -128,6 +128,15 @@ export interface EvidenceRepo {
 
 export interface DeliverableRepo {
   saveDeliverableAsync(deliverable: DeliverableInput): Promise<Deliverable>;
+  /**
+   * Reads and writes one deliverable atomically, so concurrent section edits are not overwritten.
+   * `update` may run more than once and must be pure; returning undefined leaves it unchanged.
+   */
+  updateDeliverableAsync(
+    caseId: string,
+    deliverableId: string,
+    update: (current: Deliverable | undefined) => DeliverableInput | undefined,
+  ): Promise<Deliverable | undefined>;
   getDeliverablesForCaseAsync(caseId: string): Promise<Deliverable[]>;
   getDeliverableAsync(caseId: string, deliverableId: string): Promise<Deliverable | undefined>;
   updateSectionAsync(
