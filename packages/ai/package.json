@@ -21,10 +21,12 @@
     "@evianta/core": "workspace:*",
     "@evianta/env": "workspace:*",
     "@genkit-ai/google-genai": "^1.42.0",
-    "genkit": "^1.42.0"
+    "genkit": "^1.42.0",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@evianta/config": "workspace:*",
+    "@types/node": "^22.0.0",
     "typescript": "^5.6.3",
     "vitest": "^2.1.3"
   }
