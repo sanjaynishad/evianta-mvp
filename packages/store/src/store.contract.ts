@@ -745,6 +745,55 @@ export function describeStoreContract(
 
         expect(await store.documents.getExtractionAsync("case-1", "doc-big")).toEqual(shrunk);
       });
+
+      it("publishes exactly one complete extraction under concurrent saves", async () => {
+        const texts = ["first", "second", "third", "fourth"].map((label) =>
+          `${label} `.repeat(70_000),
+        );
+
+        await Promise.all(
+          texts.map((text) =>
+            store.documents.saveExtractionAsync("case-1", extractionInput("doc-race", text)),
+          ),
+        );
+
+        const fetched = await store.documents.getExtractionAsync("case-1", "doc-race");
+
+        expect(texts).toContain(fetched?.pages[0]?.text);
+      });
+
+      it("keeps reads consistent while an extraction is replaced", async () => {
+        await store.documents.saveExtractionAsync(
+          "case-1",
+          extractionInput("doc-live", "v0 ".repeat(90_000)),
+        );
+
+        const writes = (async () => {
+          for (let round = 1; round <= 4; round += 1) {
+            await store.documents.saveExtractionAsync(
+              "case-1",
+              extractionInput("doc-live", `v${round} `.repeat(90_000)),
+            );
+          }
+        })();
+        const reads = (async () => {
+          const texts: string[] = [];
+
+          for (let round = 0; round < 8; round += 1) {
+            const fetched = await store.documents.getExtractionAsync("case-1", "doc-live");
+
+            texts.push(fetched?.pages[0]?.text ?? "");
+          }
+
+          return texts;
+        })();
+
+        const [, texts] = await Promise.all([writes, reads]);
+
+        for (const text of texts) {
+          expect(text).toMatch(/^v\d /);
+        }
+      });
     });
 
     describe("run events", () => {

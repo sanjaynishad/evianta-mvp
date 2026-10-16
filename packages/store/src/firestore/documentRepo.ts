@@ -31,6 +31,7 @@ export const extractionChunkSchema = z.object({
 // stay under 1 MiB of UTF-8, and 8 chunks stay under the 10 MiB batch request limit.
 const chunkLength = 250_000;
 const chunksPerBatch = 8;
+const deletesPerBatch = 400;
 
 function splitIntoChunks(value: string): string[] {
   const chunks: string[] = [];
@@ -103,38 +104,63 @@ export function createDocumentRepo(db: Firestore): DocumentRepo {
         await batch.commit();
       }
 
-      const previousChunks = await chunkCollection.where("documentId", "==", documentId).get();
-      const finalBatch = db.batch();
+      const metaRef = caseSubcollection(db, caseId, "extractions").doc(documentId);
+      const supersededVersion = await db.runTransaction(async (transaction) => {
+        const previous = await transaction.get(metaRef);
 
-      finalBatch.set(
-        caseSubcollection(db, caseId, "extractions").doc(documentId),
-        toFirestoreData({ documentId, version, chunkCount: chunks.length, savedAt: nowIso() }),
-      );
+        transaction.set(
+          metaRef,
+          toFirestoreData({ documentId, version, chunkCount: chunks.length, savedAt: nowIso() }),
+        );
 
-      for (const doc of previousChunks.docs) {
-        if (doc.get("version") !== version) {
-          finalBatch.delete(doc.ref);
+        return previous.exists ? extractionMetaSchema.parse(previous.data()).version : undefined;
+      });
+
+      // Only the version this save replaced is removed, so concurrent uploads that have not
+      // been published yet keep their chunks.
+      if (supersededVersion !== undefined) {
+        const superseded = await chunkCollection.where("version", "==", supersededVersion).get();
+
+        for (let offset = 0; offset < superseded.docs.length; offset += deletesPerBatch) {
+          const batch = db.batch();
+
+          for (const doc of superseded.docs.slice(offset, offset + deletesPerBatch)) {
+            batch.delete(doc.ref);
+          }
+
+          await batch.commit();
         }
       }
-
-      await finalBatch.commit();
 
       return extraction;
     },
     async getExtractionAsync(caseId, documentId) {
-      const meta = await getDocAsync(
-        caseSubcollection(db, caseId, "extractions").doc(documentId),
-        extractionMetaSchema,
+      const metaRef = caseSubcollection(db, caseId, "extractions").doc(documentId);
+      const chunkCollection = caseSubcollection(db, caseId, "extractionChunks");
+      const snapshot = await db.runTransaction(
+        async (transaction) => {
+          const metaSnapshot = await transaction.get(metaRef);
+
+          if (!metaSnapshot.exists) {
+            return undefined;
+          }
+
+          const meta = extractionMetaSchema.parse(metaSnapshot.data());
+          const chunkSnapshot = await transaction.get(
+            chunkCollection.where("version", "==", meta.version),
+          );
+
+          return { meta, chunkDocs: chunkSnapshot.docs };
+        },
+        { readOnly: true },
       );
 
-      if (!meta) {
+      if (!snapshot) {
         return undefined;
       }
 
-      const snapshot = await caseSubcollection(db, caseId, "extractionChunks")
-        .where("version", "==", meta.version)
-        .get();
-      const chunks = snapshot.docs
+      const { meta, chunkDocs } = snapshot;
+      const chunks = chunkDocs
         .map((doc) => extractionChunkSchema.parse(doc.data()))
         .sort((left, right) => left.index - right.index);
 
