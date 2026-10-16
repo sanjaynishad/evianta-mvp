@@ -43,7 +43,7 @@ const AMOUNT_NAME =
   /\b(amount|amt|revenue|sales|net|gross|value|total|turnover|gmv|billing|billed)\b/;
 const PRIMARY_AMOUNT_NAME = /\b(revenue|sales|net|amount|amt)\b/;
 const QUANTITY_NAME = /\b(qty|quantity|units?|volume|pcs|pieces)\b/;
-const PRICE_NAME = /\b(price|rate|mrp|cost)\b/;
+const PRICE_NAME = /\b(price|rate|mrp|unit cost)\b/;
 const IDENTIFIER_NAME = /\b(id|no|number|code|ref|reference|invoice|order|sku|txn|transaction)\b/;
 const CATEGORY_NAME =
   /\b(region|zone|state|city|country|territory|product|item|category|segment|channel|customer|client|store|branch|brand|department|team|rep|salesperson|market|type)\b/;
@@ -53,10 +53,6 @@ function normalizedName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-}
-
-export function tableRows(table: Pick<ExtractedTable, "rows">, rows: readonly number[]) {
-  return rows.map((row) => table.rows[row] ?? []);
 }
 
 /** Data rows where every cell is missing. */
@@ -81,12 +77,12 @@ function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): Colu
   }
 
   if (numericShare >= TYPE_SHARE) {
-    if (QUANTITY_NAME.test(name)) {
-      return "quantity";
-    }
-
     if (PRICE_NAME.test(name) && !PRIMARY_AMOUNT_NAME.test(name)) {
       return "unit-price";
+    }
+
+    if (QUANTITY_NAME.test(name)) {
+      return "quantity";
     }
 
     if (AMOUNT_NAME.test(name)) {
@@ -100,7 +96,10 @@ function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): Colu
     return "other";
   }
 
-  if (IDENTIFIER_NAME.test(name) && profile.distinct >= profile.filled * 0.9) {
+  if (
+    IDENTIFIER_NAME.test(name) &&
+    (!CATEGORY_NAME.test(name) || profile.distinct >= profile.filled * 0.9)
+  ) {
     return "identifier";
   }
 
