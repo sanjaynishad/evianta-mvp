@@ -48,9 +48,13 @@ export interface TaxRecordRow {
   quarter?: string;
   amount?: number;
   tax?: number;
+  /** Measures whose column exists but whose cell is blank or unreadable in this row. */
+  unreadable: TaxMeasure[];
   location: EvidenceLocation;
   quote: string;
 }
+
+export type TaxMeasure = "tax" | "amount";
 
 export interface TaxRecordTable {
   source: TaxRecordSource;
@@ -59,8 +63,11 @@ export interface TaxRecordTable {
   table: ExtractedTable;
   columns: TaxColumnMap;
   rows: TaxRecordRow[];
-  /** Data rows without a deductor or any amount, for example subtotals or blank lines. */
+  /** Data rows without a deductor or any value, such as blank lines. */
   skippedRowIndexes: number[];
+  /** Total and subtotal rows, excluded so they are not counted as transactions. */
+  aggregateRowIndexes: number[];
+  warnings: string[];
 }
 
 export interface UnclassifiedTable {
@@ -75,18 +82,71 @@ export interface TaxRecordSet {
   unclassified: UnclassifiedTable[];
 }
 
-export function mapTaxColumns(columnNames: readonly string[]): TaxColumnMap {
-  const map: TaxColumnMap = {};
+/** Every column index matching each kind, in column order. */
+export function taxColumnCandidates(
+  columnNames: readonly string[],
+): Partial<Record<TaxColumnKind, number[]>> {
+  const candidates: Partial<Record<TaxColumnKind, number[]>> = {};
 
   columnNames.forEach((name, index) => {
     const kind = COLUMN_PATTERNS.find(([, pattern]) => pattern.test(name))?.[0];
 
-    if (kind && map[kind] === undefined) {
-      map[kind] = index;
+    if (kind) {
+      candidates[kind] = [...(candidates[kind] ?? []), index];
     }
   });
 
-  return map;
+  return candidates;
+}
+
+// Which column to trust when a source has several TDS or amount columns.
+const MEASURE_PREFERENCES: Readonly<Record<TaxRecordSource, Record<TaxMeasure, RegExp>>> = {
+  return: { tax: /claim/i, amount: /income|offered/i },
+  ledger: { tax: /\btds\b|deducted/i, amount: /gross/i },
+  "tax-credit": { tax: /tax deducted|tds deducted/i, amount: /paid|credited/i },
+};
+
+export interface ColumnSelection {
+  columns: TaxColumnMap;
+  /** Measures with several candidate columns and no clear choice for this source. */
+  ambiguous: Array<{ measure: TaxMeasure; names: string[] }>;
+}
+
+export function selectTaxColumns(
+  columnNames: readonly string[],
+  source?: TaxRecordSource,
+): ColumnSelection {
+  const candidates = taxColumnCandidates(columnNames);
+  const columns: TaxColumnMap = {};
+  const ambiguous: ColumnSelection["ambiguous"] = [];
+
+  for (const [kind, indexes] of Object.entries(candidates) as Array<[TaxColumnKind, number[]]>) {
+    if (kind !== "tax" && kind !== "amount") {
+      columns[kind] = indexes[0];
+      continue;
+    }
+
+    const preference = source ? MEASURE_PREFERENCES[source][kind] : undefined;
+    const preferred = preference
+      ? indexes.filter((index) => preference.test(columnNames[index] ?? ""))
+      : [];
+    const chosen = indexes.length === 1 ? indexes : preferred;
+
+    if (chosen.length === 1) {
+      columns[kind] = chosen[0];
+    } else {
+      ambiguous.push({ measure: kind, names: indexes.map((index) => columnNames[index] ?? "") });
+    }
+  }
+
+  return { columns, ambiguous };
+}
+
+export function mapTaxColumns(
+  columnNames: readonly string[],
+  source?: TaxRecordSource,
+): TaxColumnMap {
+  return selectTaxColumns(columnNames, source).columns;
 }
 
 export function classifyTaxRecordSource(
@@ -134,9 +194,24 @@ export function parseAmount(cell: TableCell | undefined): number | undefined {
     return undefined;
   }
 
-  const trimmed = cell.trim();
-  const negative = /^\(.*\)$/.test(trimmed) || /^-/.test(trimmed);
-  const digits = trimmed.replace(/rs\.?|inr|₹|\/-|[(),\s]/gi, "").replace(/^[-+]/, "");
+  let text = cell.trim();
+  let negative = false;
+  const parenthesized = /^\((.*)\)$/.exec(text);
+
+  if (parenthesized) {
+    negative = true;
+    text = (parenthesized[1] ?? "").trim();
+  }
+
+  // The sign may sit before or after the currency, as in "-Rs 1,200" or "Rs -1,200".
+  for (const pattern of [/^[-−]\s*/, /^\+\s*/, /^(rs\.?|inr|₹)\s*/i, /^[-−]\s*/]) {
+    if (pattern.test(text)) {
+      negative = negative || /^[-−]/.test(text);
+      text = text.replace(pattern, "");
+    }
+  }
+
+  const digits = text.replace(/\s*\/-$/, "").replace(/[,\s]/g, "");
 
   if (!/^\d+(\.\d+)?$/.test(digits)) {
     return undefined;
@@ -229,6 +304,19 @@ function renderRow(row: readonly TableCell[]): string {
   return row.map((cell) => (cell === null ? "" : String(cell))).join(" | ");
 }
 
+const AGGREGATE_LABEL = /^(sub[\s-]*total|grand[\s-]*total|totals?)(\s+for\b.*|\s*[:-].*)?$/i;
+
+/** A total or subtotal line: no TAN and a cell that starts with "Total" or "Subtotal". */
+export function isAggregateRow(row: readonly TableCell[], columns: TaxColumnMap): boolean {
+  const tanCell = columns.tan === undefined ? undefined : row[columns.tan];
+
+  if (normalizeTan(textOf(tanCell))) {
+    return false;
+  }
+
+  return row.some((cell) => typeof cell === "string" && AGGREGATE_LABEL.test(cell.trim()));
+}
+
 function readRow(
   source: TaxRecordSource,
   metadata: DocumentMetadata,
@@ -252,6 +340,16 @@ function readRow(
     return undefined;
   }
 
+  const unreadable: TaxMeasure[] = [];
+
+  if (columns.tax !== undefined && tax === undefined) {
+    unreadable.push("tax");
+  }
+
+  if (columns.amount !== undefined && amount === undefined) {
+    unreadable.push("amount");
+  }
+
   const dated = financialPeriodOfDate(textOf(cell("date")));
   const financialYear =
     normalizeFinancialYear(textOf(cell("financialYear"))) ?? dated?.financialYear;
@@ -272,6 +370,7 @@ function readRow(
     ...(quarter ? { quarter } : {}),
     ...(amount !== undefined ? { amount } : {}),
     ...(tax !== undefined ? { tax } : {}),
+    unreadable,
     location: tableEvidenceLocation(table, {
       rowStart: rowIndex,
       ...(focusColumn !== undefined ? { columnStart: focusColumn } : {}),
@@ -293,36 +392,54 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
   for (const { metadata, extraction } of documents) {
     for (const table of extraction?.tables ?? []) {
       const columnNames = table.columns.map((column) => column.name);
-      const columns = mapTaxColumns(columnNames);
-      const hasParty = columns.tan !== undefined || columns.deductor !== undefined;
-      const hasValue = columns.tax !== undefined || columns.amount !== undefined;
-
-      if (!hasParty || !hasValue) {
+      const candidates = taxColumnCandidates(columnNames);
+      const hasParty = candidates.tan !== undefined || candidates.deductor !== undefined;
+      const hasValue = candidates.tax !== undefined || candidates.amount !== undefined;
+      const skip = (reason: string) =>
         unclassified.push({
           documentId: metadata.id,
           documentName: metadata.name,
           tableName: table.name,
-          reason: "no deductor or TAN column with an amount or tax column",
+          reason,
         });
+
+      if (!hasParty || !hasValue) {
+        skip("no deductor or TAN column with an amount or tax column");
         continue;
       }
 
       const source = classifyTaxRecordSource(metadata.name, table.name, columnNames);
 
       if (!source) {
-        unclassified.push({
-          documentId: metadata.id,
-          documentName: metadata.name,
-          tableName: table.name,
-          reason: "could not tell whether it is a return, ledger, or 26AS/AIS statement",
-        });
+        skip("could not tell whether it is a return, ledger, or 26AS/AIS statement");
         continue;
       }
 
+      const { columns, ambiguous } = selectTaxColumns(columnNames, source);
+      const ambiguousTax = ambiguous.find((entry) => entry.measure === "tax");
+
+      if (ambiguousTax) {
+        skip(
+          `it has several TDS columns (${ambiguousTax.names.join(", ")}) and none is clearly the ${source === "return" ? "TDS claimed" : "TDS deducted"}`,
+        );
+        continue;
+      }
+
+      const warnings = ambiguous.map(
+        (entry) =>
+          `${metadata.name}: amounts were not compared because several columns could hold them (${entry.names.join(", ")}).`,
+      );
       const rows: TaxRecordRow[] = [];
       const skippedRowIndexes: number[] = [];
+      const aggregateRowIndexes: number[] = [];
 
-      table.rows.forEach((_row, rowIndex) => {
+      table.rows.forEach((row, rowIndex) => {
+        if (isAggregateRow(row, columns)) {
+          aggregateRowIndexes.push(rowIndex);
+
+          return;
+        }
+
         const read = readRow(source, metadata, table, columns, rowIndex);
 
         if (read) {
@@ -340,6 +457,8 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
         columns,
         rows,
         skippedRowIndexes,
+        aggregateRowIndexes,
+        warnings,
       });
     }
   }

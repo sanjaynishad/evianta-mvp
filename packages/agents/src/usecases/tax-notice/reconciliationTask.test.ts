@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { createSpecialistAgent } from "../../agents/specialist.js";
+import { createAgentRegistry } from "../../registry.js";
 import { createTaxNoticeHarnessAsync, DOCUMENT_IDS } from "../../testing/taxNotice.js";
 import { reconciliationLineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
 
@@ -100,6 +102,29 @@ describe("reconciliation handler", () => {
     expect(notes?.findingIds).toEqual([mismatch?.id, totals?.id]);
     expect(notes?.content).toContain("Sunrise Consulting differs by one quarter");
     expect(evidence.length).toBeGreaterThan(10);
+  });
+
+  it("uses an agent registered for the role at run time", async () => {
+    const agents = createAgentRegistry().register(
+      createSpecialistAgent("reconciliation", {
+        modelTier: "cheap",
+        systemPrompt: "Custom reconciliation prompt.",
+      }),
+    );
+    const { orchestrator, mock, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
+      tasks: [{ id: "rec", role: "reconciliation" }],
+      orchestrator: { agents },
+      script: { reconciliation: { output: { findings: [], openQuestions: [] } } },
+    });
+
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const { findings } = await readAsync();
+    const call = mock.calls.find((item) => item.key === "reconciliation");
+
+    expect(call).toMatchObject({ tier: "cheap", system: "Custom reconciliation prompt." });
+    expect(findings[0]?.summary.startsWith("[R-03]")).toBe(true);
+    expect(findings[0]?.detail).toContain("No explanation was produced");
   });
 
   it("flags a missing source and still reconciles the others", async () => {

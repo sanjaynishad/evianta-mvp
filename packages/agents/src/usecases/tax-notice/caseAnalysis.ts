@@ -33,6 +33,7 @@ import {
   createPreparedTaskHandler,
   loadCaseDocumentsAsync,
   pagesToVerify,
+  resolveTaskAgent,
   type ReviewPage,
 } from "./context.js";
 import { readTaxRecords, taxRecordDocumentIds } from "./records.js";
@@ -125,6 +126,7 @@ export function createCaseAnalysisAgent(): CaseAnalysisAgent {
     systemPrompt: CASE_ANALYSIS_SYSTEM_PROMPT,
     inputSchema: specialistInputSchema,
     outputSchema: caseAnalysisOutputSchema,
+    grounding: false,
     maxOutputTokens: 4096,
     profile,
   });
@@ -462,10 +464,9 @@ export interface CaseAnalysisHandlerOptions {
 export function createCaseAnalysisTaskHandler(
   options: CaseAnalysisHandlerOptions = {},
 ): TaskHandler {
-  const agent = options.agent ?? createCaseAnalysisAgent();
-
   return createPreparedTaskHandler<CaseAnalysisPrepared, SpecialistInput, CaseAnalysisOutput>(
-    agent,
+    "case-analysis",
+    (ctx) => resolveTaskAgent(ctx, "case-analysis", options.agent, createCaseAnalysisAgent),
     {
       async prepareAsync(ctx: TaskExecutionContext) {
         const documents = await loadCaseDocumentsAsync(ctx);
@@ -495,7 +496,10 @@ export function createCaseAnalysisTaskHandler(
         };
       },
       toTaskOutput(result, _ctx, prepared) {
-        return caseAnalysisTaskOutput(result, prepared.lowConfidencePages);
+        return caseAnalysisTaskOutput(
+          { ...result, output: caseAnalysisOutputSchema.parse(result.output) },
+          prepared.lowConfidencePages,
+        );
       },
     },
   );

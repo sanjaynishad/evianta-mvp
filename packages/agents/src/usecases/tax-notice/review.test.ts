@@ -54,6 +54,22 @@ describe("tax-notice review checks", () => {
       { text: "INR 620", value: 620 },
       { text: "₹13,020.50", value: 13020.5 },
     ]);
+    expect(quotedAmounts("a refund of Rs -12,000, ₹-12,000 or -Rs 620 in years 2024")).toEqual([
+      { text: "Rs -12,000", value: -12000 },
+      { text: "₹-12,000", value: -12000 },
+      { text: "-Rs 620", value: -620 },
+    ]);
+  });
+
+  it("checks the magnitude of signed draft amounts", () => {
+    const check = draftFiguresCheck(
+      [draftSection("A refund of Rs -12,400 is due; the other Rs -12,000 is not.")],
+      expected,
+    );
+
+    expect(check([]).map((issue) => issue.message)).toEqual([
+      expect.stringContaining("quotes Rs -12,000"),
+    ]);
   });
 
   it("flags draft amounts that match no computed figure", () => {

@@ -20,7 +20,7 @@ import {
 import { PDFDocument, StandardFonts } from "pdf-lib";
 
 import type { PriorFinding } from "../agents/specialist.js";
-import { createOrchestrator } from "../orchestrator.js";
+import { createOrchestrator, type OrchestratorOptions } from "../orchestrator.js";
 import { REFERENCE_PLANS } from "../plans.js";
 import { seedTasksAsync, type TaskSeed } from "./fixtures.js";
 
@@ -552,7 +552,19 @@ export function responseDraftOutput(
             ],
           },
         ]
-      : [],
+      : [
+          {
+            summary: "Rectification route to confirm",
+            severity: "low",
+            confidence: "medium",
+            openQuestions: [
+              {
+                text: "Confirm whether a rectification request is preferable to a reply.",
+                severity: "high",
+              },
+            ],
+          },
+        ],
     openQuestions: [
       {
         text: "Confirm whether the response should request rectification under section 154.",
@@ -593,6 +605,7 @@ export interface TaxNoticeHarnessOptions {
   uploads?: TaxNoticeUploads;
   /** Seeds these tasks instead of letting the coordinator plan. */
   tasks?: readonly TaskSeed[];
+  orchestrator?: Partial<Omit<OrchestratorOptions, "store" | "ai">>;
 }
 
 export async function createTaxNoticeHarnessAsync(options: TaxNoticeHarnessOptions = {}) {
@@ -603,6 +616,7 @@ export async function createTaxNoticeHarnessAsync(options: TaxNoticeHarnessOptio
     store,
     ai,
     newId: () => `id-${String(++counter).padStart(4, "0")}`,
+    ...options.orchestrator,
   });
   const caseRecord = await createTaxNoticeCaseAsync(store);
 

@@ -27,9 +27,15 @@ import {
   TAX_FIGURE_KEYS,
   formatRupees,
 } from "./constants.js";
-import { createPreparedTaskHandler, reconcileCaseAsync, type CaseRecords } from "./context.js";
+import {
+  createPreparedTaskHandler,
+  reconcileCaseAsync,
+  resolveTaskAgent,
+  type CaseRecords,
+} from "./context.js";
 import { SOURCE_LABELS, taxRecordDocumentIds, type TaxRecordSource } from "./records.js";
 import {
+  describeLineStatus,
   discrepancies,
   hasReconciliationData,
   lineDifferenceComponents,
@@ -39,7 +45,7 @@ import {
   type ReconciliationLine,
   type TaxReconciliation,
 } from "./reconcile.js";
-import { lineEvidence, reconciliationTableMarkdown } from "./render.js";
+import { lineEvidence, reconciliationTableMarkdown, rowLocationLabel } from "./render.js";
 
 export const MAX_MATCHED_EVIDENCE = 24;
 
@@ -81,6 +87,7 @@ export function createReconciliationAgent(): ReconciliationAgent {
     systemPrompt: RECONCILIATION_SYSTEM_PROMPT,
     inputSchema: specialistInputSchema,
     outputSchema: reconciliationOutputSchema,
+    grounding: false,
     maxOutputTokens: 4096,
     profile,
   });
@@ -152,6 +159,10 @@ function discrepancySummary(line: ReconciliationLine): string {
     return `[${line.ref}] ${who}, ${line.period}: in ${present.join(" and ")} but missing in ${line.missingIn.map(sourceLabel).join(" and ")}`;
   }
 
+  if (line.status === "incomplete") {
+    return `[${line.ref}] ${who}, ${line.period}: cannot be reconciled, ${describeLineStatus(line).toLowerCase()}`;
+  }
+
   const parts = (["return", "ledger", "tax-credit"] as const)
     .filter((source) => line.values[source]?.tax !== undefined)
     .map((source) => `${SOURCE_LABELS[source]} ${formatRupees(line.values[source]?.tax ?? 0)}`);
@@ -184,10 +195,22 @@ export function discrepancyFinding(
     ? [{ text: `${line.ref}: ${explanation.followUp}`, severity: taxImpact ? "high" : "medium" }]
     : [];
 
+  if (line.status === "incomplete") {
+    const cells = Object.values(line.values)
+      .flatMap((values) => values?.rows ?? [])
+      .filter((row) => row.unreadable.length > 0)
+      .map(rowLocationLabel);
+
+    openQuestions.unshift({
+      text: `${line.ref}: the TDS or amount in ${cells.join(", ")} is blank or unreadable, so ${line.deductorName} was not reconciled. Check the source and correct it.`,
+      severity: "high",
+    });
+  }
+
   return {
     summary: discrepancySummary(line),
     detail: explanationDetail(explanation),
-    severity: taxImpact ? "high" : "medium",
+    severity: taxImpact || line.status === "incomplete" ? "high" : "medium",
     confidence: "high",
     evidence: lineEvidence(line),
     openQuestions,
@@ -260,11 +283,8 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
     }
 
     const components = totalsComponents(reconciliation, source);
-    const hasAmounts = reconciliation.lines.some(
-      (line) => line.values[source]?.amount !== undefined,
-    );
 
-    if (components.length > 0) {
+    if (totals.tax !== undefined && components.length > 0) {
       figures.push({
         key: tdsKeys[source],
         label: `Total TDS per ${sourceLabel(source)}`,
@@ -274,7 +294,7 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
       });
     }
 
-    if (hasAmounts) {
+    if (totals.amount !== undefined) {
       figures.push({
         key: incomeKeys[source],
         label: `Total amount per ${sourceLabel(source)}`,
@@ -284,34 +304,51 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
     }
   }
 
-  if (returnVsTaxCredit && bySource.return && bySource["tax-credit"]) {
+  const returnTax = bySource.return?.tax;
+  const ledgerTax = bySource.ledger?.tax;
+  const creditTax = bySource["tax-credit"]?.tax;
+
+  if (returnVsTaxCredit?.tax !== undefined && returnTax !== undefined && creditTax !== undefined) {
     figures.push({
       key: TAX_FIGURE_KEYS.tdsDifference,
       label: "TDS claimed in the return less TDS per 26AS/AIS",
       value: returnVsTaxCredit.tax,
       unit: "INR",
       components: [
-        { label: "TDS per return", value: bySource.return.tax },
-        { label: "TDS per 26AS/AIS", value: -bySource["tax-credit"].tax },
+        { label: "TDS per return", value: returnTax },
+        { label: "TDS per 26AS/AIS", value: -creditTax },
       ],
     });
   }
 
-  if (ledgerVsTaxCredit && bySource.ledger && bySource["tax-credit"]) {
+  if (ledgerVsTaxCredit?.tax !== undefined && ledgerTax !== undefined && creditTax !== undefined) {
     figures.push({
       key: TAX_FIGURE_KEYS.ledgerTdsDifference,
       label: "TDS per ledger less TDS per 26AS/AIS",
       value: ledgerVsTaxCredit.tax,
       unit: "INR",
       components: [
-        { label: "TDS per ledger", value: bySource.ledger.tax },
-        { label: "TDS per 26AS/AIS", value: -bySource["tax-credit"].tax },
+        { label: "TDS per ledger", value: ledgerTax },
+        { label: "TDS per 26AS/AIS", value: -creditTax },
       ],
     });
   }
 
   const headline = returnVsTaxCredit?.tax ?? ledgerVsTaxCredit?.tax;
   const material = headline !== undefined && Math.abs(headline) > reconciliation.tolerance;
+  const incompleteSources = reconciliation.providedSources.filter(
+    (source) => (bySource[source]?.unreadable.length ?? 0) > 0,
+  );
+  const assumptions = [
+    ...reconciliation.excludedRows.map(
+      (row) =>
+        `Total or subtotal row ${row.location.rowRange?.start ?? ""} in ${row.documentName} was excluded from the sums.`,
+    ),
+    ...incompleteSources.map(
+      (source) =>
+        `${sourceLabel(source)} totals are not stated because some of its values are blank or unreadable.`,
+    ),
+  ];
 
   return {
     summary:
@@ -320,13 +357,14 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
         : `Reconciliation totals: TDS difference of ${formatRupees(headline)} against 26AS/AIS`,
     detail: figures.map((figure) => `${figure.label}: ${formatRupees(figure.value)}`).join("\n"),
     severity: material ? "high" : "info",
-    confidence: "high",
+    confidence: incompleteSources.length > 0 ? "medium" : "high",
     evidence: reconciliation.tables.map((table) => ({
       documentId: table.documentId,
       description: `${sourceLabel(table.source)} records (${table.rowCount} row(s))`,
       ...(table.location.sheet ? { sheet: table.location.sheet } : {}),
       ...(table.location.cellRange ? { cellRange: table.location.cellRange } : {}),
     })),
+    assumptions,
     figures,
   };
 }
@@ -339,11 +377,22 @@ export function reconciliationOpenQuestions(
     severity: source === "tax-credit" || source === "return" ? "high" : "medium",
   }));
 
+  for (const deductor of reconciliation.ambiguousDeductors) {
+    questions.push({
+      text: `"${deductor.name}" appears under several TANs (${deductor.tans.join(", ")}), so its rows without a TAN were not assigned to either. Confirm which TAN they belong to.`,
+      severity: "high",
+    });
+  }
+
   for (const table of reconciliation.unclassified) {
     questions.push({
       text: `The table in ${table.documentName} was not reconciled: ${table.reason}. Confirm whether it holds relevant records.`,
       severity: "low",
     });
+  }
+
+  for (const warning of reconciliation.warnings) {
+    questions.push({ text: warning, severity: "low" });
   }
 
   return questions;
@@ -446,29 +495,34 @@ export interface ReconciliationHandlerOptions extends TaxReconcileOptions {
 export function createReconciliationTaskHandler(
   options: ReconciliationHandlerOptions = {},
 ): TaskHandler {
-  const agent = options.agent ?? createReconciliationAgent();
+  return createPreparedTaskHandler<CaseRecords, SpecialistInput, ReconciliationOutput>(
+    "reconciliation",
+    (ctx) => resolveTaskAgent(ctx, "reconciliation", options.agent, createReconciliationAgent),
+    {
+      prepareAsync(ctx) {
+        return reconcileCaseAsync(ctx, options);
+      },
+      buildInput(ctx, prepared) {
+        if (!hasReconciliationData(prepared.reconciliation)) {
+          return buildSpecialistInput(ctx);
+        }
 
-  return createPreparedTaskHandler<CaseRecords, SpecialistInput, ReconciliationOutput>(agent, {
-    prepareAsync(ctx) {
-      return reconcileCaseAsync(ctx, options);
-    },
-    buildInput(ctx, prepared) {
-      if (!hasReconciliationData(prepared.reconciliation)) {
-        return buildSpecialistInput(ctx);
-      }
+        const reconciled = taxRecordDocumentIds(prepared.records);
+        const input = buildSpecialistInput(ctx, reconciliationContext(prepared.reconciliation));
 
-      const reconciled = taxRecordDocumentIds(prepared.records);
-      const input = buildSpecialistInput(ctx, reconciliationContext(prepared.reconciliation));
-
-      return {
-        ...input,
-        documents: input.documents.filter(
-          (slice) => !(slice.kind === "table" && reconciled.has(slice.documentId)),
-        ),
-      };
+        return {
+          ...input,
+          documents: input.documents.filter(
+            (slice) => !(slice.kind === "table" && reconciled.has(slice.documentId)),
+          ),
+        };
+      },
+      toTaskOutput(result, _ctx, prepared) {
+        return reconciliationTaskOutput(
+          { ...result, output: reconciliationOutputSchema.parse(result.output) },
+          prepared.reconciliation,
+        );
+      },
     },
-    toTaskOutput(result, _ctx, prepared) {
-      return reconciliationTaskOutput(result, prepared.reconciliation);
-    },
-  });
+  );
 }

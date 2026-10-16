@@ -84,20 +84,24 @@ export function reconciliationRecomputeCheck(
     );
 }
 
-const AMOUNT_PATTERN = /(?:\brs\.?|\binr\b|₹)\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
+const AMOUNT_PATTERN = /([-−]\s*)?(?:\brs\.?|\binr\b|₹)\s*([-−]\s*)?(\d+(?:,\d+)*(?:\.\d+)?)/gi;
 
 export interface QuotedAmount {
   text: string;
+  /** Signed value; checks compare magnitudes because figures may be stated either way round. */
   value: number;
 }
 
-/** Rupee amounts quoted in text, such as "Rs 1,41,000", "Rs. 12,400/-", or "INR 620". */
+/** Rupee amounts quoted in text, such as "Rs 1,41,000", "Rs. 12,400/-", "-Rs 620", or "₹-12,000". */
 export function quotedAmounts(text: string): QuotedAmount[] {
   return [...text.matchAll(AMOUNT_PATTERN)].flatMap((match) => {
-    const digits = (match[1] ?? "").replace(/,/g, "");
-    const value = Number(digits);
+    const digits = (match[3] ?? "").replace(/,/g, "");
+    const magnitude = Number(digits);
+    const negative = Boolean(match[1] || match[2]);
 
-    return Number.isFinite(value) && digits.length > 0 ? [{ text: match[0].trim(), value }] : [];
+    return Number.isFinite(magnitude) && digits.length > 0
+      ? [{ text: match[0].trim(), value: negative ? -magnitude : magnitude }]
+      : [];
   });
 }
 
@@ -143,14 +147,17 @@ export function draftFiguresCheck(
       const unmatched = new Map<string, QuotedAmount>();
 
       for (const amount of quotedAmounts(section.content)) {
-        if (!known.some((value) => numbersAgree(value, amount.value, tolerance))) {
+        const magnitude = Math.abs(amount.value);
+
+        if (!known.some((value) => numbersAgree(value, magnitude, tolerance))) {
           unmatched.set(amount.text, amount);
         }
       }
 
       for (const amount of unmatched.values()) {
+        const magnitude = Math.abs(amount.value);
         const closest = [...known].sort(
-          (left, right) => Math.abs(left - amount.value) - Math.abs(right - amount.value),
+          (left, right) => Math.abs(left - magnitude) - Math.abs(right - magnitude),
         )[0];
 
         issues.push({

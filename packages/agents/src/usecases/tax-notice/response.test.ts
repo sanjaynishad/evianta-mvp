@@ -58,6 +58,9 @@ describe("response-preparation handler", () => {
     expect(questions?.content).toContain(
       "Confirm whether the response should request rectification",
     );
+    expect(questions?.content).toContain(
+      "Confirm whether a rectification request is preferable to a reply.",
+    );
     expect(draftFindings.flatMap((finding) => finding.openQuestions)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

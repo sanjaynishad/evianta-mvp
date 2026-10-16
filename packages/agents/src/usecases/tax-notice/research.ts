@@ -21,7 +21,7 @@ import {
   type TaskOutput,
 } from "../../handlers.js";
 import { taxNoticePackSpec } from "./constants.js";
-import { createPreparedTaskHandler, loadCaseDocumentsAsync } from "./context.js";
+import { createPreparedTaskHandler, loadCaseDocumentsAsync, resolveTaskAgent } from "./context.js";
 import { readTaxRecords, taxRecordDocumentIds } from "./records.js";
 
 export const provisionSchema = z.object({
@@ -79,10 +79,19 @@ function sectionNumber(reference: string): string | undefined {
   return /\b(\d{1,3}[A-Z]{0,3})(\(\w+\))*/i.exec(reference)?.[0];
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** True when the text names the complete identifier, so "80C" does not match "80CCC". */
+export function mentionsProvision(text: string, identifier: string): boolean {
+  return new RegExp(`(?<![\\w(])${escapeRegExp(identifier)}(?!\\w)`, "i").test(text);
+}
+
 /**
- * Grounding citations that support a provision: an exact URL match first, then a citation from
- * the same site, then one whose supporting text mentions the provision. Grounded search often
- * returns redirect URLs the model never sees, so exact matches alone would drop real sources.
+ * Grounding citations that support a provision: exact URL matches first. Grounded search often
+ * returns redirect URLs the model never sees, so otherwise a citation counts only when its title
+ * or supporting text names the provision's complete identifier, preferring the cited site.
  */
 export function citationsForProvision(provision: Provision, citations: readonly Citation[]) {
   const exact = citations.filter((citation) => provision.sourceUrls.includes(citation.url));
@@ -91,21 +100,23 @@ export function citationsForProvision(provision: Provision, citations: readonly 
     return exact;
   }
 
+  const identifier = sectionNumber(provision.reference);
+
+  if (!identifier) {
+    return [];
+  }
+
   const hosts = new Set(provision.sourceUrls.flatMap((url) => hostnameOf(url) ?? []));
   const sameSite = citations.filter((citation) => {
     const title = citation.title.replace(/^www\./, "").toLowerCase();
 
     return hosts.has(title) || hosts.has(hostnameOf(citation.url) ?? "");
   });
-  const section = sectionNumber(provision.reference)?.toLowerCase();
   const candidates = sameSite.length > 0 ? sameSite : citations;
-  const mentioning = section
-    ? candidates.filter((citation) =>
-        `${citation.title} ${citation.snippet}`.toLowerCase().includes(section),
-      )
-    : [];
 
-  return mentioning.length > 0 ? mentioning : sameSite;
+  return candidates.filter((citation) =>
+    mentionsProvision(`${citation.title} ${citation.snippet}`, identifier),
+  );
 }
 
 export function verifyFlag(provision: Provision): OpenQuestionDraft {
@@ -234,24 +245,29 @@ export interface TaxResearchHandlerOptions {
 
 /** Grounded research; provisions without a supporting citation become verify-against-current-law flags. */
 export function createTaxResearchTaskHandler(options: TaxResearchHandlerOptions = {}): TaskHandler {
-  const agent = options.agent ?? createTaxResearchAgent();
+  return createPreparedTaskHandler<Set<string>, SpecialistInput, TaxResearchOutput>(
+    "tax-research",
+    (ctx) => resolveTaskAgent(ctx, "tax-research", options.agent, createTaxResearchAgent),
+    {
+      async prepareAsync(ctx) {
+        return taxRecordDocumentIds(readTaxRecords(await loadCaseDocumentsAsync(ctx)));
+      },
+      buildInput(ctx, recordDocumentIds) {
+        const input = buildSpecialistInput(ctx);
 
-  return createPreparedTaskHandler<Set<string>, SpecialistInput, TaxResearchOutput>(agent, {
-    async prepareAsync(ctx) {
-      return taxRecordDocumentIds(readTaxRecords(await loadCaseDocumentsAsync(ctx)));
+        return {
+          ...input,
+          documents: input.documents.filter(
+            (slice) => !(slice.kind === "table" && recordDocumentIds.has(slice.documentId)),
+          ),
+        };
+      },
+      toTaskOutput(result) {
+        return taxResearchTaskOutput({
+          ...result,
+          output: taxResearchOutputSchema.parse(result.output),
+        });
+      },
     },
-    buildInput(ctx, recordDocumentIds) {
-      const input = buildSpecialistInput(ctx);
-
-      return {
-        ...input,
-        documents: input.documents.filter(
-          (slice) => !(slice.kind === "table" && recordDocumentIds.has(slice.documentId)),
-        ),
-      };
-    },
-    toTaskOutput(result) {
-      return taxResearchTaskOutput(result);
-    },
-  });
+  );
 }

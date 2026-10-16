@@ -11,6 +11,7 @@ import {
   normalizeQuarter,
   parseAmount,
   readTaxRecords,
+  selectTaxColumns,
   type TaxRecordDocument,
 } from "./records.js";
 import {
@@ -96,6 +97,10 @@ describe("tax record reading", () => {
   it("parses amounts, quarters, and Indian financial periods", () => {
     expect(parseAmount("Rs 1,41,000/-")).toBe(141000);
     expect(parseAmount("(1,200.50)")).toBe(-1200.5);
+    expect(parseAmount("Rs -1,200")).toBe(-1200);
+    expect(parseAmount("₹-1200")).toBe(-1200);
+    expect(parseAmount("-Rs 1,200")).toBe(-1200);
+    expect(parseAmount("(Rs 1,200)")).toBe(-1200);
     expect(parseAmount("n/a")).toBeUndefined();
     expect(normalizeQuarter("Q3")).toBe("Q3");
     expect(normalizeQuarter("Jan-Mar")).toBe("Q4");
@@ -220,5 +225,103 @@ describe("reconcileTaxRecords", () => {
     expect(table).toContain("Mismatch");
     expect(table).toContain("form-26as.csv F4");
     expect(table).toContain("| Total |  |  |  | 1,41,000 | 1,41,000 | 1,28,600 | 12,400 |");
+  });
+});
+
+describe("reconciliation edge cases", () => {
+  it("prefers the claimed TDS column in a return and skips tables with ambiguous TDS columns", async () => {
+    const returnWithBoth = [
+      "TAN,Deductor,Financial year,Income offered,TDS deducted,TDS claimed",
+      "MUMN10001A,Northwind Bank Ltd,2023-24,10000,1000,1000",
+      "DELS20002B,Sunrise Consulting Pvt Ltd,2023-24,500000,37600,50000",
+      "BLRA30003C,Asha Salaries Ltd,2023-24,900000,90000,90000",
+    ].join("\n");
+    const ambiguousCredit = TAX_CREDIT_CSV.replace(
+      "Tax deducted,",
+      "TDS deducted,Tax deducted,",
+    ).replace(/,F$/gm, ",0,F");
+
+    expect(selectTaxColumns(returnWithBoth.split("\n")[0]!.split(","), "return").columns.tax).toBe(
+      5,
+    );
+
+    const records = readTaxRecords(
+      await fixtureDocumentsAsync({
+        returnComputation: returnWithBoth,
+        taxCredit: ambiguousCredit,
+      }),
+    );
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ returnComputation: returnWithBoth })),
+    );
+
+    expect(records.unclassified).toEqual([
+      expect.objectContaining({
+        documentId: "doc-26as",
+        reason: expect.stringContaining("several TDS columns (TDS deducted, Tax deducted)"),
+      }),
+    ]);
+    expect(reconciliation.totals.returnVsTaxCredit?.tax).toBe(12400);
+  });
+
+  it("excludes total rows but keeps deductors whose names start with Total", async () => {
+    const ledger = [
+      LEDGER_CSV,
+      "2023-08-01,Total Solutions Pvt Ltd,194C,5000,50,TS-01",
+      ",Total,,1415000,141050,",
+    ].join("\n");
+    const records = readTaxRecords(await fixtureDocumentsAsync({ ledger }));
+    const reconciliation = reconcileTaxRecords(records);
+    const ledgerTable = records.tables.find((table) => table.source === "ledger");
+
+    expect(ledgerTable?.aggregateRowIndexes).toEqual([11]);
+    expect(ledgerTable?.rows.some((row) => row.deductorName === "Total Solutions Pvt Ltd")).toBe(
+      true,
+    );
+    expect(reconciliation.totals.bySource.ledger?.tax).toBe(141050);
+    expect(reconciliation.excludedRows).toEqual([
+      expect.objectContaining({
+        documentId: "doc-ledger",
+        location: { rowRange: { start: 13, end: 13 } },
+      }),
+    ]);
+  });
+
+  it("never treats a blank or unreadable TDS cell as zero", async () => {
+    const taxCredit = TAX_CREDIT_CSV.replace("2024-03-31,6000,600,F", "2024-03-31,6000,,F");
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ taxCredit })),
+    );
+    const northwind = reconciliation.lines.find((line) => line.tan === "MUMN10001A");
+
+    expect(northwind).toMatchObject({
+      status: "incomplete",
+      values: { "tax-credit": { unreadable: ["tax"] } },
+    });
+    expect(northwind?.values["tax-credit"]?.tax).toBeUndefined();
+    expect(northwind?.returnVsTaxCredit).toEqual({ amount: 0 });
+    expect(reconciliation.totals.bySource["tax-credit"]).toMatchObject({ unreadable: ["tax"] });
+    expect(reconciliation.totals.bySource["tax-credit"]?.tax).toBeUndefined();
+    expect(reconciliation.totals.returnVsTaxCredit).toEqual({ amount: 124000 });
+    expect(reconciliationTableMarkdown(reconciliation)).toContain("Unreadable values in 26AS/AIS");
+  });
+
+  it("does not guess a TAN for a name shared by several TANs", async () => {
+    const taxCredit = `${TAX_CREDIT_CSV}\nPUNE50005E,Northwind Bank Ltd,194A,2023-12-31,2000,200,F`;
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ taxCredit, returnComputation: false })),
+    );
+
+    expect(reconciliation.ambiguousDeductors).toEqual([
+      { name: "Northwind Bank Ltd", tans: ["MUMN10001A", "PUNE50005E"] },
+    ]);
+    expect(
+      reconciliation.lines
+        .filter((line) => line.deductorKey === "name:northwind bank")
+        .map((line) => [line.status, line.missingIn]),
+    ).toEqual([
+      ["missing", ["tax-credit"]],
+      ["missing", ["tax-credit"]],
+    ]);
   });
 });

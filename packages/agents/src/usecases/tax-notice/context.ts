@@ -1,3 +1,4 @@
+import type { AgentRole } from "@evianta/core";
 import { LOW_CONFIDENCE_THRESHOLD, pagesNeedingReview } from "@evianta/ingest";
 
 import type { Agent, AgentResult } from "../../agent.js";
@@ -84,27 +85,34 @@ export interface PreparedTaskHooks<P, I, O> {
   ): TaskOutput | Promise<TaskOutput>;
 }
 
-/** createAgentTaskHandler with a deterministic pre-step whose result is also given to the output mapping. */
+/**
+ * Runs a deterministic pre-step, then the agent through createAgentTaskHandler. The agent is
+ * resolved per execution, so a registry override (custom prompt or tier) takes effect.
+ */
 export function createPreparedTaskHandler<P, I, O>(
-  agent: Agent<I, O>,
+  role: AgentRole,
+  resolveAgent: (ctx: TaskExecutionContext) => Agent<I, O>,
   hooks: PreparedTaskHooks<P, I, O>,
 ): TaskHandler {
-  const preparedByContext = new WeakMap<TaskExecutionContext, P>();
-
-  return createAgentTaskHandler(agent, {
-    async prepareInputAsync(ctx) {
+  return {
+    role,
+    async executeAsync(ctx) {
       const prepared = await hooks.prepareAsync(ctx);
 
-      preparedByContext.set(ctx, prepared);
-
-      return hooks.buildInput(ctx, prepared);
+      return createAgentTaskHandler(resolveAgent(ctx), {
+        prepareInputAsync: async () => hooks.buildInput(ctx, prepared),
+        toTaskOutput: (result) => hooks.toTaskOutput(result, ctx, prepared),
+      }).executeAsync(ctx);
     },
-    toTaskOutput(result, ctx) {
-      const prepared = preparedByContext.get(ctx) as P;
+  };
+}
 
-      preparedByContext.delete(ctx);
-
-      return hooks.toTaskOutput(result, ctx, prepared);
-    },
-  });
+/** The pinned agent, else the one registered for the role, else the use-case default. */
+export function resolveTaskAgent<A>(
+  ctx: TaskExecutionContext,
+  role: AgentRole,
+  pinned: A | undefined,
+  createDefault: () => A,
+): A {
+  return pinned ?? (ctx.agents.get(role) as A | undefined) ?? createDefault();
 }

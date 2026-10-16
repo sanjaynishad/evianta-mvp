@@ -105,5 +105,21 @@ describe("tax-research handler", () => {
     expect(
       citationsForProvision(provision("Section 80C", ["https://other.example/80c"]), citations),
     ).toEqual([]);
+    expect(
+      citationsForProvision(
+        provision("Section 80C", ["https://tax-reference.example/80c"]),
+        citations,
+      ),
+    ).toEqual([]);
+    expect(
+      citationsForProvision(provision("Section 80C", []), [
+        {
+          title: "Section 80CCC: pension funds",
+          url: "https://tax-reference.example/80ccc",
+          snippet: "",
+        },
+      ]),
+    ).toEqual([]);
+    expect(citationsForProvision(provision("Notice procedure", []), citations)).toEqual([]);
   });
 });

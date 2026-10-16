@@ -1,12 +1,14 @@
 import type { EvidenceReference } from "../../findings.js";
 import { truncate } from "../../text.js";
 import { formatAmount, markdownTable } from "./constants.js";
-import type { TaxRecordRow, TaxRecordSource } from "./records.js";
+import type { TaxMeasure, TaxRecordRow, TaxRecordSource } from "./records.js";
 import {
   describeLineStatus,
   primaryTaxDifference,
   sourceLabel,
   type ReconciliationLine,
+  type SourceTotals,
+  type SourceValues,
   type TaxReconciliation,
 } from "./reconcile.js";
 
@@ -52,19 +54,21 @@ function amountCell(line: ReconciliationLine, source: TaxRecordSource, provided:
     return "n/a";
   }
 
-  const tax = line.values[source]?.tax;
+  return valueCell(line.values[source], "tax");
+}
 
-  return tax === undefined ? "-" : formatAmount(tax);
+function valueCell(values: SourceValues | SourceTotals | undefined, measure: TaxMeasure): string {
+  const value = values?.[measure];
+
+  if (value !== undefined) {
+    return formatAmount(value);
+  }
+
+  return values?.unreadable.includes(measure) ? "unreadable" : "-";
 }
 
 function incomeCell(line: ReconciliationLine, sources: readonly TaxRecordSource[]): string {
-  return sources
-    .map((source) => {
-      const amount = line.values[source]?.amount;
-
-      return amount === undefined ? "-" : formatAmount(amount);
-    })
-    .join(" / ");
+  return sources.map((source) => valueCell(line.values[source], "amount")).join(" / ");
 }
 
 function sourceCell(line: ReconciliationLine): string {
@@ -109,11 +113,8 @@ export function reconciliationTableMarkdown(reconciliation: TaxReconciliation): 
     ];
   });
   const { bySource, returnVsTaxCredit, ledgerVsTaxCredit } = reconciliation.totals;
-  const total = (source: TaxRecordSource) => {
-    const value = bySource[source]?.tax;
-
-    return value === undefined ? "n/a" : formatAmount(value);
-  };
+  const total = (source: TaxRecordSource) =>
+    provided.has(source) ? valueCell(bySource[source], "tax") : "n/a";
 
   const totalDelta = returnVsTaxCredit?.tax ?? ledgerVsTaxCredit?.tax;
 
@@ -126,13 +127,7 @@ export function reconciliationTableMarkdown(reconciliation: TaxReconciliation): 
     total("ledger"),
     total("tax-credit"),
     totalDelta === undefined ? "-" : formatAmount(totalDelta),
-    sources
-      .map((source) => {
-        const amount = bySource[source]?.amount;
-
-        return amount === undefined ? "-" : formatAmount(amount);
-      })
-      .join(" / "),
+    sources.map((source) => valueCell(bySource[source], "amount")).join(" / "),
     "",
     "",
   ]);

@@ -11,7 +11,7 @@ import {
   type AgentLookup,
   type TaskHandlerRegistry,
 } from "./handlers.js";
-import { registerTaxNoticeHandlers } from "./usecases/tax-notice/index.js";
+import { createTaxNoticeAgents, registerTaxNoticeHandlers } from "./usecases/tax-notice/index.js";
 import type { DeterministicCheckOptions } from "./verification.js";
 
 export interface AgentRegistry extends AgentLookup {
@@ -25,6 +25,7 @@ export function createDefaultAgents(): AnyAgent[] {
   return [
     createCoordinatorAgent(),
     ...SPECIALIST_ROLES.map((role) => createSpecialistAgent(role)),
+    ...createTaxNoticeAgents(),
     createReviewerAgent(),
   ];
 }

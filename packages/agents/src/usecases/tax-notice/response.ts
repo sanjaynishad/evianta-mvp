@@ -29,7 +29,12 @@ import {
   TAX_FIGURE_KEYS,
   TAX_NOTICE_GUARDRAIL,
 } from "./constants.js";
-import { createPreparedTaskHandler, reconcileCaseAsync, type CaseRecords } from "./context.js";
+import {
+  createPreparedTaskHandler,
+  reconcileCaseAsync,
+  resolveTaskAgent,
+  type CaseRecords,
+} from "./context.js";
 import { taxRecordDocumentIds } from "./records.js";
 import {
   hasReconciliationData,
@@ -91,6 +96,7 @@ export function createResponsePreparationAgent(): ResponsePreparationAgent {
     systemPrompt: RESPONSE_PREPARATION_SYSTEM_PROMPT,
     inputSchema: specialistInputSchema,
     outputSchema: responsePreparationOutputSchema,
+    grounding: false,
     maxOutputTokens: 6144,
     profile,
   });
@@ -144,7 +150,7 @@ export function computedFigures(
       const label = sourceLabel(source as keyof typeof reconciliation.totals.bySource);
       const id = `schedule:${source}`;
 
-      if (totals && !seen.has(id)) {
+      if (totals?.tax !== undefined && !seen.has(id)) {
         seen.add(id);
         figures.push({
           key: `schedule-tds-${source}`,
@@ -185,16 +191,18 @@ export function scheduleBRows(
     if (totals) {
       rows.push([
         `TDS per ${sourceLabel(source)}`,
-        formatAmount(totals.tax),
+        totals.tax === undefined ? "not stated (unreadable values)" : formatAmount(totals.tax),
         `${SCHEDULE_A}, ${totals.rowCount} row(s)`,
       ]);
     }
   }
 
-  if (returnVsTaxCredit) {
+  const difference = returnVsTaxCredit?.tax;
+
+  if (difference !== undefined) {
     rows.push([
       "TDS claimed in the return less TDS per 26AS/AIS",
-      formatAmount(returnVsTaxCredit.tax),
+      formatAmount(difference),
       `${SCHEDULE_A} totals`,
     ]);
   }
@@ -205,10 +213,10 @@ export function scheduleBRows(
 
   const disallowed = notice.find((figure) => figure.key === TAX_FIGURE_KEYS.tdsDifference);
 
-  if (disallowed && returnVsTaxCredit) {
+  if (disallowed && difference !== undefined) {
     rows.push([
       "Notice disallowance less reconciled difference",
-      formatAmount(Math.round((disallowed.value - returnVsTaxCredit.tax) * 100) / 100),
+      formatAmount(Math.round((disallowed.value - difference) * 100) / 100),
       "Notice and reconciliation",
     ]);
   }
@@ -430,7 +438,8 @@ export function responseTaskOutput(
   }
 
   const allQuestions = [...openQuestions, ...(base.openQuestions ?? [])];
-  const questionsText = openQuestionsMarkdown(ctx, allQuestions);
+  const findingQuestions = findings.flatMap((finding) => finding.openQuestions ?? []);
+  const questionsText = openQuestionsMarkdown(ctx, [...allQuestions, ...findingQuestions]);
 
   if (questionsText || draft) {
     sections.push({
@@ -458,39 +467,46 @@ export interface ResponsePreparationHandlerOptions extends TaxReconcileOptions {
 export function createResponsePreparationTaskHandler(
   options: ResponsePreparationHandlerOptions = {},
 ): TaskHandler {
-  const agent = options.agent ?? createResponsePreparationAgent();
+  return createPreparedTaskHandler<CaseRecords, SpecialistInput, ResponsePreparationOutput>(
+    "response-preparation",
+    (ctx) =>
+      resolveTaskAgent(ctx, "response-preparation", options.agent, createResponsePreparationAgent),
+    {
+      prepareAsync(ctx) {
+        return reconcileCaseAsync(ctx, options);
+      },
+      buildInput(ctx, prepared) {
+        const hasData = hasReconciliationData(prepared.reconciliation);
+        const figures = computedFigures(ctx, prepared.reconciliation);
+        const context: Record<string, unknown> = {
+          guardrail: TAX_NOTICE_GUARDRAIL,
+          ...(figures.length > 0 ? { computedFigures: figures } : {}),
+          ...(hasData
+            ? {
+                schedules: [
+                  { ref: SCHEDULE_A, title: "TDS reconciliation by deductor and period" },
+                  { ref: SCHEDULE_B, title: "Computation of the TDS difference" },
+                ],
+              }
+            : {}),
+        };
+        const input = buildSpecialistInput(ctx, context);
+        const recordDocumentIds = taxRecordDocumentIds(prepared.records);
 
-  return createPreparedTaskHandler<CaseRecords, SpecialistInput, ResponsePreparationOutput>(agent, {
-    prepareAsync(ctx) {
-      return reconcileCaseAsync(ctx, options);
+        return {
+          ...input,
+          documents: input.documents.filter(
+            (slice) => !(slice.kind === "table" && recordDocumentIds.has(slice.documentId)),
+          ),
+        };
+      },
+      toTaskOutput(result, ctx, prepared) {
+        return responseTaskOutput(
+          { ...result, output: responsePreparationOutputSchema.parse(result.output) },
+          ctx,
+          prepared.reconciliation,
+        );
+      },
     },
-    buildInput(ctx, prepared) {
-      const hasData = hasReconciliationData(prepared.reconciliation);
-      const figures = computedFigures(ctx, prepared.reconciliation);
-      const context: Record<string, unknown> = {
-        guardrail: TAX_NOTICE_GUARDRAIL,
-        ...(figures.length > 0 ? { computedFigures: figures } : {}),
-        ...(hasData
-          ? {
-              schedules: [
-                { ref: SCHEDULE_A, title: "TDS reconciliation by deductor and period" },
-                { ref: SCHEDULE_B, title: "Computation of the TDS difference" },
-              ],
-            }
-          : {}),
-      };
-      const input = buildSpecialistInput(ctx, context);
-      const recordDocumentIds = taxRecordDocumentIds(prepared.records);
-
-      return {
-        ...input,
-        documents: input.documents.filter(
-          (slice) => !(slice.kind === "table" && recordDocumentIds.has(slice.documentId)),
-        ),
-      };
-    },
-    toTaskOutput(result, ctx, prepared) {
-      return responseTaskOutput(result, ctx, prepared.reconciliation);
-    },
-  });
+  );
 }

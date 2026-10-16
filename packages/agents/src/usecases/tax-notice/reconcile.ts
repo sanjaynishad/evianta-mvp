@@ -4,6 +4,7 @@ import {
   normalizeDeductorName,
   SOURCE_LABELS,
   TAX_RECORD_SOURCES,
+  type TaxMeasure,
   type TaxRecordRow,
   type TaxRecordSet,
   type TaxRecordSource,
@@ -12,12 +13,19 @@ import {
 
 export const DEFAULT_RECONCILIATION_TOLERANCE = 1;
 
-export type ReconciliationStatus = "matched" | "mismatched" | "missing";
+const MEASURES: readonly TaxMeasure[] = ["tax", "amount"];
+
+/** "incomplete" means a present row has a blank or unreadable TDS or amount cell. */
+export type ReconciliationStatus = "matched" | "mismatched" | "missing" | "incomplete";
 
 export interface SourceValues {
+  /** Sum of the rows, present only when every row has a readable amount. */
   amount?: number;
+  /** Sum of the rows, present only when every row has a readable TDS. */
   tax?: number;
   rows: TaxRecordRow[];
+  /** Measures that could not be summed because a row's cell is blank or unreadable. */
+  unreadable: TaxMeasure[];
 }
 
 export interface PairDifference {
@@ -37,22 +45,28 @@ export interface ReconciliationLine {
   status: ReconciliationStatus;
   /** Provided sources that have no row for this line. */
   missingIn: TaxRecordSource[];
-  /** Differences against the 26AS/AIS record; a provided source with no row counts as zero. */
+  /**
+   * Differences against the 26AS/AIS record. A provided source with no row counts as zero; a
+   * measure that is unknown on either side is left out rather than treated as zero.
+   */
   returnVsTaxCredit?: PairDifference;
   ledgerVsTaxCredit?: PairDifference;
   returnVsLedger?: PairDifference;
 }
 
 export interface SourceTotals {
-  amount: number;
-  tax: number;
+  /** Present only when every row of the source has a readable amount. */
+  amount?: number;
+  /** Present only when every row of the source has a readable TDS. */
+  tax?: number;
   rowCount: number;
+  unreadable: TaxMeasure[];
 }
 
 export interface ReconciliationTotals {
   bySource: Partial<Record<TaxRecordSource, SourceTotals>>;
-  returnVsTaxCredit?: Required<PairDifference>;
-  ledgerVsTaxCredit?: Required<PairDifference>;
+  returnVsTaxCredit?: PairDifference;
+  ledgerVsTaxCredit?: PairDifference;
 }
 
 export interface TableReference {
@@ -64,12 +78,28 @@ export interface TableReference {
   rowCount: number;
 }
 
+export interface AmbiguousDeductor {
+  name: string;
+  tans: string[];
+}
+
+export interface ExcludedRow {
+  documentId: string;
+  documentName: string;
+  location: EvidenceLocation;
+}
+
 export interface TaxReconciliation {
   tolerance: number;
   providedSources: TaxRecordSource[];
   missingSources: TaxRecordSource[];
   tables: TableReference[];
   unclassified: UnclassifiedTable[];
+  /** Names shared by several TANs; their name-only rows are not assigned to any TAN. */
+  ambiguousDeductors: AmbiguousDeductor[];
+  /** Total and subtotal rows left out of the sums. */
+  excludedRows: ExcludedRow[];
+  warnings: string[];
   lines: ReconciliationLine[];
   totals: ReconciliationTotals;
 }
@@ -91,34 +121,61 @@ function agree(values: readonly number[], tolerance: number): boolean {
   return Math.max(...values) - Math.min(...values) <= tolerance;
 }
 
-function sumOf(rows: readonly TaxRecordRow[], field: "amount" | "tax"): number | undefined {
-  const present = rows.filter((row) => row[field] !== undefined);
+/** The sum when every row has the measure; undefined when any row lacks it. */
+function sumOf(rows: readonly TaxRecordRow[], measure: TaxMeasure): number | undefined {
+  if (rows.length === 0 || rows.some((row) => row[measure] === undefined)) {
+    return undefined;
+  }
 
-  return present.length === 0
-    ? undefined
-    : round(present.reduce((sum, row) => sum + (row[field] ?? 0), 0));
+  return round(rows.reduce((sum, row) => sum + (row[measure] ?? 0), 0));
 }
 
-/** Maps rows that only carry a deductor name to the TAN other rows give for the same name. */
-function deductorKeyResolver(rows: readonly TaxRecordRow[]): (row: TaxRecordRow) => string {
-  const tanByName = new Map<string, string>();
+function unreadableIn(rows: readonly TaxRecordRow[]): TaxMeasure[] {
+  return MEASURES.filter((measure) => rows.some((row) => row.unreadable.includes(measure)));
+}
+
+interface DeductorResolution {
+  keyOf(row: TaxRecordRow): string;
+  ambiguous: AmbiguousDeductor[];
+}
+
+/**
+ * Maps rows that only carry a deductor name to the TAN other rows give for that name, but only
+ * when the name belongs to exactly one TAN, so the result never depends on document order.
+ */
+function resolveDeductors(rows: readonly TaxRecordRow[]): DeductorResolution {
+  const tansByName = new Map<string, Set<string>>();
+  const displayNames = new Map<string, string>();
 
   for (const row of rows) {
     const name = normalizeDeductorName(row.deductorName);
 
-    if (row.tan && name && !tanByName.has(name)) {
-      tanByName.set(name, row.tan);
+    if (row.tan && name) {
+      tansByName.set(name, new Set([...(tansByName.get(name) ?? []), row.tan]));
+      displayNames.set(name, displayNames.get(name) ?? row.deductorName ?? name);
     }
   }
 
-  return (row) => {
-    if (row.tan) {
-      return row.tan;
-    }
+  const ambiguous = [...tansByName.entries()]
+    .filter(
+      ([name, tans]) =>
+        tans.size > 1 &&
+        rows.some((row) => !row.tan && normalizeDeductorName(row.deductorName) === name),
+    )
+    .map(([name, tans]) => ({ name: displayNames.get(name) ?? name, tans: [...tans].sort() }));
 
-    const name = normalizeDeductorName(row.deductorName) ?? "";
+  return {
+    ambiguous,
+    keyOf(row) {
+      if (row.tan) {
+        return row.tan;
+      }
 
-    return tanByName.get(name) ?? `name:${name}`;
+      const name = normalizeDeductorName(row.deductorName) ?? "";
+      const tans = tansByName.get(name);
+
+      return tans?.size === 1 ? ([...tans][0] as string) : `name:${name}`;
+    },
   };
 }
 
@@ -152,29 +209,44 @@ function mostCommon(values: readonly (string | undefined)[]): string | undefined
   return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
 }
 
+type MeasureAvailability = Partial<Record<TaxRecordSource, ReadonlySet<TaxMeasure>>>;
+
+/** A side's value: its sum, zero when it has no row but records that measure, else unknown. */
+function sideValue(
+  values: SourceValues | undefined,
+  source: TaxRecordSource,
+  measure: TaxMeasure,
+  available: MeasureAvailability,
+): number | undefined {
+  if (values) {
+    return values[measure];
+  }
+
+  return available[source]?.has(measure) ? 0 : undefined;
+}
+
 function difference(
-  left: SourceValues | undefined,
-  right: SourceValues | undefined,
-  leftProvided: boolean,
-  rightProvided: boolean,
+  line: Partial<Record<TaxRecordSource, SourceValues>>,
+  left: TaxRecordSource,
+  right: TaxRecordSource,
+  available: MeasureAvailability,
 ): PairDifference | undefined {
-  if (!leftProvided || !rightProvided) {
+  if (!available[left] || !available[right] || (!line[left] && !line[right])) {
     return undefined;
   }
 
   const result: PairDifference = {};
-  const leftTax = left?.tax ?? 0;
-  const rightTax = right?.tax ?? 0;
 
-  if (left?.tax !== undefined || right?.tax !== undefined) {
-    result.tax = round(leftTax - rightTax);
+  for (const measure of MEASURES) {
+    const leftValue = sideValue(line[left], left, measure, available);
+    const rightValue = sideValue(line[right], right, measure, available);
+
+    if (leftValue !== undefined && rightValue !== undefined) {
+      result[measure] = round(leftValue - rightValue);
+    }
   }
 
-  if (left?.amount !== undefined || right?.amount !== undefined) {
-    result.amount = round((left?.amount ?? 0) - (right?.amount ?? 0));
-  }
-
-  return result;
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function statusOf(
@@ -186,34 +258,61 @@ function statusOf(
     return "missing";
   }
 
-  const present = Object.values(values);
-  const taxes = present.flatMap((entry) => (entry?.tax === undefined ? [] : [entry.tax]));
-  const amounts = present.flatMap((entry) => (entry?.amount === undefined ? [] : [entry.amount]));
+  const present = Object.values(values).filter((entry): entry is SourceValues => !!entry);
 
-  return agree(taxes, tolerance) && agree(amounts, tolerance) ? "matched" : "mismatched";
+  if (present.some((entry) => entry.unreadable.length > 0)) {
+    return "incomplete";
+  }
+
+  const agrees = MEASURES.every((measure) =>
+    agree(
+      present.flatMap((entry) => (entry[measure] === undefined ? [] : [entry[measure]])),
+      tolerance,
+    ),
+  );
+
+  return agrees ? "matched" : "mismatched";
 }
 
 function totalsFor(rows: readonly TaxRecordRow[]): SourceTotals {
+  const amount = sumOf(rows, "amount");
+  const tax = sumOf(rows, "tax");
+
   return {
-    amount: round(rows.reduce((sum, row) => sum + (row.amount ?? 0), 0)),
-    tax: round(rows.reduce((sum, row) => sum + (row.tax ?? 0), 0)),
+    ...(amount !== undefined ? { amount } : {}),
+    ...(tax !== undefined ? { tax } : {}),
     rowCount: rows.length,
+    unreadable: unreadableIn(rows),
   };
 }
 
 function totalDifference(
   left: SourceTotals | undefined,
   right: SourceTotals | undefined,
-): Required<PairDifference> | undefined {
-  return left && right
-    ? { amount: round(left.amount - right.amount), tax: round(left.tax - right.tax) }
-    : undefined;
+): PairDifference | undefined {
+  if (!left || !right) {
+    return undefined;
+  }
+
+  const result: PairDifference = {};
+
+  for (const measure of MEASURES) {
+    const leftValue = left[measure];
+    const rightValue = right[measure];
+
+    if (leftValue !== undefined && rightValue !== undefined) {
+      result[measure] = round(leftValue - rightValue);
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 /**
- * Reconciles return, ledger, and 26AS/AIS style rows by deductor (TAN, or name when no TAN is
- * given) and period. Rows are grouped at the finest period every source shares for a deductor
- * (quarter, then financial year), summed per source, and compared within the tolerance.
+ * Reconciles return, ledger, and 26AS/AIS style rows by deductor (TAN, or a name that maps to a
+ * single TAN) and period. Rows are grouped at the finest period every source shares for a
+ * deductor (quarter, then financial year), summed per source, and compared within the tolerance.
+ * Unknown values are never treated as zero.
  */
 export function reconcileTaxRecords(
   records: TaxRecordSet,
@@ -224,12 +323,26 @@ export function reconcileTaxRecords(
     records.tables.some((table) => table.source === source),
   );
   const provided = new Set(providedSources);
+  const available: MeasureAvailability = {};
+
+  for (const table of records.tables) {
+    const measures = new Set(available[table.source] ?? []);
+
+    for (const measure of MEASURES) {
+      if (table.columns[measure] !== undefined) {
+        measures.add(measure);
+      }
+    }
+
+    available[table.source] = measures;
+  }
+
   const allRows = records.tables.flatMap((table) => table.rows);
-  const keyOf = deductorKeyResolver(allRows);
+  const deductors = resolveDeductors(allRows);
   const rowsByDeductor = new Map<string, TaxRecordRow[]>();
 
   for (const row of allRows) {
-    const key = keyOf(row);
+    const key = deductors.keyOf(row);
     rowsByDeductor.set(key, [...(rowsByDeductor.get(key) ?? []), row]);
   }
 
@@ -268,28 +381,14 @@ export function reconcileTaxRecords(
           ...(amount !== undefined ? { amount } : {}),
           ...(tax !== undefined ? { tax } : {}),
           rows: sourceRows,
+          unreadable: unreadableIn(sourceRows),
         };
       }
 
       const missingIn = providedSources.filter((source) => !values[source]);
-      const returnVsTaxCredit = difference(
-        values.return,
-        values["tax-credit"],
-        provided.has("return"),
-        provided.has("tax-credit"),
-      );
-      const ledgerVsTaxCredit = difference(
-        values.ledger,
-        values["tax-credit"],
-        provided.has("ledger"),
-        provided.has("tax-credit"),
-      );
-      const returnVsLedger = difference(
-        values.return,
-        values.ledger,
-        provided.has("return"),
-        provided.has("ledger"),
-      );
+      const returnVsTaxCredit = difference(values, "return", "tax-credit", available);
+      const ledgerVsTaxCredit = difference(values, "ledger", "tax-credit", available);
+      const returnVsLedger = difference(values, "return", "ledger", available);
       const section = mostCommon(periodRows.map((row) => row.section));
 
       drafts.push({
@@ -344,6 +443,15 @@ export function reconcileTaxRecords(
       rowCount: table.rows.length,
     })),
     unclassified: records.unclassified,
+    ambiguousDeductors: deductors.ambiguous,
+    excludedRows: records.tables.flatMap((table) =>
+      table.aggregateRowIndexes.map((rowIndex) => ({
+        documentId: table.documentId,
+        documentName: table.documentName,
+        location: excludedRowLocation(table.table.range, table.table.sheet, rowIndex),
+      })),
+    ),
+    warnings: records.tables.flatMap((table) => table.warnings),
     lines,
     totals: {
       bySource,
@@ -351,6 +459,17 @@ export function reconcileTaxRecords(
       ...(ledgerVsTaxCredit ? { ledgerVsTaxCredit } : {}),
     },
   };
+}
+
+function excludedRowLocation(
+  range: string | undefined,
+  sheet: string | undefined,
+  rowIndex: number,
+): EvidenceLocation {
+  const headerRow = Number(/^[A-Za-z]+(\d+)/.exec(range ?? "")?.[1] ?? "1");
+  const row = headerRow + 1 + rowIndex;
+
+  return { ...(sheet ? { sheet } : {}), rowRange: { start: row, end: row } };
 }
 
 export function hasReconciliationData(reconciliation: TaxReconciliation): boolean {
@@ -373,6 +492,14 @@ export function describeLineStatus(line: ReconciliationLine): string {
 
   if (line.status === "missing") {
     return `Missing in ${line.missingIn.map((source) => SOURCE_LABELS[source]).join(" and ")}`;
+  }
+
+  if (line.status === "incomplete") {
+    const unreadable = Object.entries(line.values)
+      .filter(([, values]) => (values?.unreadable.length ?? 0) > 0)
+      .map(([source]) => SOURCE_LABELS[source as TaxRecordSource]);
+
+    return `Unreadable values in ${unreadable.join(" and ")}`;
   }
 
   return "Mismatch";

@@ -1,10 +1,27 @@
+import type { AnyAgent } from "../../agent.js";
 import type { TaskHandlerRegistry } from "../../handlers.js";
 import type { DeterministicCheckOptions } from "../../verification.js";
-import { createCaseAnalysisTaskHandler, type CaseAnalysisAgent } from "./caseAnalysis.js";
+import {
+  createCaseAnalysisAgent,
+  createCaseAnalysisTaskHandler,
+  type CaseAnalysisAgent,
+} from "./caseAnalysis.js";
 import type { TaxReconcileOptions } from "./reconcile.js";
-import { createReconciliationTaskHandler, type ReconciliationAgent } from "./reconciliationTask.js";
-import { createTaxResearchTaskHandler, type TaxResearchAgent } from "./research.js";
-import { createResponsePreparationTaskHandler, type ResponsePreparationAgent } from "./response.js";
+import {
+  createReconciliationAgent,
+  createReconciliationTaskHandler,
+  type ReconciliationAgent,
+} from "./reconciliationTask.js";
+import {
+  createTaxResearchAgent,
+  createTaxResearchTaskHandler,
+  type TaxResearchAgent,
+} from "./research.js";
+import {
+  createResponsePreparationAgent,
+  createResponsePreparationTaskHandler,
+  type ResponsePreparationAgent,
+} from "./response.js";
 import { createTaxNoticeReviewTaskHandler } from "./review.js";
 
 export {
@@ -96,6 +113,16 @@ export interface TaxNoticeHandlerOptions {
     taxResearch?: TaxResearchAgent;
     responsePreparation?: ResponsePreparationAgent;
   };
+}
+
+/** Tax-notice specialist agents, registered as the defaults for their roles. */
+export function createTaxNoticeAgents(): AnyAgent[] {
+  return [
+    createCaseAnalysisAgent(),
+    createReconciliationAgent(),
+    createTaxResearchAgent(),
+    createResponsePreparationAgent(),
+  ];
 }
 
 /**
