@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { OrchestratorError } from "./errors.js";
 import { createSpecialistTaskHandler, type TaskHandler } from "./handlers.js";
 import { createDefaultTaskHandlers } from "./registry.js";
+import { createOrchestrator } from "./orchestrator.js";
 import {
   addDocumentAsync,
   createCaseAsync,
@@ -654,13 +655,13 @@ describe("orchestrator", () => {
   });
 
   it("reports failure and emits run-failed when run finalization cannot be recorded", async () => {
-    const { store, orchestrator } = createHarness({ "case-analysis": specialistStep() });
+    const { store, ai, orchestrator } = createHarness({ "case-analysis": specialistStep() });
     const caseRecord = await createCaseAsync(store);
 
     await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
-    vi.spyOn(store.cases, "updateCaseUsageAsync").mockRejectedValueOnce(
-      new Error("Usage write failed"),
-    );
+    vi.spyOn(store.runs, "reconcileUsageAsync")
+      .mockResolvedValueOnce(0)
+      .mockRejectedValueOnce(new Error("Usage write failed"));
 
     const result = await orchestrator.runCaseAsync(caseRecord.id);
     const events = await store.events.listEventsAsync(caseRecord.id);
@@ -673,6 +674,205 @@ describe("orchestrator", () => {
       error: expect.stringContaining("Usage write failed"),
     });
     expect((await store.cases.getCaseAsync(caseRecord.id))?.status).toBe("failed");
+
+    const callsBeforeRecovery = ai.calls.length;
+    const recovered = await createOrchestrator({ store, ai }).retryFailedAsync(caseRecord.id);
+    const caseAfter = await store.cases.getCaseAsync(caseRecord.id);
+
+    expect(recovered.status).toBe("completed");
+    expect(recovered.reusedTaskIds).toEqual(["a"]);
+    expect(ai.calls).toHaveLength(callsBeforeRecovery);
+    expect(caseAfter?.usage).toMatchObject({
+      inputTokens: result.usage.input,
+      outputTokens: result.usage.output,
+      runCount: 1,
+    });
+    expect(caseAfter?.usage?.costEstimate).toBeCloseTo(result.costEstimate, 10);
+    expect(await store.runs.reconcileUsageAsync(caseRecord.id)).toBe(0);
+  });
+
+  it("excludes another orchestrator while an unplanned case is being planned", async () => {
+    const { store, ai, orchestrator } = createHarness({
+      coordinator: { output: { tasks: [], openQuestions: [] } },
+    });
+    const caseRecord = await createCaseAsync(store);
+    const other = createOrchestrator({ store, ai });
+    const loadDocuments = store.documents.getDocumentsForCaseAsync.bind(store.documents);
+    let release = () => {};
+
+    let started = () => {};
+
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const planningStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+
+    vi.spyOn(store.documents, "getDocumentsForCaseAsync").mockImplementationOnce(async (id) => {
+      started();
+      await blocked;
+
+      return loadDocuments(id);
+    });
+
+    const planning = orchestrator.planCaseAsync(caseRecord.id);
+
+    try {
+      await planningStarted;
+      await expect(other.planCaseAsync(caseRecord.id)).rejects.toMatchObject({
+        code: "run-in-progress",
+      });
+      await expect(other.runCaseAsync(caseRecord.id)).rejects.toMatchObject({
+        code: "run-in-progress",
+      });
+    } finally {
+      release();
+      await planning;
+    }
+
+    expect((await other.planCaseAsync(caseRecord.id)).planned).toBe(false);
+    expect(ai.calls).toHaveLength(1);
+  });
+
+  it("renews a lease during long tasks and releases it on completion", async () => {
+    const handlers = createDefaultTaskHandlers();
+    let started = () => {};
+
+    let release = () => {};
+
+    const taskStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    handlers.register({
+      role: "case-analysis",
+      async executeAsync() {
+        started();
+        await blocked;
+
+        return { findings: [], usage: { input: 1, output: 1, total: 2 }, cost: 0 };
+      },
+    });
+
+    const { store, orchestrator } = createHarness({}, { handlers });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    vi.useFakeTimers();
+    const running = orchestrator.runCaseAsync(caseRecord.id);
+
+    try {
+      await taskStarted;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(await store.runs.acquireLeaseAsync(caseRecord.id, "competitor", 60_000)).toBe(false);
+      release();
+      expect((await running).status).toBe("completed");
+      expect(await store.runs.acquireLeaseAsync(caseRecord.id, "competitor", 60_000)).toBe(true);
+    } finally {
+      release();
+      await running;
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers planning and completed-attempt charges after an interrupted run", async () => {
+    const { store, ai, orchestrator } = createHarness({
+      reconciliation: specialistStep(),
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "a", role: "case-analysis" },
+      { id: "b", role: "reconciliation", dependsOn: ["a"] },
+    ]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", {
+      status: "completed",
+      attempts: 1,
+      tokenUsage: { input: 100, output: 20, total: 120 },
+      costEstimate: 0.01,
+    });
+    await store.runs.recordChargeAsync(caseRecord.id, "interrupted", "run", { runCount: 1 });
+    await store.runs.recordChargeAsync(caseRecord.id, "interrupted", "planning", {
+      inputTokens: 50,
+      outputTokens: 10,
+      costEstimate: 0.005,
+    });
+    await store.runs.recordChargeAsync(caseRecord.id, "interrupted", "task:a:1", {
+      inputTokens: 100,
+      outputTokens: 20,
+      costEstimate: 0.01,
+    });
+    const resumed = await orchestrator.runCaseAsync(caseRecord.id);
+    const after = await store.cases.getCaseAsync(caseRecord.id);
+
+    expect(resumed.status).toBe("completed");
+    expect(resumed.reusedTaskIds).toEqual(["a"]);
+    expect(ai.calls.map((call) => call.key)).toEqual(["reconciliation"]);
+    expect(after?.usage).toMatchObject({
+      inputTokens: 150 + resumed.usage.input,
+      outputTokens: 30 + resumed.usage.output,
+      runCount: 2,
+    });
+    expect(after?.usage?.costEstimate).toBeCloseTo(0.015 + resumed.costEstimate, 10);
+    expect(await store.runs.reconcileUsageAsync(caseRecord.id)).toBe(0);
+  });
+
+  it("stops publishing task output when the lease cannot be renewed", async () => {
+    const handlers = createDefaultTaskHandlers();
+    let started = () => {};
+
+    let release = () => {};
+
+    const taskStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    handlers.register({
+      role: "case-analysis",
+      async executeAsync() {
+        started();
+        await blocked;
+
+        return {
+          findings: [finding("Must not be published by a stale worker")],
+          usage: { input: 10, output: 2, total: 12 },
+          cost: 0.001,
+        };
+      },
+    });
+
+    const { store, orchestrator } = createHarness({}, { handlers });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    const running = orchestrator.runCaseAsync(caseRecord.id);
+    const failedRun = expect(running).rejects.toMatchObject({ code: "run-in-progress" });
+
+    try {
+      await taskStarted;
+      const renewal = vi.spyOn(store.runs, "renewLeaseAsync").mockResolvedValue(false);
+
+      release();
+      await failedRun;
+      renewal.mockRestore();
+    } finally {
+      release();
+    }
+
+    expect(await store.findings.getFindingsForCaseAsync(caseRecord.id)).toEqual([]);
+    expect(await store.tasks.getTasksForCaseAsync(caseRecord.id)).toMatchObject([
+      { id: "a", status: "in-progress" },
+    ]);
+    await store.runs.reconcileUsageAsync(caseRecord.id);
+    expect((await store.cases.getCaseAsync(caseRecord.id))?.usage?.inputTokens).toBe(10);
+    expect(orchestrator.isRunning(caseRecord.id)).toBe(false);
   });
 
   it("retries pending work left behind an interrupted task", async () => {

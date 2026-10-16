@@ -35,6 +35,7 @@ import { createAgentRegistry, createDefaultTaskHandlers, type AgentRegistry } fr
 import { DEFAULT_DOCUMENT_TOKEN_BUDGET, sliceDocuments } from "./slices.js";
 
 export const DEFAULT_CONCURRENCY = 2;
+const CASE_LEASE_TTL_MS = 60_000;
 
 export type RunMode = "run" | "retry";
 
@@ -151,7 +152,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
   async function planAndPersistAsync(
     caseRecord: Case,
-    chargeUsage: (usage: TokenUsage, cost: Cost) => void,
+    chargeUsage: (usage: TokenUsage, cost: Cost) => Promise<void>,
+    ensureLeaseAsync: () => Promise<void>,
   ): Promise<PlanResult> {
     const existing = await store.tasks.getTasksForCaseAsync(caseRecord.id);
 
@@ -175,7 +177,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       logger,
     });
 
-    chargeUsage(planning.usage, planning.cost);
+    await chargeUsage(planning.usage, planning.cost);
+    await ensureLeaseAsync();
 
     const { plan } = planning;
     const idsByRole = new Map(plan.tasks.map((task) => [task.assignedRole, newId()]));
@@ -263,7 +266,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     };
   }
 
-  async function withCaseLockAsync<T>(caseId: string, workAsync: () => Promise<T>): Promise<T> {
+  async function withCaseLockAsync<T>(
+    caseId: string,
+    workAsync: (ensureLeaseAsync: () => Promise<void>) => Promise<T>,
+  ): Promise<T> {
     if (activeCases.has(caseId)) {
       throw new OrchestratorError(
         "run-in-progress",
@@ -272,19 +278,77 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     }
 
     activeCases.add(caseId);
+    const owner = randomUUID();
+    let acquired = false;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let renewal: Promise<void> = Promise.resolve();
+    let leaseError: unknown;
+    const ensureLeaseAsync = async () => {
+      if (leaseError) {
+        throw leaseError;
+      }
+
+      if (!(await store.runs.renewLeaseAsync(caseId, owner, CASE_LEASE_TTL_MS))) {
+        throw new OrchestratorError("run-in-progress", `The run lease for "${caseId}" was lost.`);
+      }
+    };
 
     try {
-      return await workAsync();
+      await getCaseOrThrowAsync(caseId);
+      acquired = await store.runs.acquireLeaseAsync(caseId, owner, CASE_LEASE_TTL_MS);
+
+      if (!acquired) {
+        throw new OrchestratorError(
+          "run-in-progress",
+          `Case "${caseId}" already has a run in progress.`,
+        );
+      }
+
+      heartbeat = setInterval(() => {
+        renewal = renewal.then(ensureLeaseAsync).catch((error: unknown) => {
+          leaseError = error;
+          logger.warn("Could not renew the case run lease.", {
+            caseId,
+            error: messageOf(error),
+          });
+        });
+      }, CASE_LEASE_TTL_MS / 3);
+      heartbeat.unref();
+
+      return await workAsync(ensureLeaseAsync);
     } finally {
-      activeCases.delete(caseId);
+      clearInterval(heartbeat);
+      await renewal;
+
+      try {
+        if (acquired) {
+          await store.runs.releaseLeaseAsync(caseId, owner);
+        }
+      } finally {
+        activeCases.delete(caseId);
+      }
     }
   }
 
-  async function runLockedAsync(caseId: string, mode: RunMode): Promise<RunResult> {
+  async function runLockedAsync(
+    caseId: string,
+    mode: RunMode,
+    ensureLeaseAsync: () => Promise<void>,
+  ): Promise<RunResult> {
+    const recoveredCharges = await store.runs.reconcileUsageAsync(caseId);
     let caseRecord = await getCaseOrThrowAsync(caseId);
     let tasks = await store.tasks.getTasksForCaseAsync(caseId);
+    const recoveryOnly =
+      mode === "retry" &&
+      tasks.length > 0 &&
+      tasks.every((task) => task.status === "completed") &&
+      (recoveredCharges > 0 || caseRecord.status !== "completed");
 
-    if (mode === "retry" && !tasks.some((task) => RETRYABLE_STATUSES.has(task.status))) {
+    if (
+      mode === "retry" &&
+      !recoveryOnly &&
+      !tasks.some((task) => RETRYABLE_STATUSES.has(task.status))
+    ) {
       throw new OrchestratorError(
         "nothing-to-retry",
         `Case "${caseId}" has no failed or blocked tasks to retry.`,
@@ -305,6 +369,14 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       runCost = roundCost(runCost + cost);
     };
 
+    const chargeUsageAsync = async (chargeId: string, usage: TokenUsage, cost: Cost) => {
+      await store.runs.recordChargeAsync(caseId, runId, chargeId, {
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        costEstimate: cost,
+      });
+    };
+
     const completedTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
     const blockedTaskIds: string[] = [];
@@ -313,11 +385,26 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     let selectedIds: string[] = [];
     let reusedTaskIds: string[] = [];
     let deliverableIds: string[] = [];
+    const inFlight = new Map<string, Promise<void>>();
 
     try {
+      if (!recoveryOnly) {
+        await store.runs.recordChargeAsync(caseId, runId, "run", {
+          runCount: 1,
+          lastRunAt: now().toISOString(),
+        });
+      }
+
       if (tasks.length === 0) {
         caseRecord = await store.cases.updateCaseStatusAsync(caseId, "planning");
-        plan = await planAndPersistAsync(caseRecord, addRunUsage);
+        plan = await planAndPersistAsync(
+          caseRecord,
+          async (usage, cost) => {
+            addRunUsage(usage, cost);
+            await chargeUsageAsync("planning", usage, cost);
+          },
+          ensureLeaseAsync,
+        );
         tasks = plan.tasks;
       }
 
@@ -543,6 +630,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         const attempt = initial.attempts + 1;
         let task = initial;
 
+        await ensureLeaseAsync();
+
         try {
           if (task.assignedRole === "independent-review") {
             await store.cases.updateCaseStatusAsync(caseId, "review");
@@ -588,6 +677,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           attemptCost = output.cost;
           charged = true;
           addRunUsage(output.usage, output.cost);
+          await chargeUsageAsync(`task:${task.id}:${attempt}`, attemptUsage, attemptCost);
+          await ensureLeaseAsync();
           record = await persistOutputAsync(task, output, attempt, context.upstreamFindings);
           tokenUsage = addUsage(task.tokenUsage ?? emptyUsage(), attemptUsage);
           costEstimate = roundCost((task.costEstimate ?? 0) + attemptCost);
@@ -616,6 +707,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           failedTaskIds.push(task.id);
 
           try {
+            await chargeUsageAsync(`task:${task.id}:${attempt}`, attemptUsage, attemptCost);
+            await ensureLeaseAsync();
             task = await store.tasks.updateTaskAsync(caseId, task.id, {
               status: "failed",
               attempts: attempt,
@@ -695,9 +788,9 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         }
       };
 
-      const inFlight = new Map<string, Promise<void>>();
-
       while (pending.size > 0 || inFlight.size > 0) {
+        await ensureLeaseAsync();
+
         for (const id of [...pending]) {
           if (inFlight.size >= concurrency) {
             break;
@@ -749,6 +842,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             : `${blockedTaskIds.length} task(s) could not run.`;
       }
     } catch (error) {
+      await Promise.allSettled(inFlight.values());
       runError = messageOf(error);
       logger.warn("Run failed.", { caseId, runId, error: runError });
     }
@@ -775,15 +869,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         .filter(Boolean)
         .join(" ") || undefined;
 
-    await recordAsync("case usage", () =>
-      store.cases.updateCaseUsageAsync(caseId, {
-        inputTokens: runUsage.input,
-        outputTokens: runUsage.output,
-        costEstimate: runCost,
-        runCount: 1,
-        lastRunAt: finishedAt,
-      }),
-    );
+    await ensureLeaseAsync();
+    await recordAsync("case usage", () => store.runs.reconcileUsageAsync(caseId));
     await recordAsync("case status", () =>
       store.cases.updateCaseStatusAsync(caseId, finalError() ? "failed" : "completed"),
     );
@@ -839,32 +926,36 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     agents,
     handlers,
     async planCaseAsync(caseId) {
-      return withCaseLockAsync(caseId, async () => {
+      return withCaseLockAsync(caseId, async (ensureLeaseAsync) => {
+        await store.runs.reconcileUsageAsync(caseId);
         const caseRecord = await getCaseOrThrowAsync(caseId);
-        let usage = emptyUsage();
-        let cost = 0;
+        const runId = newId();
 
         try {
-          return await planAndPersistAsync(caseRecord, (planningUsage, planningCost) => {
-            usage = addUsage(usage, planningUsage);
-            cost = roundCost(cost + planningCost);
-          });
+          return await planAndPersistAsync(
+            caseRecord,
+            (usage, cost) =>
+              store.runs.recordChargeAsync(caseId, runId, "planning", {
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                costEstimate: cost,
+              }),
+            ensureLeaseAsync,
+          );
         } finally {
-          if (usage.total > 0 || cost > 0) {
-            await store.cases.updateCaseUsageAsync(caseId, {
-              inputTokens: usage.input,
-              outputTokens: usage.output,
-              costEstimate: cost,
-            });
-          }
+          await store.runs.reconcileUsageAsync(caseId);
         }
       });
     },
     runCaseAsync(caseId) {
-      return withCaseLockAsync(caseId, () => runLockedAsync(caseId, "run"));
+      return withCaseLockAsync(caseId, (ensureLeaseAsync) =>
+        runLockedAsync(caseId, "run", ensureLeaseAsync),
+      );
     },
     retryFailedAsync(caseId) {
-      return withCaseLockAsync(caseId, () => runLockedAsync(caseId, "retry"));
+      return withCaseLockAsync(caseId, (ensureLeaseAsync) =>
+        runLockedAsync(caseId, "retry", ensureLeaseAsync),
+      );
     },
     isRunning(caseId) {
       return activeCases.has(caseId);

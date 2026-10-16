@@ -163,6 +163,21 @@ export interface EventRepo {
   listEventsAsync(caseId: string, afterSeq?: number): Promise<RunEvent[]>;
 }
 
+export interface RunRepo {
+  acquireLeaseAsync(caseId: string, owner: string, ttlMs: number): Promise<boolean>;
+  renewLeaseAsync(caseId: string, owner: string, ttlMs: number): Promise<boolean>;
+  releaseLeaseAsync(caseId: string, owner: string): Promise<void>;
+  /** Immutable, idempotent charges are journaled before completing the associated work. */
+  recordChargeAsync(
+    caseId: string,
+    runId: string,
+    chargeId: string,
+    increment: CaseUsageIncrement,
+  ): Promise<void>;
+  /** Applies unapplied charges and their accounting markers atomically. Returns the count applied. */
+  reconcileUsageAsync(caseId: string): Promise<number>;
+}
+
 export interface Store {
   agents: AgentDirectoryRepo;
   cases: CaseRepo;
@@ -172,4 +187,5 @@ export interface Store {
   deliverables: DeliverableRepo;
   documents: DocumentRepo;
   events: EventRepo;
+  runs: RunRepo;
 }

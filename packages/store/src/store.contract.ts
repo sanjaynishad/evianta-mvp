@@ -77,6 +77,60 @@ export function describeStoreContract(
       ({ store, documentStore } = await createContextAsync());
     });
 
+    it("excludes concurrent lease owners and does not let a non-owner release the lease", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+      const claims = await Promise.all([
+        store.runs.acquireLeaseAsync(created.id, "first", 60_000),
+        store.runs.acquireLeaseAsync(created.id, "second", 60_000),
+      ]);
+      const winner = claims[0] ? "first" : "second";
+      const loser = claims[0] ? "second" : "first";
+
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      expect(await store.runs.renewLeaseAsync(created.id, loser, 60_000)).toBe(false);
+      await store.runs.releaseLeaseAsync(created.id, loser);
+      expect(await store.runs.acquireLeaseAsync(created.id, loser, 60_000)).toBe(false);
+      expect(await store.runs.renewLeaseAsync(created.id, winner, 60_000)).toBe(true);
+      await store.runs.releaseLeaseAsync(created.id, winner);
+      expect(await store.runs.acquireLeaseAsync(created.id, loser, 60_000)).toBe(true);
+    });
+
+    it("allows takeover after lease expiry without letting the old owner renew or release it", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+
+      expect(await store.runs.acquireLeaseAsync(created.id, "first", 1)).toBe(true);
+      await sleepAsync(10);
+      expect(await store.runs.renewLeaseAsync(created.id, "first", 60_000)).toBe(false);
+      expect(await store.runs.acquireLeaseAsync(created.id, "second", 60_000)).toBe(true);
+      await store.runs.releaseLeaseAsync(created.id, "first");
+      expect(await store.runs.acquireLeaseAsync(created.id, "third", 60_000)).toBe(false);
+    });
+
+    it("journals charges idempotently and reconciles them once under contention", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+      const increment = { inputTokens: 100, outputTokens: 20, costEstimate: 0.01 };
+
+      await Promise.all([
+        store.runs.recordChargeAsync(created.id, "run-1", "task:1", increment),
+        store.runs.recordChargeAsync(created.id, "run-1", "task:1", increment),
+      ]);
+      await store.runs.recordChargeAsync(created.id, "run-1", "run", { runCount: 1 });
+      await store.runs.recordChargeAsync(created.id, "run-1", "planning", increment);
+      expect((await store.cases.getCaseAsync(created.id))?.usage?.inputTokens ?? 0).toBe(0);
+      await Promise.all([
+        store.runs.reconcileUsageAsync(created.id),
+        store.runs.reconcileUsageAsync(created.id),
+      ]);
+
+      expect((await store.cases.getCaseAsync(created.id))?.usage).toMatchObject({
+        inputTokens: 200,
+        outputTokens: 40,
+        costEstimate: 0.02,
+        runCount: 1,
+      });
+      expect(await store.runs.reconcileUsageAsync(created.id)).toBe(0);
+    });
+
     async function seedSampleAsync() {
       const sample = await store.cases.createCaseAsync(
         caseInput({ title: "Sample tax notice", isSample: true, status: "review" }),

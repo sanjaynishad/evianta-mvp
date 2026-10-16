@@ -35,7 +35,7 @@ import {
   findingHasQuestion,
   resolvePageSize,
 } from "./mutations.js";
-import type { Store } from "./types.js";
+import type { CaseUsageIncrement, Store } from "./types.js";
 
 class CaseScopedCollection<T> {
   private readonly byCase = new Map<string, Map<string, T>>();
@@ -110,6 +110,11 @@ export function createInMemoryStore(): Store {
   const documents = new CaseScopedCollection<DocumentMetadata>("document");
   const extractions = new CaseScopedCollection<ExtractedDocument>("extraction");
   const events = new CaseScopedCollection<RunEvent>("event");
+  const leases = new Map<string, { owner: string; expiresAt: number }>();
+  const charges = new Map<
+    string,
+    Map<string, { increment: CaseUsageIncrement; applied: boolean }>
+  >();
 
   function getCaseOrThrow(caseId: string): Case {
     const found = cases.get(caseId);
@@ -128,6 +133,66 @@ export function createInMemoryStore(): Store {
   }
 
   return {
+    runs: {
+      async acquireLeaseAsync(caseId, owner, ttlMs) {
+        getCaseOrThrow(caseId);
+        const lease = leases.get(caseId);
+
+        if (lease && lease.expiresAt > Date.now()) {
+          return false;
+        }
+
+        leases.set(caseId, { owner, expiresAt: Date.now() + ttlMs });
+
+        return true;
+      },
+      async renewLeaseAsync(caseId, owner, ttlMs) {
+        const lease = leases.get(caseId);
+
+        if (!lease || lease.owner !== owner || lease.expiresAt <= Date.now()) {
+          return false;
+        }
+
+        lease.expiresAt = Date.now() + ttlMs;
+
+        return true;
+      },
+      async releaseLeaseAsync(caseId, owner) {
+        if (leases.get(caseId)?.owner === owner) {
+          leases.delete(caseId);
+        }
+      },
+      async recordChargeAsync(caseId, runId, chargeId, increment) {
+        let journal = charges.get(caseId);
+
+        if (!journal) {
+          journal = new Map();
+          charges.set(caseId, journal);
+        }
+
+        const key = JSON.stringify([runId, chargeId]);
+
+        if (!journal.has(key)) {
+          journal.set(key, { increment: structuredClone(increment), applied: false });
+        }
+      },
+      async reconcileUsageAsync(caseId) {
+        const journal = charges.get(caseId);
+        let applied = 0;
+
+        for (const charge of journal?.values() ?? []) {
+          if (charge.applied) {
+            continue;
+          }
+
+          putCase(applyCaseUsageIncrement(getCaseOrThrow(caseId), charge.increment));
+          charge.applied = true;
+          applied += 1;
+        }
+
+        return applied;
+      },
+    },
     agents: {
       async listProfilesAsync(options) {
         return [...profiles.values()]
