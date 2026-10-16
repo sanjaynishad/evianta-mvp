@@ -58,6 +58,8 @@ export const casePlannedUploadMessage =
 
 const replayPaceMs = 450;
 const processingPollMs = 3000;
+const settleAttempts = 10;
+const settleDelayMs = 300;
 const processingStatuses = new Set<DocumentStatus>(["pending", "processing"]);
 
 let requestCounter = 0;
@@ -77,6 +79,8 @@ export interface CaseWorkspaceController {
   connection: StreamConnectionState | undefined;
   busyAction: WorkspaceAction | undefined;
   uploads: LocalUpload[];
+  // Run and retry wait while this is true, because a run reads the documents present at its start.
+  uploading: boolean;
   // Set when the API would reject an upload, with a reason to show instead of the drop area.
   uploadLockedReason: string | undefined;
   reload: () => void;
@@ -106,7 +110,9 @@ export function useCaseWorkspace(
   const { reload, mutate } = caseState;
 
   const activeRun =
-    state?.run.active && state.run.lastEventSeq >= terminalSeq ? state.run : undefined;
+    state?.run.active && (terminalSeq === 0 || state.run.lastEventSeq > terminalSeq)
+      ? state.run
+      : undefined;
   const lastEventIsTerminal =
     activeRun?.lastEventType === "run-completed" || activeRun?.lastEventType === "run-failed";
   const autoRequest: StreamRequest | null = activeRun
@@ -152,12 +158,24 @@ export function useCaseWorkspace(
   const handleTerminal = useLatestCallback((event: RunEvent) => {
     setTerminalSeq((current) => Math.max(current, event.seq));
     setStreamRequest(null);
-    void settleAfterRunAsync(event.runId);
+    void settleAfterRunAsync(event.runId, event.seq);
   });
 
-  async function settleAfterRunAsync(runId: string | undefined) {
+  // The stream can end before the API releases the run, so wait briefly for it to go inactive.
+  async function settleAfterRunAsync(runId: string | undefined, terminalEventSeq: number) {
     try {
-      const refreshed = await dataSource.getCaseStateAsync(caseId);
+      let refreshed = await dataSource.getCaseStateAsync(caseId);
+      for (
+        let attempt = 1;
+        refreshed.run.active &&
+        refreshed.run.lastEventSeq <= terminalEventSeq &&
+        attempt < settleAttempts;
+        attempt += 1
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+        refreshed = await dataSource.getCaseStateAsync(caseId);
+      }
+
       mutate(() => refreshed);
       setLive((current) =>
         current && current.progress.runId === runId ? { ...current, settled: true } : current,
@@ -359,6 +377,7 @@ export function useCaseWorkspace(
     connection,
     busyAction,
     uploads,
+    uploading: uploads.some((upload) => upload.status === "uploading"),
     uploadLockedReason,
     reload,
     runAsync: () => startAsync("run"),

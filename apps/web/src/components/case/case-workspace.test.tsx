@@ -141,7 +141,7 @@ describe("CaseWorkspace", () => {
   );
 
   it(
-    "waits for an upload in flight before starting the run, then closes uploads",
+    "holds the run until uploads finish, then closes uploads once planned",
     async () => {
       const dataSource = createTestDataSource({ replayIntervalMs: 50 });
       const created = await dataSource.createCaseAsync({
@@ -154,6 +154,10 @@ describe("CaseWorkspace", () => {
       const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
 
       fireEvent.change(input, { target: { files: [new File(["a,b"], "sales.csv")] } });
+
+      expect(runButton).toBeDisabled();
+      expect(screen.getByRole("status")).toHaveTextContent("Waiting for uploads to finish");
+      await waitFor(() => expect(runButton).toBeEnabled());
       fireEvent.click(runButton);
 
       await waitFor(
@@ -165,6 +169,39 @@ describe("CaseWorkspace", () => {
       expect(screen.queryByText(/did not start/)).not.toBeInTheDocument();
       expect(screen.getByText("sales.csv")).toBeInTheDocument();
       expect(screen.getByTestId("upload-locked")).toHaveTextContent(casePlannedUploadMessage);
+    },
+    streamTimeoutMs * 2,
+  );
+  it(
+    "waits for the API to release a finished run instead of subscribing again",
+    async () => {
+      const dataSource = createTestDataSource();
+      const created = await dataSource.createCaseAsync({
+        title: "Sales check",
+        useCase: "data-analysis",
+      });
+      const getStateAsync = dataSource.getCaseStateAsync.bind(dataSource);
+      let staleSnapshots = 0;
+      vi.spyOn(dataSource, "getCaseStateAsync").mockImplementation(async (id) => {
+        const state = await getStateAsync(id);
+        if (staleSnapshots === 0 && state.run.lastEventType === "run-completed") {
+          staleSnapshots += 1;
+          return { ...state, run: { ...state.run, active: true } };
+        }
+
+        return state;
+      });
+      const subscribeSpy = vi.spyOn(dataSource, "subscribeToRun");
+      renderWithDataSource(<CaseWorkspace caseId={created.id} />, dataSource);
+
+      fireEvent.click(await screen.findByRole("button", { name: /Run case/ }));
+
+      await waitFor(() => expect(screen.getByRole("button", { name: /Run again/ })).toBeEnabled(), {
+        timeout: streamTimeoutMs,
+      });
+      expect(staleSnapshots).toBe(1);
+      expect(subscribeSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument();
     },
     streamTimeoutMs * 2,
   );

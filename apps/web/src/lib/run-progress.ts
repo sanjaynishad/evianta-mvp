@@ -145,6 +145,7 @@ export function applyRunEvent(progress: RunProgress, event: RunEvent): RunProgre
   const next: RunProgress = { ...progress, lastSeq: Math.max(progress.lastSeq, event.seq) };
   switch (event.type) {
     case "run-started": {
+      // Both modes name only the steps that will run; completed steps are reused as they are.
       const restarting = new Set(event.taskIds);
       const isRetry = event.mode === "retry";
       return {
@@ -153,11 +154,9 @@ export function applyRunEvent(progress: RunProgress, event: RunEvent): RunProgre
         mode: event.mode,
         status: "running",
         error: undefined,
-        findings: isRetry
-          ? progress.findings.filter((finding) => !restarting.has(finding.taskId))
-          : [],
+        findings: progress.findings.filter((finding) => !restarting.has(finding.taskId)),
         tasks: progress.tasks.map((task) =>
-          restarting.has(task.id) || !isRetry
+          restarting.has(task.id)
             ? {
                 ...task,
                 status: "pending",

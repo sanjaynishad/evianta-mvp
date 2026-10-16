@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { FileStack, History, Play, TriangleAlert } from "lucide-react";
 import { EmptyState } from "@/components/patterns/empty-state";
@@ -48,6 +48,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
   const { tryCaseAsync, copyingCaseId } = useTryCase();
   const workspace = useCaseWorkspace(caseId, { onTryCase: () => void tryCaseAsync(caseId) });
   const [openEvidenceId, setOpenEvidenceId] = useState<string>();
+  const uploadWaitId = useId();
   const { state, progress } = workspace;
 
   const evidenceIndex = useMemo(() => (state ? buildEvidenceIndex(state) : new Map()), [state]);
@@ -132,12 +133,20 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
               <Button
                 onClick={() => void workspace.runAsync()}
                 loading={workspace.busyAction === "run"}
-                disabled={workspace.streaming || Boolean(workspace.busyAction)}
+                disabled={
+                  workspace.streaming || Boolean(workspace.busyAction) || workspace.uploading
+                }
+                aria-describedby={workspace.uploading ? uploadWaitId : undefined}
               >
                 {workspace.busyAction === "run" ? null : <Play aria-hidden />}
                 {hasRun ? "Run again" : "Run case"}
               </Button>
             )}
+            {!readOnly && workspace.uploading ? (
+              <p id={uploadWaitId} className="text-xs text-muted-foreground" role="status">
+                Waiting for uploads to finish before running.
+              </p>
+            ) : null}
           </div>
         </div>
       </header>
@@ -162,7 +171,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
             blockedTasks={blockedTasks}
             runError={progress.error}
             runFailed={progress.status === "failed"}
-            canRetry={canRetry(progress) && !workspace.busyAction}
+            canRetry={canRetry(progress) && !workspace.busyAction && !workspace.uploading}
             retrying={workspace.busyAction === "retry"}
             readOnly={readOnly}
             onRetry={() => void workspace.retryAsync()}

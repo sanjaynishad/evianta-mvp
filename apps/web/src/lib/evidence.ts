@@ -36,8 +36,12 @@ export function formatEvidenceLocator(location: EvidenceLocation | undefined): s
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
+export function isWebEvidence(evidence: Pick<Evidence, "sourceRef">): boolean {
+  return /^https?:\/\//i.test(evidence.sourceRef);
+}
+
 export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): EvidenceSourceKind {
-  if (/^https?:\/\//i.test(evidence.sourceRef)) {
+  if (isWebEvidence(evidence)) {
     return "web";
   }
 
@@ -55,7 +59,7 @@ export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): Ev
 }
 
 export function getEvidenceLabel(evidence: Evidence, document?: CaseDocument): string {
-  if (/^https?:\/\//i.test(evidence.sourceRef)) {
+  if (isWebEvidence(evidence)) {
     return evidence.description;
   }
 

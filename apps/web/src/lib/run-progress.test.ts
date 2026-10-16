@@ -69,6 +69,27 @@ describe("run progress", () => {
     expect(canRetry(retrying)).toBe(false);
   });
 
+  it("keeps reused steps when a normal run restarts only unfinished ones", () => {
+    const failed = createRunProgress(failedCaseState);
+    const unfinished = [fixtureFailure.taskId, "c-task-prepare", "c-task-review"];
+
+    const rerun = applyRunEvent(failed, {
+      type: "run-started",
+      caseId: failedCaseState.case.id,
+      runId: "run-2",
+      seq: failed.lastSeq + 1,
+      timestamp: "2026-10-03T10:00:00.000Z",
+      mode: "run",
+      taskIds: unfinished,
+    });
+
+    expect(rerun.findings).toEqual(failed.findings);
+    expect(rerun.tasks.find((task) => task.id === "c-task-documents")?.status).toBe("completed");
+    expect(
+      rerun.tasks.filter((task) => unfinished.includes(task.id)).map((task) => task.status),
+    ).toEqual(["pending", "pending", "pending"]);
+  });
+
   it("replays a retry run without discarding the steps it reused", () => {
     const sample = getSampleStateForUseCase("msme-payment");
     const retryIds = [fixtureFailure.taskId, "c-task-prepare", "c-task-review"];
