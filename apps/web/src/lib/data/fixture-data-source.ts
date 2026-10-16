@@ -23,7 +23,9 @@ import {
   sampleRunEvents,
   toUsageRow,
 } from "@/fixtures";
+import { findCannedAnswer } from "@/fixtures/ask";
 import { extractionSummary } from "@/fixtures/documents";
+import { getFixtureAssetUrl, getFixtureExtraction } from "@/fixtures/extractions";
 import { buildRunEvents, collectDependents, toFailedCaseState } from "@/fixtures/run-events";
 import { ApiError, SampleReadOnlyError } from "@/lib/api/errors";
 import { getVisitorId } from "@/lib/visitor";
@@ -153,6 +155,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
   const pendingRuns = new Map<string, PendingRun>();
   const failedOnce = new Set<string>();
   const uploadsInFlight = new Map<string, number>();
+  const uploadedFileUrls = new Map<string, string>();
 
   function requireNoUploads(caseId: string) {
     if ((uploadsInFlight.get(caseId) ?? 0) > 0) {
@@ -333,6 +336,22 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
       return wait(clone(requireState(caseId)));
     },
 
+    async getDocumentAsync(caseId, documentId) {
+      const document = requireState(caseId).documents.find(
+        (candidate) => candidate.id === documentId,
+      );
+      if (!document) {
+        throw new ApiError("This document could not be found.", 404, { code: "not-found" });
+      }
+
+      const extraction = getFixtureExtraction(documentId);
+      return wait(clone({ document, ...(extraction ? { extraction } : {}) }));
+    },
+
+    getDocumentFileUrl(_caseId, documentId) {
+      return uploadedFileUrls.get(documentId) ?? getFixtureAssetUrl(documentId);
+    },
+
     async uploadDocumentAsync(caseId, file) {
       const state = requireEditable(caseId);
       if (pendingRuns.has(caseId)) {
@@ -367,6 +386,9 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
           ...touch(current, {}),
           documents: [...current.documents, document],
         });
+        if (typeof URL.createObjectURL === "function") {
+          uploadedFileUrls.set(id, URL.createObjectURL(file));
+        }
       } finally {
         uploadsInFlight.set(caseId, (uploadsInFlight.get(caseId) ?? 1) - 1);
       }
@@ -612,40 +634,79 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
 
     async askAsync(caseId, question, askOptions = {}): Promise<AskResult> {
       const state = requireState(caseId);
-      const words = question
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((word) => word.length > 3);
-      const matches = state.findings.filter((finding) =>
-        words.some((word) =>
-          `${finding.summary} ${finding.detail ?? ""}`.toLowerCase().includes(word),
+      const canned = state.case.useCase
+        ? findCannedAnswer(state.case.useCase, question)
+        : undefined;
+      const findingsById = new Map(state.findings.map((finding) => [finding.id, finding]));
+      const evidenceById = new Map(
+        [...state.evidence, ...state.findings.flatMap((finding) => finding.evidence)].map(
+          (evidence) => [evidence.id, evidence],
         ),
       );
-      if (matches.length === 0) {
-        const message = "The sample work record does not cover this question.";
-        askOptions.onDelta?.(message);
-        return wait({
+
+      async function streamAsync(text: string) {
+        const chunks = text.match(/\S+\s*/g) ?? [text];
+        const delayMs = Math.min(35, replayIntervalMs / 12);
+        for (const chunk of chunks) {
+          if (askOptions.signal?.aborted) {
+            throw new DOMException("The question was cancelled.", "AbortError");
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          askOptions.onDelta?.(chunk);
+        }
+      }
+
+      let answer: string | undefined;
+      let findingIds: string[] = [];
+      let evidenceIds: string[] = [];
+      if (canned && canned.findingIds.every((id) => findingsById.has(id))) {
+        answer = canned.answer;
+        findingIds = canned.findingIds;
+        evidenceIds = canned.evidenceIds.filter((id) => evidenceById.has(id));
+      } else {
+        const words = question
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter((word) => word.length > 3);
+        const matches = state.findings.filter((finding) =>
+          words.some((word) =>
+            `${finding.summary} ${finding.detail ?? ""}`.toLowerCase().includes(word),
+          ),
+        );
+        if (matches.length > 0) {
+          answer = matches.map((finding) => finding.summary).join(". ");
+          findingIds = matches.map((finding) => finding.id);
+          evidenceIds = matches.flatMap((finding) =>
+            finding.evidence.map((evidence) => evidence.id),
+          );
+        }
+      }
+
+      if (!answer) {
+        const message =
+          "The recorded work record for this sample does not cover this question, so there is no grounded answer.";
+        await streamAsync(message);
+        return {
           status: "not-supported",
           message,
           evidenceIds: [],
           findingIds: [],
           canFlagForReview: true,
           retrievedFindingIds: [],
-        });
+        };
       }
 
-      const answer = matches.map((finding) => finding.summary).join(" ");
-      const evidenceIds = matches.flatMap((finding) =>
-        finding.evidence.map((evidence) => evidence.id),
-      );
-      askOptions.onDelta?.(answer);
-      return wait({
-        status: "answered",
+      await streamAsync(answer);
+      return clone({
+        status: "answered" as const,
         answer,
-        findingIds: matches.map((finding) => finding.id),
-        evidenceIds,
-        evidence: state.evidence.filter((evidence) => evidenceIds.includes(evidence.id)),
-        retrievedFindingIds: matches.map((finding) => finding.id),
+        findingIds,
+        evidenceIds: [...new Set(evidenceIds)],
+        evidence: [...new Set(evidenceIds)]
+          .map((id) => evidenceById.get(id))
+          .filter((evidence) => evidence !== undefined),
+        retrievedFindingIds: findingIds,
       });
     },
 

@@ -11,6 +11,7 @@ import {
   caseStateSchema,
   createCaseRequestSchema,
   deliverableSchema,
+  documentDetailResponseSchema,
   openQuestionUpdateResponseSchema,
   reviewNoteRequestSchema,
   runStartResponseSchema,
@@ -211,6 +212,17 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
     getCaseStateAsync(caseId) {
       return requestAsync(casePath(caseId), caseStateSchema);
+    },
+
+    getDocumentAsync(caseId, documentId) {
+      return requestAsync(
+        `${casePath(caseId)}/documents/${segment(documentId)}`,
+        documentDetailResponseSchema,
+      );
+    },
+
+    getDocumentFileUrl(caseId, documentId) {
+      return resolveUrl(`${casePath(caseId)}/documents/${segment(documentId)}/file`);
     },
 
     async uploadDocumentAsync(caseId, file, uploadOptions = {}) {

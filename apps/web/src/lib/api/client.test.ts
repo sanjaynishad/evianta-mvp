@@ -87,6 +87,32 @@ describe("createApiClient", () => {
     await expect(client.listSamplesAsync()).rejects.toBeInstanceOf(ApiResponseValidationError);
   });
 
+  it("reads a document with its extraction and builds the file URL", async () => {
+    const document = sampleCaseStates[1]!.documents[0]!;
+    const { client, fetchMock } = createClient(
+      jsonResponse({
+        document,
+        extraction: {
+          documentId: document.id,
+          kind: "text",
+          method: "pdf-text",
+          confidence: 0.98,
+          pages: [{ index: 2, text: "Difference 12,400", method: "pdf-text", confidence: 0.98 }],
+        },
+      }),
+    );
+
+    const detail = await client.getDocumentAsync("sample tax", document.id);
+
+    expect(requestOf(fetchMock).url).toBe(
+      `https://api.example.test/cases/sample%20tax/documents/${document.id}`,
+    );
+    expect(detail.extraction?.pages[0]?.index).toBe(2);
+    expect(client.getDocumentFileUrl("sample tax", "doc/1")).toBe(
+      "https://api.example.test/cases/sample%20tax/documents/doc%2F1/file",
+    );
+  });
+
   it("turns a 409 sample-read-only response into a typed error with an absolute copy URL", async () => {
     const { client } = createClient(
       jsonResponse(

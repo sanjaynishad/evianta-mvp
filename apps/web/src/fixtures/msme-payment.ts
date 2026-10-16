@@ -38,7 +38,7 @@ export const msmePaymentCaseState: CaseStateInput = {
       size: 2210400,
       uploadedAt: "2026-10-02T06:01:00.000Z",
       status: "ready",
-      extraction: extractionSummary("mixed", 0.91),
+      extraction: extractionSummary("mixed", 0.91, { pageCount: 4 }),
     },
     {
       id: statement.id,
@@ -68,7 +68,7 @@ export const msmePaymentCaseState: CaseStateInput = {
       size: 310220,
       uploadedAt: "2026-10-02T06:02:00.000Z",
       status: "ready",
-      extraction: extractionSummary("pdf-text", 0.97),
+      extraction: extractionSummary("pdf-text", 0.97, { pageCount: 2 }),
     },
   ],
   tasks: [

@@ -6,6 +6,7 @@ import { deliverableSchema, sectionReviewStatusSchema } from "./deliverable.js";
 import {
   documentMetadataSchema,
   extractedDocumentKindSchema,
+  extractedDocumentSchema,
   extractionMethodSchema,
 } from "./document.js";
 import { runEventTypes, type RunEventType } from "./events.js";
@@ -85,6 +86,16 @@ export const uploadDocumentsResponseSchema = z.object({
 });
 
 export type UploadDocumentsResponse = z.infer<typeof uploadDocumentsResponseSchema>;
+
+// GET /cases/:id/documents/:documentId. The extraction is absent until reading has produced one.
+export const documentDetailResponseSchema = z.object({
+  document: caseDocumentSchema,
+  extraction: extractedDocumentSchema.optional(),
+});
+
+export type DocumentDetail = z.infer<typeof documentDetailResponseSchema>;
+
+export type DocumentDetailInput = z.input<typeof documentDetailResponseSchema>;
 
 export const caseCostSchema = z.object({
   tokenUsage: tokenUsageSchema,
