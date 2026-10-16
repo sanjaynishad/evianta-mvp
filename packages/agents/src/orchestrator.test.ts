@@ -232,6 +232,28 @@ describe("orchestrator", () => {
     });
   });
 
+  it("stamps a caller-supplied run id on the run and retry events", async () => {
+    const { store, orchestrator } = createHarness({
+      "case-analysis": [{ error: "non-transient", message: "Notice unreadable" }, specialistStep()],
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "analyze", role: "case-analysis" }]);
+
+    const first = await orchestrator.runCaseAsync(caseRecord.id, { runId: "run-from-api" });
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id, { runId: "retry-from-api" });
+    const events = await store.events.listEventsAsync(caseRecord.id);
+
+    expect(first).toMatchObject({ runId: "run-from-api", status: "failed" });
+    expect(retry).toMatchObject({ runId: "retry-from-api", status: "completed" });
+    expect(new Set(events.map((event) => event.runId))).toEqual(
+      new Set(["run-from-api", "retry-from-api"]),
+    );
+    expect(events.filter((event) => event.runId === "retry-from-api").at(-1)?.type).toBe(
+      "run-completed",
+    );
+  });
+
   it("fails fast on a dependency cycle", async () => {
     const { store, ai, orchestrator } = createHarness({});
     const caseRecord = await createCaseAsync(store);

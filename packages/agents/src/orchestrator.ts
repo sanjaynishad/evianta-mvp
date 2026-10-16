@@ -86,6 +86,11 @@ export interface RunResult {
   caseCostEstimate: Cost;
 }
 
+export interface RunOptions {
+  /** Id stamped on the run's events; generated when omitted, so a caller can return it up front. */
+  runId?: string;
+}
+
 export interface Orchestrator {
   readonly events: RunEventBus;
   readonly agents: AgentRegistry;
@@ -93,9 +98,9 @@ export interface Orchestrator {
   /** Plans the case with the coordinator when it has no tasks yet; otherwise returns its tasks. */
   planCaseAsync(caseId: string): Promise<PlanResult>;
   /** Plans if needed, then runs every task that is not completed. */
-  runCaseAsync(caseId: string): Promise<RunResult>;
+  runCaseAsync(caseId: string, options?: RunOptions): Promise<RunResult>;
   /** Re-runs failed, blocked, and interrupted tasks plus any pending work, reusing completed work. */
-  retryFailedAsync(caseId: string): Promise<RunResult>;
+  retryFailedAsync(caseId: string, options?: RunOptions): Promise<RunResult>;
   isRunning(caseId: string): boolean;
 }
 
@@ -334,6 +339,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     caseId: string,
     mode: RunMode,
     ensureLeaseAsync: () => Promise<void>,
+    runOptions: RunOptions = {},
   ): Promise<RunResult> {
     const recoveredCharges = await store.runs.reconcileUsageAsync(caseId);
     let caseRecord = await getCaseOrThrowAsync(caseId);
@@ -355,7 +361,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       );
     }
 
-    const runId = newId();
+    const runId = runOptions.runId ?? newId();
     const emitAsync = createRunEventEmitter(store, events, caseId);
     const baseline = toTotals(caseRecord);
     let runUsage = emptyUsage();
@@ -947,14 +953,14 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         }
       });
     },
-    runCaseAsync(caseId) {
+    runCaseAsync(caseId, runOptions) {
       return withCaseLockAsync(caseId, (ensureLeaseAsync) =>
-        runLockedAsync(caseId, "run", ensureLeaseAsync),
+        runLockedAsync(caseId, "run", ensureLeaseAsync, runOptions),
       );
     },
-    retryFailedAsync(caseId) {
+    retryFailedAsync(caseId, runOptions) {
       return withCaseLockAsync(caseId, (ensureLeaseAsync) =>
-        runLockedAsync(caseId, "retry", ensureLeaseAsync),
+        runLockedAsync(caseId, "retry", ensureLeaseAsync, runOptions),
       );
     },
     isRunning(caseId) {
