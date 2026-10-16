@@ -49,7 +49,11 @@ import {
   type EvidenceAnalysisPrepared,
 } from "./evidenceAnalysis.js";
 import { recordDocumentIds } from "./records.js";
-import type { PaymentReconcileOptions, PaymentReconciliation } from "./reconcile.js";
+import {
+  hasPaymentData,
+  type PaymentReconcileOptions,
+  type PaymentReconciliation,
+} from "./reconcile.js";
 import { paymentSummaryTableMarkdown, unallocatedPaymentsMarkdown } from "./render.js";
 
 export const PAYMENT_SUMMARY_SECTION_TITLE = "Verified payment summary and outstanding amount";
@@ -175,7 +179,20 @@ function outstandingPosition(reconciliation: PaymentReconciliation) {
   };
 }
 
+export const NO_PAYMENT_DATA_MESSAGE =
+  "The outstanding amount could not be computed because no readable invoice register was found. Upload the invoices or a sales register.";
+
 export function paymentSummaryFinding(reconciliation: PaymentReconciliation): AgentFindingInput {
+  if (!hasPaymentData(reconciliation)) {
+    return {
+      summary: "Outstanding amount not computed: no readable invoice register",
+      severity: "info",
+      confidence: "high",
+      evidence: [],
+      openQuestions: [{ text: NO_PAYMENT_DATA_MESSAGE, severity: "high" }],
+    };
+  }
+
   const open = reconciliation.lines.filter((line) => line.outstanding > 0);
 
   return {
@@ -183,7 +200,7 @@ export function paymentSummaryFinding(reconciliation: PaymentReconciliation): Ag
     severity: reconciliation.totals.outstanding > 0 ? "high" : "info",
     confidence: reconciliation.lines.some((line) => line.inferred) ? "medium" : "high",
     evidence: dedupeEvidenceReferences(
-      open.flatMap((line) => [
+      reconciliation.lines.flatMap((line) => [
         recordRowEvidence(line.invoice, `${line.invoice.invoiceNumber} invoice row`),
         ...line.allocations.map((allocation) =>
           recordRowEvidence(
@@ -209,6 +226,10 @@ export function paymentSummaryFinding(reconciliation: PaymentReconciliation): Ag
 }
 
 export function paymentSummaryMarkdown(reconciliation: PaymentReconciliation): string {
+  if (!hasPaymentData(reconciliation)) {
+    return NO_PAYMENT_DATA_MESSAGE;
+  }
+
   const { totals } = reconciliation;
   const open = reconciliation.lines.filter((line) => line.outstanding > 0);
   const unallocated = unallocatedPaymentsMarkdown(reconciliation);
@@ -621,7 +642,9 @@ export function createCasePreparationTaskHandler(
         const context: Record<string, unknown> = {
           guardrail: MSME_PAYMENT_GUARDRAIL,
           ...(figures.length > 0 ? { computedFigures: figures } : {}),
-          outstandingPosition: outstandingPosition(prepared.reconciliation),
+          ...(hasPaymentData(prepared.reconciliation)
+            ? { outstandingPosition: outstandingPosition(prepared.reconciliation) }
+            : {}),
           chronology: prepared.chronology.map((event) => `${event.date} ${event.title}`),
         };
 

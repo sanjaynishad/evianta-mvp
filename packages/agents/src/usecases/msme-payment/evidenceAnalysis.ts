@@ -44,8 +44,6 @@ import { msmeDocumentSourceSchema } from "./documentAnalysis.js";
 import { recordDocumentIds } from "./records.js";
 import type { PaymentReconcileOptions } from "./reconcile.js";
 
-export const MAX_CHRONOLOGY_EVIDENCE = 60;
-
 export const disputedItemSchema = z.object({
   invoiceNumbers: z.array(z.string()).default([]),
   description: z.string().min(1),
@@ -161,10 +159,8 @@ export function chronologyFinding(events: readonly ChronologyEvent[]): AgentFind
     detail: chronologyTimelineText(events),
     severity: "info",
     confidence: events.some((event) => event.confidence === "low") ? "medium" : "high",
-    evidence: dedupeEvidenceReferences(events.flatMap((event) => event.evidence)).slice(
-      0,
-      MAX_CHRONOLOGY_EVIDENCE,
-    ),
+    // Every event keeps its sources, so the timeline never shows an event without a link.
+    evidence: dedupeEvidenceReferences(events.flatMap((event) => event.evidence)),
     dates: events.map((event) => ({ key: event.dateKey, label: event.title, date: event.date })),
   };
 }

@@ -77,27 +77,30 @@ export function creditTermsInDocuments(
 
   for (const { metadata, extraction } of documents) {
     for (const page of extraction?.pages ?? []) {
+      const seen = new Set<string>();
+
       for (const [patternIndex, pattern] of CREDIT_TERM_PATTERNS.entries()) {
-        const found = [...page.text.matchAll(pattern)].find((match) => {
+        for (const match of page.text.matchAll(pattern)) {
           const quote = sentenceAround(page.text, match.index, match[0].length);
-
-          return (
+          const days = Number(match[1]);
+          const qualifies =
             patternIndex > 0 ||
-            (/\bpay|payment|credit/i.test(quote) && !CORRESPONDENCE_DEADLINE.test(quote))
-          );
-        });
-        const days = Number(found?.[1]);
+            (/\bpay|payment|credit/i.test(quote) && !CORRESPONDENCE_DEADLINE.test(quote));
+          const key = `${days}|${quote}`;
 
-        if (found && Number.isInteger(days) && days > 0) {
+          if (!qualifies || !Number.isInteger(days) || days <= 0 || seen.has(key)) {
+            continue;
+          }
+
+          seen.add(key);
           sources.push({
             creditDays: days,
-            basis: basisOf(found[2]),
+            basis: basisOf(match[2]),
             documentId: metadata.id,
             documentName: metadata.name,
             page: page.index,
-            quote: sentenceAround(page.text, found.index, found[0].length),
+            quote,
           });
-          break;
         }
       }
     }

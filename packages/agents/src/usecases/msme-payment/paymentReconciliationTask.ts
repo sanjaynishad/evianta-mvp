@@ -394,6 +394,13 @@ export function paymentReconciliationQuestions(
     });
   }
 
+  for (const invoice of reconciliation.laterInvoices) {
+    questions.push({
+      text: `${invoice.invoiceNumber} (${recordLocationLabel(invoice)}) is dated ${invoice.invoiceDate}, after the as-of date ${reconciliation.asOfDate}, so it is not included in the outstanding amount.`,
+      severity: "low",
+    });
+  }
+
   for (const table of reconciliation.records.unclassified) {
     questions.push({
       text: `The table in ${table.documentName} was not used: ${table.reason}. Confirm whether it holds relevant records.`,

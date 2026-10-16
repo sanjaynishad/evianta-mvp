@@ -109,8 +109,8 @@ function mentionsSection(text: string, identifier: string): boolean {
 
 /**
  * Grounding citations that support a route: exact URL matches first. Grounded search often
- * returns redirect URLs, so otherwise a citation counts only when its title or supporting text
- * names the same section number or distinctive scheme, preferring the cited site.
+ * returns redirect URLs, so otherwise a citation counts only when it is on a site the route cites
+ * and its title or supporting text names the same section number or distinctive scheme.
  */
 export function citationsForRoute(route: LegalRoute, citations: readonly Citation[]): Citation[] {
   const exact = citations.filter((citation) => route.sourceUrls.includes(citation.url));
@@ -122,25 +122,21 @@ export function citationsForRoute(route: LegalRoute, citations: readonly Citatio
   const routeText = `${route.name} ${route.reference ?? ""}`;
   const sections = sectionIdentifiers(routeText);
   const keywords = ROUTE_KEYWORDS.filter((pattern) => pattern.test(routeText));
+  const hosts = new Set(route.sourceUrls.flatMap((url) => hostnameOf(url) ?? []));
 
-  if (sections.length === 0 && keywords.length === 0) {
+  if ((sections.length === 0 && keywords.length === 0) || hosts.size === 0) {
     return [];
   }
 
-  const hosts = new Set(route.sourceUrls.flatMap((url) => hostnameOf(url) ?? []));
-  const sameSite = citations.filter((citation) => {
+  return citations.filter((citation) => {
     const title = citation.title.replace(/^www\./, "").toLowerCase();
-
-    return hosts.has(title) || hosts.has(hostnameOf(citation.url) ?? "");
-  });
-  const candidates = sameSite.length > 0 ? sameSite : citations;
-
-  return candidates.filter((citation) => {
+    const sameSite = hosts.has(title) || hosts.has(hostnameOf(citation.url) ?? "");
     const text = `${citation.title} ${citation.snippet}`;
 
     return (
-      sections.some((identifier) => mentionsSection(text, identifier)) ||
-      keywords.some((pattern) => pattern.test(text))
+      sameSite &&
+      (sections.some((identifier) => mentionsSection(text, identifier)) ||
+        keywords.some((pattern) => pattern.test(text)))
     );
   });
 }

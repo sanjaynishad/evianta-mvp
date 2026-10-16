@@ -205,41 +205,107 @@ function renderRow(row: readonly TableCell[]): string {
 
 const AGGREGATE_LABEL = /^(sub[\s-]*total|grand[\s-]*total|totals?|balance)\b/i;
 
-function isAggregateRow(row: readonly TableCell[]): boolean {
-  return row.some((cell) => typeof cell === "string" && AGGREGATE_LABEL.test(cell.trim()));
+/** A total or balance line, judged only by its key columns so free-text narration cannot drop a row. */
+function isAggregateRow(
+  row: readonly TableCell[],
+  keyColumns: ReadonlyArray<number | undefined>,
+): boolean {
+  return keyColumns.some((index) => {
+    const cell = index === undefined ? undefined : row[index];
+
+    return typeof cell === "string" && AGGREGATE_LABEL.test(cell.trim());
+  });
+}
+
+const FREE_TEXT_COLUMN = /narration|remark|description|particular|note|item/i;
+
+/** The first column, where a total label usually sits, unless it holds free text. */
+function labelColumn(columnNames: readonly string[]): number | undefined {
+  return FREE_TEXT_COLUMN.test(columnNames[0] ?? "") ? undefined : 0;
 }
 
 const INVOICE_NUMBER_IN_TEXT =
-  /\b(?:inv|invoice|bill)[\s#:.-]*(?:no\.?\s*)?([A-Z0-9][A-Z0-9/-]*\d)\b/gi;
+  /\b(?:inv|invoice|bill)[\s#:.-]*(?:no\.?\s*)?[A-Z0-9][A-Z0-9/-]*\d\b/gi;
+const PLACEHOLDER_REF = /^(n\/?a|nil|none|-+|tbd|on\s+account|advance)$/i;
 
-/** Invoice numbers written in a cell such as "INV-1001; INV-1002" or "Part payment inv 1003". */
-export function invoiceRefsIn(text: string | undefined, knownKeys: ReadonlySet<string>): string[] {
+function withoutLetterPrefix(key: string): string {
+  return key.replace(/^[A-Z]+/, "");
+}
+
+/**
+ * The register key a written reference points to: an exact match, else a match ignoring a letter
+ * prefix ("1002" or "Invoice 1002" for "INV-1002") when exactly one invoice fits.
+ */
+export function resolveInvoiceKey(ref: string, knownKeys: ReadonlySet<string>): string | undefined {
+  const normalized = normalizeInvoiceNumber(ref);
+
+  if (knownKeys.has(normalized)) {
+    return normalized;
+  }
+
+  const bare = withoutLetterPrefix(normalized);
+
+  if (bare.length === 0) {
+    return undefined;
+  }
+
+  const matches = [...knownKeys].filter((key) => withoutLetterPrefix(key) === bare);
+
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+/** Every reference written in an invoice reference cell, such as "INV-1001; INV-1002". */
+export function invoiceRefsInCell(text: string | undefined): string[] {
+  return (text ?? "")
+    .split(/[,;&]|\band\b/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !PLACEHOLDER_REF.test(part));
+}
+
+/** Invoice numbers written in free text, such as "Part payment against INV-1003". */
+export function invoiceRefsInText(
+  text: string | undefined,
+  knownKeys: ReadonlySet<string>,
+): string[] {
   if (!text) {
     return [];
   }
 
-  const refs = new Set<string>();
-
-  for (const part of text.split(/[,;&]|\band\b/i)) {
-    const trimmed = part.trim();
-
-    if (trimmed.length > 0 && knownKeys.has(normalizeInvoiceNumber(trimmed))) {
-      refs.add(trimmed);
-    }
-  }
+  const refs: string[] = [];
 
   for (const match of text.matchAll(INVOICE_NUMBER_IN_TEXT)) {
-    const whole = match[0].trim();
-    const number = match[1] ?? "";
+    refs.push(match[0].trim());
+  }
 
-    if (knownKeys.has(normalizeInvoiceNumber(whole))) {
-      refs.add(whole);
-    } else if (knownKeys.has(normalizeInvoiceNumber(number))) {
-      refs.add(number);
+  for (const part of invoiceRefsInCell(text)) {
+    if (knownKeys.has(normalizeInvoiceNumber(part))) {
+      refs.push(part);
     }
   }
 
-  return [...refs];
+  return refs;
+}
+
+/** Written references from the reference cell and the narration, one per distinct invoice. */
+export function paymentInvoiceRefs(
+  referenceCell: string | undefined,
+  narration: string | undefined,
+  knownKeys: ReadonlySet<string>,
+): string[] {
+  const refs = new Map<string, string>();
+
+  for (const ref of [
+    ...invoiceRefsInCell(referenceCell),
+    ...invoiceRefsInText(narration, knownKeys),
+  ]) {
+    const key = resolveInvoiceKey(ref, knownKeys) ?? normalizeInvoiceNumber(ref);
+
+    if (key && !refs.has(key)) {
+      refs.set(key, ref);
+    }
+  }
+
+  return [...refs.values()];
 }
 
 function readInvoices(
@@ -257,7 +323,10 @@ function readInvoices(
     const cell = (index: number | undefined) => (index === undefined ? undefined : row[index]);
     const invoiceNumber = textOf(cell(columns.invoiceNumber));
 
-    if (isAggregateRow(row) || row.every((value) => textOf(value) === undefined)) {
+    if (
+      isAggregateRow(row, [columns.invoiceNumber, columns.invoiceDate, labelColumn(columnNames)]) ||
+      row.every((value) => textOf(value) === undefined)
+    ) {
       return;
     }
 
@@ -328,12 +397,18 @@ function readPayments(
     table.columns.map((column) => column.name),
     PAYMENT_COLUMN_PATTERNS,
   );
+  const keyColumns = [
+    columns.date,
+    columns.reference,
+    columns.invoiceRef,
+    labelColumn(table.columns.map((column) => column.name)),
+  ];
   let count = 0;
 
   table.rows.forEach((row, rowIndex) => {
     const cell = (index: number | undefined) => (index === undefined ? undefined : row[index]);
 
-    if (isAggregateRow(row) || row.every((value) => textOf(value) === undefined)) {
+    if (isAggregateRow(row, keyColumns) || row.every((value) => textOf(value) === undefined)) {
       return;
     }
 
@@ -370,22 +445,12 @@ function readPayments(
 
     // Invoice references are resolved once every invoice register has been read.
     pending.push(() => {
-      const fromColumn = invoiceRefsIn(rawInvoiceRef, knownKeys);
-      const written = fromColumn.length > 0 ? fromColumn : invoiceRefsIn(narration, knownKeys);
-      const unknown =
-        written.length === 0 && rawInvoiceRef
-          ? rawInvoiceRef
-              .split(/[,;&]|\band\b/i)
-              .map((part) => part.trim())
-              .filter(Boolean)
-          : [];
-
       set.payments.push({
         label: reference ?? `${metadata.name} row ${location.rowRange?.start ?? rowIndex + 2}`,
         ...(reference ? { reference } : {}),
         date,
         amount,
-        invoiceRefs: [...written, ...unknown],
+        invoiceRefs: paymentInvoiceRefs(rawInvoiceRef, narration, knownKeys),
         ...(narration ? { narration } : {}),
         documentId: metadata.id,
         documentName: metadata.name,

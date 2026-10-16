@@ -96,6 +96,23 @@ describe("MSME review checks", () => {
     ]);
   });
 
+  it("does not accept a rupee amount that only matches a figure in days", async () => {
+    const reconciliation = await reconcileMsmeFixtureAsync();
+    const check = quotedAmountsCheck(
+      [section("Proposed follow-up draft", "Interest of Rs 60 is due.")],
+      expectedPaymentFigures(reconciliation),
+      reconciliation,
+    );
+    const issues = check([
+      finding({
+        taskId: "task-documents",
+        figures: [{ key: "agreed-credit-days", label: "Credit period", value: 60, unit: "days" }],
+      }),
+    ]);
+
+    expect(issues.map((issue) => issue.key)).toEqual(["amount:60"]);
+  });
+
   it("flags dates that are not in the records or findings", async () => {
     const reconciliation = await reconcileMsmeFixtureAsync();
     const check = quotedDatesCheck(

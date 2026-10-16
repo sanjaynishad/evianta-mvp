@@ -110,6 +110,8 @@ export function quotedRupeeAmounts(text: string): MsmeQuotedAmount[] {
   });
 }
 
+const RUPEE_UNIT = /^(inr|rs\.?|rupees?)$/i;
+
 function knownAmounts(
   findings: readonly VerificationFinding[],
   expected: readonly MsmeExpectedFigure[],
@@ -119,6 +121,10 @@ function knownAmounts(
 
   for (const finding of findings) {
     for (const figure of finding.figures ?? []) {
+      if (figure.unit !== undefined && !RUPEE_UNIT.test(figure.unit.trim())) {
+        continue;
+      }
+
       values.add(Math.abs(figure.value));
 
       for (const component of figure.components ?? []) {

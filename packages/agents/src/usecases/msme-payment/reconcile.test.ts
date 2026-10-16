@@ -58,12 +58,38 @@ describe("readPaymentRecords", () => {
     const payments = [
       "Date,Reference,Amount,Narration",
       "2024-12-20,CHQ-1,60000,Part payment against INV-1002",
-      "Total,,60000,",
+      "2024-12-21,CHQ-2,1000,Balance payment against invoice 1001",
+      "2024-12-22,CHQ-3,500,Total settlement",
+      "Total,,61500,",
     ].join("\n");
     const records = readPaymentRecords(await fixtureDocumentsAsync(INVOICES_CSV, payments));
 
-    expect(records.payments).toHaveLength(1);
-    expect(records.payments[0]?.invoiceRefs).toEqual(["INV-1002"]);
+    expect(records.payments.map((payment) => [payment.label, payment.invoiceRefs])).toEqual([
+      ["CHQ-1", ["INV-1002"]],
+      ["CHQ-2", ["invoice 1001"]],
+      ["CHQ-3", []],
+    ]);
+  });
+
+  it("keeps written references to invoices that are not in the register", async () => {
+    const payments = [
+      "Payment Date,UTR,Invoice Ref,Amount Received,Narration",
+      "2025-01-25,UTR1,,58000,Part payment against INV-0999",
+      "2025-01-26,UTR2,INV-1002; INV-0998,50000,",
+      "2025-01-27,UTR3,N/A,112000,",
+    ].join("\n");
+    const reconciliation = await reconcileFixtureAsync(INVOICES_CSV, payments);
+
+    expect(reconciliation.unallocated.map((item) => [item.payment.label, item.reason])).toEqual([
+      ["UTR1", "it references INV-0999, and INV-0999 is not in the invoice register"],
+      [
+        "UTR2",
+        "it references INV-1002, INV-0998, and INV-0998 is not in the invoice register, so the split cannot be confirmed",
+      ],
+    ]);
+    expect(
+      reconciliation.lines.find((line) => line.invoice.invoiceNumber === "INV-1003")?.allocations,
+    ).toEqual([expect.objectContaining({ method: "amount-match", amount: 112000 })]);
   });
 
   it("reports unreadable amounts instead of reading them as zero", async () => {
@@ -113,9 +139,31 @@ describe("credit terms", () => {
     expect(resolution.terms).toBeUndefined();
     expect(resolution.conflicts.map((conflict) => conflict.creditDays)).toEqual([60, 30]);
   });
+
+  it("reads every credit clause on a page so conflicts on one page are caught", () => {
+    const order = textDocument("doc-po", "po.pdf", [
+      "Payment terms: 30 days from the date of invoice\nRevised payment terms: 60 days from the date of invoice",
+    ]);
+
+    expect(resolveCreditTerms([order]).conflicts.map((conflict) => conflict.creditDays)).toEqual([
+      30, 60,
+    ]);
+  });
 });
 
 describe("reconcilePayments", () => {
+  it("leaves invoices dated after the as-of date out of the totals", async () => {
+    const reconciliation = await reconcileFixtureAsync(INVOICES_CSV, PAYMENTS_CSV, "2025-01-01");
+
+    expect(reconciliation.laterInvoices.map((invoice) => invoice.invoiceNumber)).toEqual([
+      "INV-1005",
+    ]);
+    expect(reconciliation.lines.map((line) => line.invoice.invoiceNumber)).not.toContain(
+      "INV-1005",
+    );
+    expect(reconciliation.totals.invoiced).toBe(420000);
+  });
+
   it("computes the exact outstanding amount with seeded partial payments", async () => {
     const reconciliation = await reconcileFixtureAsync();
     const byInvoice = Object.fromEntries(
@@ -161,7 +209,7 @@ describe("reconcilePayments", () => {
     expect(reconciliation.unallocated).toEqual([
       expect.objectContaining({
         amount: 5000,
-        reason: "it references INV-0999, which is not in the invoice register",
+        reason: "it references INV-0999, and INV-0999 is not in the invoice register",
       }),
     ]);
   });

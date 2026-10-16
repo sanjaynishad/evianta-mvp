@@ -3,7 +3,12 @@ import type { ConfidenceLevel, Evidence, Finding } from "@evianta/core";
 import type { EvidenceReference } from "../../findings.js";
 import { truncate } from "../../text.js";
 import { formatInrAmount } from "./constants.js";
-import { normalizeInvoiceNumber, recordLocationLabel, type InvoiceRecord } from "./records.js";
+import {
+  normalizeInvoiceNumber,
+  recordLocationLabel,
+  resolveInvoiceKey,
+  type InvoiceRecord,
+} from "./records.js";
 import type { InvoiceLine, PaymentReconciliation } from "./reconcile.js";
 
 export const DOCUMENT_EVENT_KINDS = [
@@ -84,6 +89,23 @@ export function parseDocumentEventKey(
 }
 
 const STATED_AMOUNT_PREFIX = "stated-invoice-amount:";
+
+/** Maps invoice keys read from documents ("1002") onto register keys ("INV1002") where unambiguous. */
+function alignToRegister(
+  reconciliation: PaymentReconciliation,
+  facts: DocumentFacts,
+): DocumentFacts {
+  const registerKeys = new Set(reconciliation.records.invoices.map((invoice) => invoice.key));
+  const align = (key: string) => resolveInvoiceKey(key, registerKeys) ?? key;
+
+  return {
+    events: facts.events.map((event) => ({ ...event, invoiceKeys: event.invoiceKeys.map(align) })),
+    statedAmounts: facts.statedAmounts.map((stated) => ({
+      ...stated,
+      invoiceKey: align(stated.invoiceKey),
+    })),
+  };
+}
 
 /** Events and stated invoice amounts recorded by the document analysis findings. */
 export function documentFactsFromFindings(findings: readonly Finding[]): DocumentFacts {
@@ -245,8 +267,9 @@ function dueDateEvents(reconciliation: PaymentReconciliation): ChronologyEvent[]
  */
 export function buildChronology(
   reconciliation: PaymentReconciliation,
-  facts: DocumentFacts,
+  documentFacts: DocumentFacts,
 ): ChronologyEvent[] {
+  const facts = alignToRegister(reconciliation, documentFacts);
   const events: ChronologyEvent[] = [];
   const lineByKey = new Map(reconciliation.lines.map((line) => [line.invoice.key, line]));
 
@@ -360,8 +383,9 @@ function hasDeliveryFor(facts: DocumentFacts, invoiceKey: string): boolean {
 /** Documents a reviewer would expect but that are not in the case. */
 export function findMissingDocuments(
   reconciliation: PaymentReconciliation,
-  facts: DocumentFacts,
+  documentFacts: DocumentFacts,
 ): EvidenceGap[] {
+  const facts = alignToRegister(reconciliation, documentFacts);
   const gaps: EvidenceGap[] = [];
   const registerKeys = new Set(reconciliation.lines.map((line) => line.invoice.key));
 
@@ -437,8 +461,9 @@ export function findMissingDocuments(
 /** Amount and date mismatches between the documents, plus record issues found while reconciling. */
 export function findInconsistencies(
   reconciliation: PaymentReconciliation,
-  facts: DocumentFacts,
+  documentFacts: DocumentFacts,
 ): EvidenceGap[] {
+  const facts = alignToRegister(reconciliation, documentFacts);
   const gaps: EvidenceGap[] = [];
   const lineByKey = new Map(reconciliation.lines.map((line) => [line.invoice.key, line]));
 

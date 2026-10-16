@@ -48,10 +48,31 @@ describe("citationsForRoute", () => {
     expect(wrongSection).toEqual([]);
   });
 
-  it("matches named schemes and ignores routes with nothing to match", () => {
+  it("matches named schemes on the cited site and never without a cited site", () => {
+    expect(
+      citationsForRoute(
+        route({
+          name: "MSME Samadhaan portal",
+          summary: "s",
+          sourceUrls: ["https://samadhaan-reference.example/home"],
+        }),
+        citations,
+      ),
+    ).toHaveLength(1);
     expect(
       citationsForRoute(route({ name: "MSME Samadhaan portal", summary: "s" }), citations),
-    ).toHaveLength(1);
+    ).toEqual([]);
+    expect(
+      citationsForRoute(
+        route({
+          name: "Reference to the council",
+          reference: "section 18",
+          summary: "s",
+          sourceUrls: ["https://other-law.example/act"],
+        }),
+        citations,
+      ),
+    ).toEqual([]);
     expect(citationsForRoute(route({ name: "Negotiation", summary: "s" }), citations)).toEqual([]);
   });
 });

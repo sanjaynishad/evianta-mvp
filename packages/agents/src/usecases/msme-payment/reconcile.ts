@@ -1,7 +1,7 @@
 import { MSMED_MAX_CREDIT_DAYS } from "./constants.js";
 import { addDays, daysBetween, todayIsoDate } from "./dates.js";
 import {
-  normalizeInvoiceNumber,
+  resolveInvoiceKey,
   type InvoiceRecord,
   type PaymentRecord,
   type PaymentRecordSet,
@@ -69,6 +69,8 @@ export interface PaymentReconciliation {
   terms?: CreditTerms;
   termsConflicts: CreditTermsResolution["conflicts"];
   lines: InvoiceLine[];
+  /** Invoices dated after the as-of date, left out of the totals. */
+  laterInvoices: InvoiceRecord[];
   unallocated: UnallocatedPayment[];
   issues: ReconciliationIssue[];
   totals: PaymentTotals;
@@ -133,8 +135,11 @@ export function reconcilePayments(
 ): PaymentReconciliation {
   const asOfDate = options.asOfDate ?? todayIsoDate();
   const tolerance = options.tolerance ?? DEFAULT_PAYMENT_TOLERANCE;
+  const laterInvoices = records.invoices.filter(
+    (invoice) => invoice.invoiceDate !== undefined && invoice.invoiceDate > asOfDate,
+  );
   const lines: WorkingLine[] = records.invoices
-    .filter((invoice) => invoice.amount !== undefined)
+    .filter((invoice) => invoice.amount !== undefined && !laterInvoices.includes(invoice))
     .sort(byDateThenRow((invoice) => invoice.invoiceDate))
     .map((invoice) => ({
       invoice,
@@ -143,6 +148,7 @@ export function reconcilePayments(
       allocations: [],
     }));
   const byKey = new Map(lines.map((line) => [line.invoice.key, line]));
+  const registerKeys = new Set(records.invoices.map((invoice) => invoice.key));
   const unallocated: UnallocatedPayment[] = [];
   const issues: ReconciliationIssue[] = [];
   const unreferenced: PaymentRecord[] = [];
@@ -156,24 +162,45 @@ export function reconcilePayments(
       continue;
     }
 
-    const known = payment.invoiceRefs
-      .map((ref) => byKey.get(normalizeInvoiceNumber(ref)))
-      .filter((line): line is WorkingLine => line !== undefined);
-
-    if (known.length === 0) {
-      if (payment.invoiceRefs.length > 0) {
-        unallocated.push({
-          payment,
-          amount,
-          reason: `it references ${describeRefs(payment.invoiceRefs)}, which is not in the invoice register`,
-        });
-      } else {
-        unreferenced.push(payment);
-      }
-
+    if (payment.invoiceRefs.length === 0) {
+      unreferenced.push(payment);
       continue;
     }
 
+    const resolved = payment.invoiceRefs.map((ref) => ({
+      ref,
+      line: byKey.get(resolveInvoiceKey(ref, registerKeys) ?? ""),
+    }));
+    const unknownRefs = resolved.filter((entry) => !entry.line).map((entry) => entry.ref);
+
+    // A payment that names any untraceable invoice cannot be split with confidence, so none of it is applied.
+    if (unknownRefs.length > 0) {
+      const known = resolved.flatMap((entry) => (entry.line ? [entry.ref] : []));
+      const later = unknownRefs.filter((ref) => resolveInvoiceKey(ref, registerKeys));
+      const missing = unknownRefs.filter((ref) => !later.includes(ref));
+      const why = [
+        missing.length > 0
+          ? `${describeRefs(missing)} ${missing.length === 1 ? "is" : "are"} not in the invoice register`
+          : undefined,
+        later.length > 0
+          ? `${describeRefs(later)} ${later.length === 1 ? "is" : "are"} dated after the as-of date ${asOfDate}`
+          : undefined,
+      ]
+        .filter(Boolean)
+        .join(" and ");
+
+      unallocated.push({
+        payment,
+        amount,
+        reason:
+          known.length > 0
+            ? `it references ${describeRefs([...known, ...unknownRefs])}, and ${why}, so the split cannot be confirmed`
+            : `it references ${describeRefs(unknownRefs)}, and ${why}`,
+      });
+      continue;
+    }
+
+    const known = resolved.flatMap((entry) => (entry.line ? [entry.line] : []));
     let left = amount;
 
     for (const line of [...new Set(known)]) {
@@ -276,6 +303,7 @@ export function reconcilePayments(
     ...(terms ? { terms } : {}),
     termsConflicts: resolution.conflicts,
     lines: result,
+    laterInvoices,
     unallocated,
     issues,
     totals: {
