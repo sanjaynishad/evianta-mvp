@@ -112,9 +112,11 @@ function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): Colu
   }
 
   const repeats = profile.distinct < profile.filled;
-  const limit = CATEGORY_NAME.test(name) ? MAX_CATEGORY_DISTINCT * 2 : MAX_CATEGORY_DISTINCT;
+  const namedCategory = CATEGORY_NAME.test(name);
+  const limit = namedCategory ? MAX_CATEGORY_DISTINCT * 2 : MAX_CATEGORY_DISTINCT;
 
-  if (profile.distinct <= limit && (repeats || rowCount <= 3)) {
+  // A named category, such as Region in an already aggregated table, need not repeat.
+  if (profile.distinct <= limit && (repeats || namedCategory || rowCount <= 3)) {
     return "category";
   }
 

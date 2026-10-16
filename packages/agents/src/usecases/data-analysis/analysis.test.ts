@@ -403,6 +403,23 @@ describe("analyzeTable", () => {
     expect(metricValue(analysis, "total-amount")).toBe(2.01);
     expect(metricValue(analysis, "average-amount")).toBe(1);
   });
+  it("keeps a named category whose values do not repeat, as in an aggregated table", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "regions.csv",
+      table: await csvTableAsync("Region,Amount\nNorth,10\nSouth,20\nEast,30\nWest,40"),
+    });
+
+    expect(analysis.roles.categories.map((column) => column.name)).toEqual(["Region"]);
+    expect(analysis.segments[0]?.segments.map((segment) => [segment.label, segment.total])).toEqual(
+      [
+        ["West", 40],
+        ["East", 30],
+        ["South", 20],
+        ["North", 10],
+      ],
+    );
+  });
   it("fails clearly when a table has no amount column", async () => {
     const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");
 
