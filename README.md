@@ -23,7 +23,7 @@ packages/
   config/  shared TypeScript config
   env/     environment variables as typed constants
   core/    domain model and Zod schemas
-  ai/      Genkit setup and Gemini/Gemma provider selection
+  ai/      model tiers, structured runs, grounding, cost accounting, and a mock provider
   agents/  coordinator, specialist, and verification agents
   store/   Firestore repositories and Cloud Storage document store
 ```
@@ -36,6 +36,8 @@ packages/
 
 ## Configuration
 
-Copy `.env.example` to `.env` and set values. `EVIANTA_AI_PROVIDER` selects `googleai` (Gemini Developer API, local dev) or `vertexai` (production on Cloud Run).
+Copy `.env.example` to `.env` and set values. `EVIANTA_AI_PROVIDER` selects `googleai` (Gemini Developer API, local dev), `vertexai` (production on Cloud Run), or `mock` (scripted outputs, no network or keys). Tests always use the mock provider.
+
+AI token prices live in [pricing.ts](packages/ai/src/pricing.ts). Costs are calculated per attempt, including failed attempts, then summed across retries. High-tier attempts with more than 200,000 input tokens use $2.50 per million input tokens and $15 per million output tokens, including thinking tokens. `estimateCost` accepts usage for a single attempt, not combined retry usage. Grounding request fees are not included.
 
 The store reads `GCS_BUCKET` for uploaded file bytes. `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.

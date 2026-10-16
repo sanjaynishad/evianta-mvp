@@ -1,5 +1,6 @@
 export * from "./agents.js";
 export * from "./case.js";
+export * from "./citation.js";
 export * from "./deliverable.js";
 export * from "./document.js";
 export * from "./events.js";

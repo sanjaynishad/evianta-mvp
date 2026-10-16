@@ -1,7 +1,14 @@
-export type AiProvider = "googleai" | "vertexai";
+export const aiProviders = ["googleai", "vertexai", "mock"] as const;
 
-export const aiProvider: AiProvider =
-  process.env.EVIANTA_AI_PROVIDER === "vertexai" ? "vertexai" : "googleai";
+export type AiProvider = (typeof aiProviders)[number];
+
+export function parseAiProvider(value: string | undefined): AiProvider {
+  const normalized = value?.trim().toLowerCase();
+
+  return aiProviders.find((provider) => provider === normalized) ?? "googleai";
+}
+
+export const aiProvider: AiProvider = parseAiProvider(process.env.EVIANTA_AI_PROVIDER);
 
 export const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? "";
 
