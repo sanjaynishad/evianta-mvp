@@ -26,6 +26,7 @@ import type {
   OpenQuestionUpdate,
   SectionUpdate,
   TaskUpdate,
+  UsageCharge,
 } from "./types.js";
 
 export const defaultCasePageSize = 50;
@@ -155,6 +156,30 @@ export function applyTaskUpdate(current: Task, update: TaskUpdate): Task {
   }
 
   return taskSchema.parse(next);
+}
+
+export function applyTaskCharge(current: Task, charge: UsageCharge): Task {
+  const input = charge.inputTokens ?? 0;
+  const output = charge.outputTokens ?? 0;
+  const usage = current.tokenUsage ?? { input: 0, output: 0, total: 0 };
+
+  return applyTaskUpdate(current, {
+    tokenUsage: {
+      input: usage.input + input,
+      output: usage.output + output,
+      total: usage.total + (charge.totalTokens ?? input + output),
+    },
+    costEstimate: (current.costEstimate ?? 0) + (charge.costEstimate ?? 0),
+  });
+}
+
+export interface StoredLease {
+  owner: string;
+  expiresAt: number;
+}
+
+export function isLeaseHeld(lease: StoredLease | undefined, owner: string): boolean {
+  return lease !== undefined && lease.owner === owner && lease.expiresAt > Date.now();
 }
 
 export function findingHasQuestion(finding: Finding, questionId: string): boolean {
