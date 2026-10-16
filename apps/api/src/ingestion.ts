@@ -17,6 +17,8 @@ export type IngestFunction = (request: IngestDocumentRequest) => Promise<IngestR
 export interface DocumentIngestionState {
   status: "processing" | "partial" | "failed";
   error?: string;
+  /** False when the file itself cannot be read, so extracting it again would not help. */
+  retryable?: boolean;
   /** The uncached result of a partial extraction, kept so the UI can show what was read. */
   extraction?: ExtractedDocument;
 }
@@ -24,7 +26,11 @@ export interface DocumentIngestionState {
 export interface IngestionService {
   /** Starts extraction off the request thread; failures are recorded, never thrown. */
   enqueue(document: DocumentMetadata): void;
-  /** Waits for in-flight work, then extracts every document of the case that has no cached extraction. */
+  /**
+   * Waits for in-flight work, then extracts every document of the case that has no cached
+   * extraction. Throws DocumentsUnavailableError when a document is still unread for a reason a
+   * later attempt may fix, so a run does not proceed without it.
+   */
   ensureCaseExtractedAsync(caseId: string): Promise<void>;
   stateOf(caseId: string, documentId: string): DocumentIngestionState | undefined;
   idleAsync(): Promise<void>;
@@ -40,6 +46,29 @@ export interface IngestionServiceOptions {
 
 function keyOf(caseId: string, documentId: string): string {
   return `${caseId}\u0000${documentId}`;
+}
+
+export interface UnavailableDocument {
+  id: string;
+  name: string;
+  error?: string;
+}
+
+export class DocumentsUnavailableError extends Error {
+  constructor(readonly documents: UnavailableDocument[]) {
+    super(
+      `Could not read ${documents.map((document) => `"${document.name}"`).join(", ")} yet, so ` +
+        "the run did not start. Start the run again to retry.",
+    );
+    this.name = "DocumentsUnavailableError";
+  }
+}
+
+function isPermanentIngestError(error: unknown): boolean {
+  return (
+    error instanceof UnsupportedDocumentTypeError ||
+    (error instanceof DocumentExtractionError && !(error instanceof OcrExtractionError))
+  );
 }
 
 function describeIngestError(error: unknown): string {
@@ -102,6 +131,7 @@ export function createIngestionService(options: IngestionServiceOptions): Ingest
           states.set(key, {
             status: "partial",
             error: `OCR failed on page(s) ${result.failedPages.join(", ")}. They are retried when the case runs.`,
+            retryable: true,
             extraction: result.extraction,
           });
         } else {
@@ -112,7 +142,11 @@ export function createIngestionService(options: IngestionServiceOptions): Ingest
           await recordUsageAsync(document.caseId, error.usage, error.cost);
         }
 
-        states.set(key, { status: "failed", error: describeIngestError(error) });
+        states.set(key, {
+          status: "failed",
+          error: describeIngestError(error),
+          retryable: !isPermanentIngestError(error),
+        });
         logger.warn("Document extraction failed.", {
           caseId: document.caseId,
           documentId: document.id,
@@ -134,10 +168,25 @@ export function createIngestionService(options: IngestionServiceOptions): Ingest
     },
     async ensureCaseExtractedAsync(caseId) {
       const documents = await store.documents.getDocumentsForCaseAsync(caseId);
+      const unavailable: UnavailableDocument[] = [];
 
       for (const document of documents) {
         await inFlight.get(keyOf(caseId, document.id));
         await ingestAsync(document);
+
+        const state = states.get(keyOf(caseId, document.id));
+
+        if (state?.retryable) {
+          unavailable.push({
+            id: document.id,
+            name: document.name,
+            ...(state.error ? { error: state.error } : {}),
+          });
+        }
+      }
+
+      if (unavailable.length > 0) {
+        throw new DocumentsUnavailableError(unavailable);
       }
     },
     stateOf(caseId, documentId) {

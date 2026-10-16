@@ -141,13 +141,14 @@ export function describeLocation(location: EvidenceLocation | undefined): string
   return parts.join(", ");
 }
 
+// Splits on unescaped pipes only; `\|` inside a cell is a literal pipe.
 function splitTableRow(line: string): string[] {
   return line
     .trim()
     .replace(/^\|/, "")
-    .replace(/\|$/, "")
-    .split("|")
-    .map((cell) => cell.trim());
+    .replace(/(?<!\\)\|$/, "")
+    .split(/(?<!\\)\|/)
+    .map((cell) => cell.trim().replace(/\\\|/g, "|"));
 }
 
 function isSeparatorRow(cells: readonly string[]): boolean {
@@ -454,11 +455,16 @@ function sheetName(title: string, used: Set<string>): string {
   return name;
 }
 
-function toCellValue(text: string): string | number {
-  const normalized = text.replace(/[,\s]/g, "").replace(/^(Rs\.?|INR|₹)/i, "");
+// Converts plain amounts such as "2,40,000" or "Rs. 1,200.50" to numbers, but keeps identifiers
+// such as "00104" or "123 456" as text so the export matches the reviewed content.
+export function toCellValue(text: string): string | number {
+  const amount = text
+    .trim()
+    .replace(/^(Rs\.?|INR|\u20b9)\s*/i, "")
+    .replace(/,/g, "");
 
-  if (/^-?\d+(\.\d+)?$/.test(normalized) && normalized.length <= 15) {
-    return Number(normalized);
+  if (/^-?(0|[1-9]\d{0,14})(\.\d+)?$/.test(amount)) {
+    return Number(amount);
   }
 
   return text;
@@ -487,6 +493,19 @@ export async function exportXlsxAsync(input: ExportInput): Promise<ExportFile> {
     { header: "Evidence", key: "evidence", width: 16 },
   ];
   sections.getRow(1).font = { bold: true };
+
+  if (deliverable.content) {
+    sections.addRow({
+      title: deliverable.title,
+      kind: "text",
+      role: "",
+      status: "",
+      edited: "no",
+      content: deliverable.content,
+      comment: "",
+      evidence: "",
+    });
+  }
 
   for (const section of deliverable.sections) {
     sections.addRow({

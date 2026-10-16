@@ -1,4 +1,6 @@
 import { askCaseAsync } from "@evianta/agents";
+import { AiError } from "@evianta/ai";
+import type { TokenUsage } from "@evianta/core";
 import { Router } from "express";
 import { z } from "zod";
 
@@ -91,24 +93,29 @@ export function createReviewRoutes(ctx: ApiContext): Router {
       await getCaseOrThrowAsync(ctx, caseId);
 
       const writer = openEventStream(res);
+      const recordUsageAsync = async (usage: TokenUsage, cost: number) => {
+        if (usage.total <= 0 && cost <= 0) {
+          return;
+        }
+
+        try {
+          await store.cases.updateCaseUsageAsync(caseId, {
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            costEstimate: cost,
+          });
+        } catch (error) {
+          ctx.logger.warn("Could not record case assistant usage.", {
+            caseId,
+            error: messageOf(error),
+          });
+        }
+      };
 
       try {
         const result = await askCaseAsync({ caseId, question }, { store, ai: ctx.ai });
 
-        if (result.usage.total > 0 || result.cost > 0) {
-          await store.cases
-            .updateCaseUsageAsync(caseId, {
-              inputTokens: result.usage.input,
-              outputTokens: result.usage.output,
-              costEstimate: result.cost,
-            })
-            .catch((error: unknown) => {
-              ctx.logger.warn("Could not record case assistant usage.", {
-                caseId,
-                error: messageOf(error),
-              });
-            });
-        }
+        await recordUsageAsync(result.usage, result.cost);
 
         const text = result.status === "answered" ? result.answer : result.message;
 
@@ -119,6 +126,11 @@ export function createReviewRoutes(ctx: ApiContext): Router {
         writer.send("answer", result);
       } catch (error) {
         ctx.logger.warn("Case assistant failed.", { caseId, error: messageOf(error) });
+
+        if (error instanceof AiError) {
+          await recordUsageAsync(error.usage, error.cost);
+        }
+
         writer.send("error", {
           error: "ask-failed",
           message: "The assistant could not answer right now. Try again.",

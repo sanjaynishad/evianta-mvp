@@ -437,6 +437,23 @@ describe("review actions", () => {
         },
       },
     ]);
+
+    const usageBefore = (await store.cases.getCaseAsync(caseRecord.id))?.usage?.inputTokens ?? 0;
+
+    ai.script("case-assistant", { error: "non-transient", usage: { input: 321, output: 9 } });
+
+    const billedFailure = sseFramesOf(
+      await asText(
+        request(app)
+          .post(`/cases/${caseRecord.id}/ask`)
+          .send({ question: "Why the TDS mismatch?" }),
+      ).expect(200),
+    );
+
+    expect(billedFailure.map((frame) => frame.event)).toEqual(["error"]);
+    expect((await store.cases.getCaseAsync(caseRecord.id))?.usage?.inputTokens).toBe(
+      usageBefore + 321,
+    );
   });
 });
 

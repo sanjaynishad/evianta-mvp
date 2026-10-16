@@ -107,6 +107,11 @@ export function createRunLauncher(options: RunLauncherOptions): RunLauncher {
             status: result.status,
             costEstimate: result.costEstimate,
           });
+
+          // A failed result can mean the terminal event itself could not be stored.
+          if (result.status === "failed") {
+            await recordFailureAsync(caseId, runId, new Error(result.error ?? "The run failed."));
+          }
         } catch (error) {
           logger.warn("Run could not finish.", { caseId, runId, mode, error: messageOf(error) });
           await recordFailureAsync(caseId, runId, error);

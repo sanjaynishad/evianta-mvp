@@ -3,7 +3,7 @@ import JSZip from "jszip";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { parseTable } from "./exports.js";
+import { parseTable, toCellValue } from "./exports.js";
 import { createTestHarness, VISITOR_A } from "./testing/harness.js";
 
 function binary(test: request.Test): request.Test {
@@ -43,6 +43,12 @@ async function seedExportCaseAsync() {
     attempts: 1,
   });
   await store.evidence.addEvidenceAsync(caseRecord.id, evidence);
+  await store.evidence.addEvidenceAsync(caseRecord.id, {
+    id: "e-ledger",
+    sourceRef: "ledger.csv rows 12-14",
+    description: "Ledger shows no receipt against INV-109",
+    location: { rowRange: { start: 12, end: 14 } },
+  });
   await store.findings.addFindingAsync(caseRecord.id, {
     id: "f1",
     taskId: "t1",
@@ -57,6 +63,7 @@ async function seedExportCaseAsync() {
     caseId: caseRecord.id,
     title: "Payment dispute case pack",
     format: "document",
+    content: "Prepared for the MSME Facilitation Council.",
     sections: [
       {
         id: "t1-section-1",
@@ -74,10 +81,11 @@ async function seedExportCaseAsync() {
           "| Invoice | Date | Amount |",
           "| --- | --- | ---: |",
           "| INV-104 | 2024-01-15 | 2,40,000 |",
-          "| INV-109 | 2024-02-02 | 75,500 |",
+          "| 00109 | 2024-02-02 | 75,500 |",
+          "| Acme \\| West | 2024-02-10 | Rs. 1,200.50 |",
         ].join("\n"),
         producedByRole: "payment-reconciliation",
-        evidenceIds: ["e-invoice"],
+        evidenceIds: ["e-invoice", "e-ledger"],
       },
     ],
   });
@@ -118,7 +126,10 @@ describe("deliverable exports", () => {
     expect(text).toContain("Evidence appendix");
     expect(text).toContain("invoices.xlsx Invoices!B4:F4");
     expect(text).toContain("Invoices!B4:F4");
-    expect(text).toContain("INV-109");
+    expect(text).toContain("Prepared for the MSME Facilitation Council.");
+    expect(text).toContain("Evidence: E1, E2");
+    expect(text).toContain("ledger.csv rows 12-14");
+    expect(text).toContain("Acme | West");
   });
 
   it("exports a .xlsx with sections, table sheets, and the evidence appendix", async () => {
@@ -134,14 +145,22 @@ describe("deliverable exports", () => {
     const table = workbook.getWorksheet("Outstanding invoices");
     const appendix = workbook.getWorksheet("Evidence");
 
-    expect(sections?.getRow(2).getCell(1).value).toBe("Statement of claim");
-    expect(sections?.getRow(2).getCell(5).value).toBe("yes");
+    expect(sections?.getRow(2).getCell(1).value).toBe("Payment dispute case pack");
     expect(sections?.getRow(2).getCell(6).value).toBe(
+      "Prepared for the MSME Facilitation Council.",
+    );
+    expect(sections?.getRow(3).getCell(1).value).toBe("Statement of claim");
+    expect(sections?.getRow(3).getCell(5).value).toBe("yes");
+    expect(sections?.getRow(3).getCell(6).value).toBe(
       "Reviewer revised claim for **Rs. 2,40,000** plus interest.",
     );
-    expect(sections?.getRow(2).getCell(8).value).toBe("E1");
+    expect(sections?.getRow(3).getCell(8).value).toBe("E1");
+    expect(sections?.getRow(4).getCell(8).value).toBe("E1, E2");
     expect(table?.getRow(1).values).toEqual([undefined, "Invoice", "Date", "Amount"]);
     expect(table?.getRow(2).values).toEqual([undefined, "INV-104", "2024-01-15", 240000]);
+    expect(table?.getRow(3).values).toEqual([undefined, "00109", "2024-02-02", 75500]);
+    expect(table?.getRow(4).values).toEqual([undefined, "Acme | West", "2024-02-10", 1200.5]);
+    expect(appendix?.getRow(3).getCell(2).value).toBe("ledger.csv rows 12-14");
     expect(appendix?.getRow(2).values).toEqual([
       undefined,
       "E1",
@@ -165,6 +184,7 @@ describe("deliverable exports", () => {
     expect(response.body.findings.map((item: { id: string }) => item.id)).toEqual(["f1"]);
     expect(response.body.evidenceAppendix).toEqual([
       expect.objectContaining({ ref: "E1", id: "e-invoice" }),
+      expect.objectContaining({ ref: "E2", id: "e-ledger" }),
     ]);
   });
 
@@ -182,5 +202,19 @@ describe("deliverable exports", () => {
       rows: [["1"], ["2"]],
     });
     expect(parseTable("No table here.")).toBeUndefined();
+    expect(parseTable("| Party | Amount |\n|---|---|\n| Acme \\| West | 10 |")?.rows).toEqual([
+      ["Acme | West", "10"],
+    ]);
+  });
+
+  it("converts plain amounts but keeps identifiers as text", () => {
+    expect(toCellValue("2,40,000")).toBe(240000);
+    expect(toCellValue("Rs. 1,200.50")).toBe(1200.5);
+    expect(toCellValue("-75")).toBe(-75);
+    expect(toCellValue("0.5")).toBe(0.5);
+    expect(toCellValue("00104")).toBe("00104");
+    expect(toCellValue("123 456")).toBe("123 456");
+    expect(toCellValue("2024-01-15")).toBe("2024-01-15");
+    expect(toCellValue("1234567890123456789")).toBe("1234567890123456789");
   });
 });

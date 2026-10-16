@@ -1,4 +1,6 @@
 import { createDefaultTaskHandlers, type TaskHandler } from "@evianta/agents";
+import { DocumentExtractionError } from "@evianta/ingest";
+import { createInMemoryStore } from "@evianta/store";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
@@ -121,8 +123,6 @@ describe("case lifecycle over HTTP", () => {
     expect(
       frames.every((frame) => (frame.data as { runId: string }).runId === run.body.runId),
     ).toBe(true);
-
-    await app.idleAsync();
 
     const state = await request(app).get(`/cases/${caseId}`).expect(200);
 
@@ -261,7 +261,6 @@ describe("case lifecycle over HTTP", () => {
     );
 
     expect(failedRun.at(-1)).toMatchObject({ event: "run-failed" });
-    await app.idleAsync();
 
     const before = await request(app).get(`/cases/${caseId}`).expect(200);
     const statusByRole = Object.fromEntries(
@@ -297,8 +296,6 @@ describe("case lifecycle over HTTP", () => {
       "response-preparation",
       "independent-review",
     ]);
-
-    await app.idleAsync();
 
     const nothingLeft = await request(app).post(`/cases/${caseId}/retry`).expect(409);
 
@@ -382,5 +379,123 @@ describe("case lifecycle over HTTP", () => {
 
     expect(file.headers["content-type"]).toBe("application/pdf");
     expect(file.headers["content-disposition"]).toContain('inline; filename="receipt.pdf"');
+  });
+
+  it("does not start a run while a document is unread for a retryable reason", async () => {
+    let ocrAvailable = false;
+    const { app, ai } = createTestHarness({
+      async ingest({ caseId, document, store }) {
+        if (document.name === "corrupt.xlsx") {
+          throw new DocumentExtractionError(document.id, "The workbook is damaged.");
+        }
+
+        if (!ocrAvailable) {
+          throw new Error("OCR service unavailable");
+        }
+
+        const extraction = await store.documents.saveExtractionAsync(caseId, {
+          documentId: document.id,
+          kind: "text",
+          method: "ocr",
+          confidence: 0.9,
+          pages: [{ index: 1, text: "Notice text", method: "ocr", confidence: 0.9 }],
+        });
+
+        return {
+          extraction,
+          usage: { input: 0, output: 0, total: 0 },
+          cost: 0,
+          pageUsage: [],
+          failedPages: [],
+          cached: false,
+        };
+      },
+    });
+    const caseId = await createCaseAsync(app);
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF");
+    const xlsx = Buffer.from("PK\u0003\u0004 xl/workbook.xml", "latin1");
+
+    await request(app)
+      .post(`/cases/${caseId}/documents`)
+      .attach("files", pdf, { filename: "scan.pdf", contentType: "application/pdf" })
+      .attach("files", xlsx, {
+        filename: "corrupt.xlsx",
+        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      })
+      .expect(201);
+    await app.idleAsync();
+
+    const blocked = await request(app).post(`/cases/${caseId}/run`).expect(202);
+    const blockedFrames = sseFramesOf(
+      await asText(request(app).get(`/cases/${caseId}/stream`)).expect(200),
+    );
+
+    expect(blockedFrames).toEqual([
+      expect.objectContaining({
+        event: "run-failed",
+        data: expect.objectContaining({ runId: blocked.body.runId }),
+      }),
+    ]);
+    expect((blockedFrames[0]?.data as { error: string }).error).toContain('"scan.pdf"');
+    expect((blockedFrames[0]?.data as { error: string }).error).not.toContain("corrupt.xlsx");
+
+    ocrAvailable = true;
+    ai.script("business-data-analyst", specialistStep([finding("Notice reviewed")]));
+
+    await request(app).post(`/cases/${caseId}/run`).expect(202);
+
+    const completed = sseFramesOf(
+      await asText(request(app).get(`/cases/${caseId}/stream`).query({ after: 1 })).expect(200),
+    );
+    const state = await request(app).get(`/cases/${caseId}`).expect(200);
+
+    expect(completed.at(-1)?.event).toBe("run-completed");
+    expect(
+      Object.fromEntries(
+        state.body.documents.map((document: { name: string; status: string }) => [
+          document.name,
+          document.status,
+        ]),
+      ),
+    ).toEqual({ "scan.pdf": "ready", "corrupt.xlsx": "failed" });
+  });
+
+  it("records a terminal event when the orchestrator could not store its own", async () => {
+    const store = createInMemoryStore();
+    const appendEventAsync = store.events.appendEventAsync.bind(store.events);
+    let failedTerminalWrites = 0;
+
+    store.events.appendEventAsync = async (caseId, event) => {
+      if (
+        (event.type === "run-completed" || event.type === "run-failed") &&
+        failedTerminalWrites === 0
+      ) {
+        failedTerminalWrites += 1;
+
+        throw new Error("Firestore unavailable");
+      }
+
+      return appendEventAsync(caseId, event);
+    };
+
+    const { app } = createTestHarness({
+      store,
+      script: { "business-data-analyst": specialistStep([finding("Done")]) },
+    });
+    const caseId = await createCaseAsync(app);
+    const run = await request(app).post(`/cases/${caseId}/run`).expect(202);
+    const frames = sseFramesOf(
+      await asText(request(app).get(`/cases/${caseId}/stream`)).expect(200),
+    );
+
+    expect(failedTerminalWrites).toBe(1);
+    expect(idsOf(frames)).toEqual(range(1, frames.length));
+    expect(frames.at(-1)).toMatchObject({
+      event: "run-failed",
+      data: { runId: run.body.runId },
+    });
+    expect((frames.at(-1)?.data as { error: string }).error).toContain(
+      "Could not record the terminal event",
+    );
   });
 });

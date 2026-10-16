@@ -56,15 +56,16 @@ export function createDeliverableRoutes(ctx: ApiContext): Router {
       const { caseId, deliverableId } = deliverableParamsSchema.parse(req.params);
       const { format } = exportQuerySchema.parse(req.query);
       const caseRecord = await getCaseOrThrowAsync(ctx, caseId);
-      const [deliverable, record] = await Promise.all([
+      const [deliverable, record, evidence] = await Promise.all([
         getDeliverableOrThrowAsync(caseId, deliverableId),
         loadActiveRecordAsync(store, caseId),
+        store.evidence.getEvidenceForCaseAsync(caseId),
       ]);
       const file = await exportDeliverableAsync(format, {
         caseRecord,
         deliverable,
         findings: record.findings,
-        evidence: record.evidence,
+        evidence,
         generatedAt: ctx.now(),
       });
 

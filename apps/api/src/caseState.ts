@@ -152,20 +152,28 @@ export async function loadActiveRecordAsync(
   };
 }
 
+/**
+ * Reads the run cursor before the rest of the state, so streaming after `run.lastEventSeq` never
+ * misses a change that the returned state does not already include.
+ */
 export async function loadCaseStateAsync(
   store: Store,
   ingestion: IngestionService,
   runs: RunLauncher,
-  caseRecord: Case,
-): Promise<CaseStateView> {
-  const caseId = caseRecord.id;
-  const [record, deliverables, documents, events] = await Promise.all([
+  caseId: string,
+): Promise<CaseStateView | undefined> {
+  const active = runs.isActive(caseId);
+  const lastEvent = (await store.events.listEventsAsync(caseId)).at(-1);
+  const [caseRecord, record, deliverables, documents] = await Promise.all([
+    store.cases.getCaseAsync(caseId),
     loadActiveRecordAsync(store, caseId),
     store.deliverables.getDeliverablesForCaseAsync(caseId),
     loadDocumentViewsAsync(store, ingestion, caseId),
-    store.events.listEventsAsync(caseId),
   ]);
-  const lastEvent = events.at(-1);
+
+  if (!caseRecord) {
+    return undefined;
+  }
 
   return {
     case: caseRecord,
@@ -176,7 +184,7 @@ export async function loadCaseStateAsync(
     documents,
     cost: costOf(caseRecord),
     run: {
-      active: runs.isActive(caseId),
+      active,
       lastEventSeq: lastEvent?.seq ?? 0,
       ...(lastEvent ? { lastRunId: lastEvent.runId, lastEventType: lastEvent.type } : {}),
     },

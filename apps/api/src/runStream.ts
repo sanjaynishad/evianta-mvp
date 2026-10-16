@@ -49,7 +49,8 @@ export function resolveStreamCursor(req: Request): number {
 
 /**
  * Replays persisted events after the cursor, then tails the live bus, deduplicating by seq and
- * filling any gap from the store. Closes after a terminal event once no run is active.
+ * filling any gap from the store. Closes after a terminal event once the run has released the case,
+ * so a client that sees the stream end can immediately retry or approve.
  */
 export async function streamRunEventsAsync(
   req: Request,
@@ -105,10 +106,7 @@ export async function streamRunEventsAsync(
     }
 
     send(event);
-
-    if (isTerminalRunEvent(event)) {
-      finish();
-    }
+    finishIfDone();
   };
 
   const enqueue = (work: () => Promise<void> | void) => {
@@ -134,7 +132,12 @@ export async function streamRunEventsAsync(
     enqueue(() => deliverAsync(event));
   });
   const unsubscribeSettled = runs.onSettled(caseId, () => enqueue(finishIfDone));
-  const heartbeat = setInterval(() => writer.comment("heartbeat"), heartbeatMs);
+  // The settle listener closes the stream once the run's lock is released; the heartbeat check
+  // also covers runs started outside the launcher.
+  const heartbeat = setInterval(() => {
+    writer.comment("heartbeat");
+    enqueue(finishIfDone);
+  }, heartbeatMs);
 
   heartbeat.unref();
 

@@ -30,10 +30,11 @@ export interface TestHarnessOptions {
   config?: Partial<ApiConfig>;
   handlers?: TaskHandlerRegistry;
   ingest?: IngestFunction;
+  store?: Store;
 }
 
 export function createTestHarness(options: TestHarnessOptions = {}): TestHarness {
-  const store = createInMemoryStore();
+  const store = options.store ?? createInMemoryStore();
   const documentStore = createInMemoryDocumentStore();
   const ai = createMockAi(options.script ?? {});
   const orchestrator = createOrchestrator({

@@ -151,9 +151,13 @@ export function createCaseRoutes(ctx: ApiContext): Router {
     "/cases/:caseId",
     asyncRoute(async (req, res) => {
       const { caseId } = caseParamsSchema.parse(req.params);
-      const caseRecord = await getCaseOrThrowAsync(ctx, caseId);
+      const state = await loadCaseStateAsync(store, ctx.ingestion, ctx.runs, caseId);
 
-      res.json(await loadCaseStateAsync(store, ctx.ingestion, ctx.runs, caseRecord));
+      if (!state) {
+        throw notFoundError("case");
+      }
+
+      res.json(state);
     }),
   );
 
