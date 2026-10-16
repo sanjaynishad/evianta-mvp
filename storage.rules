@@ -1,0 +1,11 @@
+rules_version = '2';
+
+// Used only by the local Storage emulator. The server reaches Storage through the
+// Cloud Storage API, which these rules do not gate, so client SDK access stays closed.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
