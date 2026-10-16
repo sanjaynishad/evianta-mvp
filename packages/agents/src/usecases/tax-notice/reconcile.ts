@@ -277,14 +277,15 @@ function statusOf(
   missingIn: readonly TaxRecordSource[],
   tolerance: number,
 ): ReconciliationStatus {
-  if (missingIn.length > 0) {
-    return "missing";
-  }
-
   const present = Object.values(values).filter((entry): entry is SourceValues => !!entry);
 
+  // Unreadable values take precedence so the line is flagged as incomplete; missingIn is kept.
   if (present.some((entry) => entry.unreadable.length > 0)) {
     return "incomplete";
+  }
+
+  if (missingIn.length > 0) {
+    return "missing";
   }
 
   const agrees = MEASURES.every((measure) =>
@@ -347,7 +348,7 @@ export function reconcileTaxRecords(
   );
   const provided = new Set(providedSources);
   const { reconciled, corroborating } = partitionTaxCreditStatements(records.tables);
-  const { tables, duplicates } = dropDuplicateStatementRows(reconciled);
+  const { tables, duplicates, warnings: overlapWarnings } = dropDuplicateStatementRows(reconciled);
   const available: MeasureAvailability = {};
 
   for (const table of tables) {
@@ -494,7 +495,7 @@ export function reconcileTaxRecords(
           },
         }
       : {}),
-    warnings: records.tables.flatMap((table) => table.warnings),
+    warnings: [...records.tables.flatMap((table) => table.warnings), ...overlapWarnings],
     lines,
     totals: {
       bySource,
@@ -534,11 +535,15 @@ function partitionTaxCreditStatements(tables: readonly TaxRecordTable[]) {
   };
 }
 
-function statementRowKey(row: TaxRecordRow): string {
+/** Transaction identity; undefined without a transaction date, since then overlap is unprovable. */
+function statementRowKey(row: TaxRecordRow): string | undefined {
+  if (!row.date) {
+    return undefined;
+  }
+
   return [
     row.tan ?? normalizeDeductorName(row.deductorName) ?? "",
-    row.financialYear ?? "",
-    row.quarter ?? "",
+    row.date,
     row.section ?? "",
     row.amount ?? "",
     row.tax ?? "",
@@ -547,8 +552,9 @@ function statementRowKey(row: TaxRecordRow): string {
 
 /**
  * Counts a tax-credit row once when another uploaded document of the same statement already has
- * it, so a statement uploaded twice (or overlapping exports) is not summed twice. Identical rows
- * within one document are kept, since a deductor can make the same deduction more than once.
+ * the same transaction (deductor, transaction date, section, amount, and TDS), so a statement
+ * uploaded twice is not summed twice. Rows without a transaction date are never treated as
+ * duplicates, and identical rows within one document are kept.
  */
 function dropDuplicateStatementRows(tables: readonly TaxRecordTable[]) {
   const countsByKey = new Map<string, Map<string, number>>();
@@ -559,7 +565,13 @@ function dropDuplicateStatementRows(tables: readonly TaxRecordTable[]) {
     }
 
     const rows = table.rows.filter((row) => {
-      const key = `${table.statement ?? ""}|${statementRowKey(row)}`;
+      const identity = statementRowKey(row);
+
+      if (!identity) {
+        return true;
+      }
+
+      const key = `${table.statement ?? ""}|${identity}`;
       const counts = countsByKey.get(key) ?? new Map<string, number>();
       const seenHere = (counts.get(row.documentId) ?? 0) + 1;
       const seenElsewhere = Math.max(
@@ -584,7 +596,25 @@ function dropDuplicateStatementRows(tables: readonly TaxRecordTable[]) {
     return rows.length === table.rows.length ? table : { ...table, rows };
   });
 
-  return { tables: deduped, duplicates };
+  const warnings: string[] = [];
+
+  for (const statement of ["26as", "ais"] as const) {
+    const statementTables = tables.filter(
+      (table) => table.source === "tax-credit" && (table.statement ?? "26as") === statement,
+    );
+    const documents = new Set(statementTables.map((table) => table.documentId));
+
+    if (
+      documents.size > 1 &&
+      statementTables.some((table) => table.rows.some((row) => !row.date))
+    ) {
+      warnings.push(
+        `Several ${statement === "ais" ? "AIS" : "Form 26AS"} documents were uploaded and some rows have no transaction date, so overlapping entries could not be detected; check that no deduction is counted twice.`,
+      );
+    }
+  }
+
+  return { tables: deduped, duplicates, warnings };
 }
 
 /** TDS per deductor and financial year in 26AS against AIS; reports any disagreement. */
@@ -677,7 +707,12 @@ export function describeLineStatus(line: ReconciliationLine): string {
       .filter(([, values]) => (values?.unreadable.length ?? 0) > 0)
       .map(([source]) => SOURCE_LABELS[source as TaxRecordSource]);
 
-    return `Unreadable values in ${unreadable.join(" and ")}`;
+    const missing =
+      line.missingIn.length > 0
+        ? `; missing in ${line.missingIn.map((source) => SOURCE_LABELS[source]).join(" and ")}`
+        : "";
+
+    return `Unreadable values in ${unreadable.join(" and ")}${missing}`;
   }
 
   return "Mismatch";

@@ -9,6 +9,7 @@ import {
   financialPeriodOfDate,
   mapTaxColumns,
   normalizeQuarter,
+  normalizeTan,
   parseAmount,
   readTaxRecords,
   selectTaxColumns,
@@ -21,6 +22,7 @@ import {
   reconcileTaxRecords,
 } from "./reconcile.js";
 import { reconciliationTableMarkdown } from "./render.js";
+import { reconciliationDataCheck } from "./review.js";
 
 function metadata(id: string, name: string): DocumentMetadata {
   return {
@@ -416,5 +418,65 @@ describe("overlapping statements and incomplete rows", () => {
     expect(reconciliation.duplicateRows.every((row) => row.documentId === "doc-26as-copy")).toBe(
       true,
     );
+  });
+});
+
+describe("transaction identity and TAN validation", () => {
+  it("accepts only well-formed TANs, so placeholders fall back to name matching", async () => {
+    expect(normalizeTan("mumn-10001-a")).toBe("MUMN10001A");
+    expect(normalizeTan("PENDING")).toBeUndefined();
+    expect(normalizeTan("NOT AVAILABLE")).toBeUndefined();
+
+    const taxCredit = [
+      TAX_CREDIT_CSV,
+      "PENDING,Eastern Traders,194C,2023-11-15,20000,200,F",
+      "PENDING,Western Traders,194C,2023-11-15,30000,300,F",
+    ].join("\n");
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ taxCredit, ledger: false })),
+    );
+
+    expect(
+      reconciliation.lines
+        .filter((line) => line.deductorKey.startsWith("name:"))
+        .map((line) => [line.deductorKey, line.values["tax-credit"]?.tax]),
+    ).toEqual([
+      ["name:eastern traders", 200],
+      ["name:western traders", 300],
+    ]);
+  });
+
+  it("does not drop distinct deductions that share a quarter and amount across exports", async () => {
+    const documents = [
+      ...(await fixtureDocumentsAsync()),
+      await csvDocumentAsync(
+        "doc-26as-extra",
+        "form-26as-extra.csv",
+        [
+          TAX_CREDIT_CSV.split("\n")[0],
+          "DELS20002B,Sunrise Consulting Pvt Ltd,194J,2023-05-31,125000,12500,F",
+        ].join("\n"),
+      ),
+    ];
+    const reconciliation = reconcileTaxRecords(readTaxRecords(documents));
+
+    expect(reconciliation.duplicateRows).toEqual([]);
+    expect(reconciliation.totals.bySource["tax-credit"]?.tax).toBe(141100);
+  });
+
+  it("flags unreadable values even when the line is also missing from another source", async () => {
+    const taxCredit = `${TAX_CREDIT_CSV}\nKOLX40004D,Eastern Traders,194C,2023-11-15,20000,,F`;
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ taxCredit })),
+    );
+    const eastern = reconciliation.lines.find((line) => line.tan === "KOLX40004D");
+
+    expect(eastern).toMatchObject({ status: "incomplete", missingIn: ["return", "ledger"] });
+    expect(reconciliationTableMarkdown(reconciliation)).toContain(
+      "Unreadable values in 26AS/AIS; missing in Return and Ledger",
+    );
+    expect(
+      reconciliationDataCheck(reconciliation, ["rec"])([]).map((issue) => issue.key),
+    ).toContain(`incomplete:${eastern?.ref}`);
   });
 });

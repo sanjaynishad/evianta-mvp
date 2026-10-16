@@ -46,6 +46,8 @@ export interface TaxRecordRow {
   section?: string;
   financialYear?: string;
   quarter?: string;
+  /** ISO transaction date, when the table has a date column. */
+  date?: string;
   amount?: number;
   tax?: number;
   /** Measures whose column exists but whose cell is blank or unreadable in this row. */
@@ -246,7 +248,8 @@ function textOf(cell: TableCell | undefined): string | undefined {
 export function normalizeTan(value: string | undefined): string | undefined {
   const compact = value?.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-  return compact && compact.length >= 5 ? compact : undefined;
+  // A TAN is four letters, five digits, and a letter; placeholders such as "PENDING" are not TANs.
+  return compact && /^[A-Z]{4}\d{5}[A-Z]$/.test(compact) ? compact : undefined;
 }
 
 export function normalizeDeductorName(value: string | undefined): string | undefined {
@@ -369,7 +372,9 @@ function readRow(
     unreadable.push("amount");
   }
 
-  const dated = financialPeriodOfDate(textOf(cell("date")));
+  const dateText = textOf(cell("date"));
+  const dated = financialPeriodOfDate(dateText);
+  const date = dated ? dateText?.slice(0, 10) : undefined;
   const financialYear =
     normalizeFinancialYear(textOf(cell("financialYear"))) ?? dated?.financialYear;
   const quarter = normalizeQuarter(textOf(cell("quarter"))) ?? dated?.quarter;
@@ -387,6 +392,7 @@ function readRow(
     ...(section ? { section } : {}),
     ...(financialYear ? { financialYear } : {}),
     ...(quarter ? { quarter } : {}),
+    ...(date ? { date } : {}),
     ...(amount !== undefined ? { amount } : {}),
     ...(tax !== undefined ? { tax } : {}),
     unreadable,
