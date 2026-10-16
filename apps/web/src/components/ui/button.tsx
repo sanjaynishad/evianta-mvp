@@ -1,4 +1,6 @@
-import type { ComponentProps } from "react";
+"use client";
+
+import type { ComponentProps, MouseEvent } from "react";
 import { Slot } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import { Loader2 } from "lucide-react";
@@ -46,14 +48,38 @@ export function Button({
   loading = false,
   disabled,
   children,
+  onClick,
   ...props
 }: ButtonProps) {
+  const inactive = disabled || loading;
+
   if (asChild) {
+    const slotProps = { ...props, disabled: inactive };
+
+    function handleClick(event: MouseEvent<HTMLButtonElement>) {
+      if (inactive) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      onClick?.(event);
+    }
+
     return (
       <Slot.Root
         data-slot="button"
-        className={cn(buttonVariants({ variant, size, className }))}
-        {...props}
+        className={cn(
+          buttonVariants({ variant, size, className }),
+          inactive && "pointer-events-none opacity-50",
+        )}
+        {...slotProps}
+        aria-disabled={inactive || undefined}
+        data-disabled={inactive ? "" : undefined}
+        aria-busy={loading || undefined}
+        tabIndex={inactive ? -1 : props.tabIndex}
+        onClick={handleClick}
+        onClickCapture={inactive ? handleClick : props.onClickCapture}
       >
         {children}
       </Slot.Root>
@@ -64,8 +90,9 @@ export function Button({
     <button
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
-      disabled={disabled || loading}
+      disabled={inactive}
       aria-busy={loading || undefined}
+      onClick={onClick}
       {...props}
     >
       {loading ? <Loader2 aria-hidden className="animate-spin motion-reduce:animate-none" /> : null}

@@ -32,6 +32,8 @@ describe("en-IN number formatting", () => {
     expect(formatInrCompact(1_875_000, 1)).toBe("₹18.8 lakh");
     expect(formatInrCompact(-2_500_000)).toBe("-₹25 lakh");
     expect(formatInrCompact(95_000)).toBe("₹95,000");
+    expect(formatInrCompact(0.25)).toBe("₹0.25");
+    expect(formatInrCompact(1234.5, 2)).toBe("₹1,234.5");
     expect(formatInrCompact(2_500_000_000)).toBe("₹250 crore");
   });
 
@@ -39,6 +41,7 @@ describe("en-IN number formatting", () => {
     expect(formatIndianCompact(1_843_000)).toBe("18.43 lakh");
     expect(formatIndianCompact(32_000_000)).toBe("3.2 crore");
     expect(formatIndianCompact(42_000)).toBe("42,000");
+    expect(formatIndianCompact(1234.5, 2)).toBe("1,234.5");
   });
 
   it("formats percentages", () => {

@@ -29,6 +29,7 @@ export interface CommandDialogProps extends ComponentProps<typeof Dialog> {
   title?: string;
   description?: string;
   className?: string;
+  onCloseAutoFocus?: ComponentProps<typeof DialogContent>["onCloseAutoFocus"];
 }
 
 export function CommandDialog({
@@ -36,6 +37,7 @@ export function CommandDialog({
   description = "Search for a command to run",
   children,
   className,
+  onCloseAutoFocus,
   ...props
 }: CommandDialogProps) {
   return (
@@ -43,6 +45,7 @@ export function CommandDialog({
       <DialogContent
         className={cn("top-[20%] max-w-xl translate-y-0 overflow-hidden p-0", className)}
         showCloseButton={false}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>

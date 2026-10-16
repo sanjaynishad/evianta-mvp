@@ -40,7 +40,7 @@ function compactParts(value: number): { scaled: number; unit: "crore" | "lakh" |
 export function formatIndianCompact(value: number, maximumFractionDigits = 2): string {
   const { scaled, unit } = compactParts(value);
   if (!unit) {
-    return formatNumber(value, { maximumFractionDigits: 0 });
+    return formatNumber(value, { maximumFractionDigits });
   }
 
   return `${formatNumber(scaled, { maximumFractionDigits })} ${unit}`;
@@ -49,7 +49,7 @@ export function formatIndianCompact(value: number, maximumFractionDigits = 2): s
 export function formatInrCompact(amount: number, maximumFractionDigits = 2): string {
   const { scaled, unit } = compactParts(amount);
   if (!unit) {
-    return formatInr(amount, { maximumFractionDigits: 0 });
+    return formatInr(amount, { maximumFractionDigits });
   }
 
   return `${formatInr(scaled, { maximumFractionDigits })} ${unit}`;

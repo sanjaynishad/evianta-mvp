@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Moon, Search, Sun } from "lucide-react";
@@ -29,6 +29,8 @@ export interface CommandPaletteProps {
 
 export function CommandPalette({ className }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
+  const searchButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
 
@@ -36,13 +38,18 @@ export function CommandPalette({ className }: CommandPaletteProps) {
     function handleKeyDown(event: KeyboardEvent) {
       if (isCommandPaletteShortcut(event)) {
         event.preventDefault();
-        setOpen((current) => !current);
+        if (!open) {
+          previousFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }
+
+        setOpen(!open);
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [open]);
 
   const runCommand = useCallback((command: () => void) => {
     setOpen(false);
@@ -52,8 +59,12 @@ export function CommandPalette({ className }: CommandPaletteProps) {
   return (
     <>
       <button
+        ref={searchButtonRef}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={(event) => {
+          previousFocusRef.current = event.currentTarget;
+          setOpen(true);
+        }}
         aria-haspopup="dialog"
         aria-keyshortcuts="Control+K Meta+K"
         className={cn(
@@ -70,6 +81,13 @@ export function CommandPalette({ className }: CommandPaletteProps) {
       <CommandDialog
         open={open}
         onOpenChange={setOpen}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const focusTarget = previousFocusRef.current?.isConnected
+            ? previousFocusRef.current
+            : searchButtonRef.current;
+          focusTarget?.focus();
+        }}
         title="Command palette"
         description="Jump to a page or run an action"
       >
