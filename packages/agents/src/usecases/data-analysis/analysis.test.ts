@@ -471,6 +471,46 @@ describe("analyzeTable", () => {
 
     expect(metricValue(analysis, "average-monthly-change-pct")).toBe(0.12);
   });
+  it("treats numeric codes under a category header as categories", async () => {
+    const stores = analyzeTable({
+      documentId: "doc",
+      documentName: "stores.csv",
+      table: await csvTableAsync("Store,Amount\n101,10\n102,20\n101,30"),
+    });
+    const unnamed = analyzeTable({
+      documentId: "doc",
+      documentName: "stores.csv",
+      table: await csvTableAsync("Store,Figure\n101,100\n102,200"),
+    });
+
+    expect(stores.segments[0]?.segments.map((segment) => [segment.label, segment.total])).toEqual([
+      ["101", 40],
+      ["102", 20],
+    ]);
+    expect(unnamed.roles.amount.name).toBe("Figure");
+    expect(metricValue(unnamed, "total-amount")).toBe(300);
+  });
+
+  it("bounds long category values in labels and ids", async () => {
+    const long = "A".repeat(300_000);
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "long.csv",
+      table: await csvTableAsync(`Region,Amount\n${long},10\n${long}B,15\nNorth,20`),
+    });
+    const segments = analysis.segments[0]?.segments ?? [];
+
+    expect(segments.map((segment) => segment.total)).toEqual([20, 15, 10]);
+    expect(new Set(segments.map((segment) => segment.label)).size).toBe(3);
+    expect(Math.max(...segments.map((segment) => segment.label.length))).toBeLessThanOrEqual(64);
+    expect(
+      Math.max(
+        ...analysis.metrics.map(
+          (metric) => metric.id.length + metric.label.length + metric.basis.length,
+        ),
+      ),
+    ).toBeLessThan(400);
+  });
   it("fails clearly when a table has no amount column", async () => {
     const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");
 

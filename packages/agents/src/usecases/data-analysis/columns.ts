@@ -101,6 +101,11 @@ function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): Colu
       return "identifier";
     }
 
+    // Numeric codes under a category header, such as store numbers, are categories.
+    if (CATEGORY_NAME.test(name) && profile.distinct <= MAX_CATEGORY_DISTINCT) {
+      return "category";
+    }
+
     return "other";
   }
 

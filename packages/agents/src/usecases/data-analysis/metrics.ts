@@ -1,5 +1,5 @@
 import type { ParsedDate } from "./cells.js";
-import { slugify } from "./ids.js";
+import { shortLabel, slugify } from "./ids.js";
 import { percentChange, roundTo, sum, theilSenFit } from "./stats.js";
 
 export interface SalesRecord {
@@ -360,7 +360,7 @@ export function computeSalesMetrics(
       const value = record.categories[categoryPosition];
       const key = segmentKey(value);
       const group = groups.get(key) ?? {
-        label: value === undefined ? UNASSIGNED_SEGMENT : value.trim(),
+        label: value === undefined ? UNASSIGNED_SEGMENT : shortLabel(value.trim()),
         records: [],
       };
 
@@ -369,14 +369,26 @@ export function computeSalesMetrics(
     }
 
     const columnSlug = slugify(category.name);
+    const usedLabels = new Set<string>();
     const segmentTotals = [...groups.entries()]
-      .map(([key, group]) => ({
-        key,
-        label: group.label,
-        unassigned: key === "",
-        exactTotal: sum(group.records.map((record) => record.amount as number)),
-        rows: group.records.map((record) => record.row),
-      }))
+      .map(([key, group]) => {
+        let label = group.label;
+
+        // Distinct long values can share a shortened label; keep each segment's label unique.
+        for (let suffix = 2; usedLabels.has(label); suffix += 1) {
+          label = `${group.label} (${suffix})`;
+        }
+
+        usedLabels.add(label);
+
+        return {
+          key,
+          label,
+          unassigned: key === "",
+          exactTotal: sum(group.records.map((record) => record.amount as number)),
+          rows: group.records.map((record) => record.row),
+        };
+      })
       .map((segment) => ({ ...segment, total: roundTo(segment.exactTotal) }))
       .sort((left, right) => right.total - left.total || left.label.localeCompare(right.label))
       .map((segment): SegmentTotal => {
