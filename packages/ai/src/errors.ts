@@ -183,5 +183,15 @@ export function nonTransientReasonOf(error: unknown): AiNonTransientReason {
     return "permission-denied";
   }
 
+  const numericStatus = typeof status === "number" ? status : readProperty(error, "statusCode");
+
+  if (numericStatus === 401 || numericStatus === 403) {
+    return "permission-denied";
+  }
+
+  if (numericStatus === 400 || numericStatus === 404 || numericStatus === 412) {
+    return "invalid-request";
+  }
+
   return "unknown";
 }

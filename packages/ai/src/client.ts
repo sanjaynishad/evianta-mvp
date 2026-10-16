@@ -207,7 +207,7 @@ async function runModelAsync<T>(
       if (transient) {
         throw new AiTransientError(
           `Model call failed after ${attempts} attempt(s): ${messageOf(error)}`,
-          details,
+          { ...details, retryAfterMs },
         );
       }
 

@@ -8,6 +8,8 @@ import {
   AiOutputValidationError,
   AiTransientError,
   isTransientAiError,
+  nonTransientReasonOf,
+  retryAfterMsOf,
 } from "./errors.js";
 import { createMockAi, type MockStep } from "./mock.js";
 import { estimateCost } from "./pricing.js";
@@ -344,6 +346,42 @@ describe("retries", () => {
     expect(ai.calls).toHaveLength(1);
   });
 
+  it.each([0, 1, 2])(
+    "preserves the terminal retry-after with maxRetries=%i",
+    async (maxRetries) => {
+      const sleep = recordingSleep();
+      const ai = createMockAi(
+        { "case-analysis": { error: "transient", retryAfterMs: 2000 } },
+        { maxRetries, sleepAsync: sleep.sleepAsync },
+      );
+
+      const error = await ai.runStructuredAsync(request()).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AiTransientError);
+      expect(error).toMatchObject({ attempts: maxRetries + 1, retryAfterMs: 2000 });
+      expect(retryAfterMsOf(error)).toBe(2000);
+      expect(sleep.delays).toEqual(Array.from({ length: maxRetries }, () => 2000));
+      expect(ai.calls).toHaveLength(maxRetries + 1);
+    },
+  );
+
+  it.each([0, 2000])(
+    "preserves a provider's terminal retry-after of %i ms",
+    async (retryAfterMs) => {
+      const providerError = Object.assign(new Error("Rate limited"), {
+        status: 429,
+        responseMetadata: { retryAfterMs },
+      });
+      const ai = createMockAi({ "case-analysis": { error: providerError } }, { maxRetries: 0 });
+
+      const error = await ai.runStructuredAsync(request()).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AiTransientError);
+      expect(retryAfterMsOf(error)).toBe(retryAfterMs);
+      expect(error).toMatchObject({ cause: providerError, attempts: 1 });
+    },
+  );
+
   it("sums usage from a usage-bearing transient failure with the successful attempt", async () => {
     const ai = createMockAi({
       "case-analysis": [
@@ -411,6 +449,50 @@ describe("isTransientAiError", () => {
     [new AiNonTransientError("x"), false],
   ])("classifies %o as transient=%s", (error, expected) => {
     expect(isTransientAiError(error)).toBe(expected);
+  });
+});
+
+describe("nonTransientReasonOf", () => {
+  it.each(["status", "statusCode"])("classifies numeric HTTP errors from %s", async (field) => {
+    const cases = [
+      [400, "invalid-request"],
+      [401, "permission-denied"],
+      [403, "permission-denied"],
+      [404, "invalid-request"],
+      [412, "invalid-request"],
+      [418, "unknown"],
+    ] as const;
+
+    for (const [status, reason] of cases) {
+      const providerError = Object.assign(new Error(`HTTP ${status}`), { [field]: status });
+      const ai = createMockAi({ "case-analysis": { error: providerError } });
+
+      expect(nonTransientReasonOf(providerError)).toBe(reason);
+      await expect(ai.runStructuredAsync(request())).rejects.toMatchObject({
+        name: "AiNonTransientError",
+        reason,
+        attempts: 1,
+        cause: providerError,
+      });
+      expect(ai.calls).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ["INVALID_ARGUMENT", "invalid-request"],
+    ["FAILED_PRECONDITION", "invalid-request"],
+    ["NOT_FOUND", "invalid-request"],
+    ["PERMISSION_DENIED", "permission-denied"],
+    ["UNAUTHENTICATED", "permission-denied"],
+    ["UNKNOWN", "unknown"],
+  ] as const)("preserves named status %s as %s", (status, reason) => {
+    expect(nonTransientReasonOf({ status })).toBe(reason);
+  });
+
+  it("preserves an explicitly classified error reason", () => {
+    expect(nonTransientReasonOf(new AiNonTransientError("Blocked", { reason: "blocked" }))).toBe(
+      "blocked",
+    );
   });
 });
 
