@@ -1,14 +1,14 @@
 "use client";
 
 import { useId, useRef, useState, type DragEvent } from "react";
-import { FileText, ShieldAlert, Upload, X } from "lucide-react";
+import { FileText, Lock, ShieldAlert, Upload, X } from "lucide-react";
 import type { CaseDocument } from "@evianta/core";
 import { EmptyState } from "@/components/patterns/empty-state";
 import { Button } from "@/components/ui/button";
 import type { LocalUpload } from "@/hooks/use-case-workspace";
 import { useAutoAnimateList } from "@/hooks/use-auto-animate-list";
 import { formatNumber } from "@/lib/format";
-import { extractionMethodLabels } from "@/lib/labels";
+import { describeDocumentError, extractionMethodLabels } from "@/lib/labels";
 import { uploadAccept } from "@/lib/use-cases";
 import { cn } from "@/lib/utils";
 import { DocumentStatusBadge, HandwritingBadge } from "./document-status";
@@ -17,6 +17,8 @@ export interface DocumentPanelProps {
   documents: CaseDocument[];
   uploads: LocalUpload[];
   readOnly: boolean;
+  // When set, uploads are closed and this explains why.
+  uploadLockedReason?: string;
   onUpload: (files: File[]) => void;
   onDismissUpload: (id: string) => void;
 }
@@ -33,6 +35,7 @@ export function DocumentPanel({
   documents,
   uploads,
   readOnly,
+  uploadLockedReason,
   onUpload,
   onDismissUpload,
 }: DocumentPanelProps) {
@@ -57,7 +60,16 @@ export function DocumentPanel({
       <h2 id="documents-heading" className="text-base font-semibold">
         Documents
       </h2>
-      {readOnly ? null : (
+      {!readOnly && uploadLockedReason ? (
+        <p
+          className="flex items-start gap-2 rounded-lg border border-dashed px-3 py-2.5 text-xs text-muted-foreground"
+          data-testid="upload-locked"
+        >
+          <Lock aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          {uploadLockedReason}
+        </p>
+      ) : null}
+      {readOnly || uploadLockedReason ? null : (
         <div
           onDragOver={(event) => {
             event.preventDefault();
@@ -143,6 +155,7 @@ export function DocumentPanel({
           {documents.map((document) => {
             const extraction = document.extraction;
             const reviewPages = extraction?.pagesNeedingReview ?? [];
+            const errorMessage = describeDocumentError(document);
             return (
               <li
                 key={document.id}
@@ -168,7 +181,11 @@ export function DocumentPanel({
                     review.
                   </p>
                 ) : null}
-                {document.error ? <p className="text-xs text-danger">{document.error}</p> : null}
+                {errorMessage ? (
+                  <p className="text-xs text-danger" data-testid="document-error">
+                    {errorMessage}
+                  </p>
+                ) : null}
                 {extraction?.warnings.map((warning) => (
                   <p key={warning} className="text-xs text-warning">
                     {warning}

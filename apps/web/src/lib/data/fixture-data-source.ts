@@ -1,4 +1,5 @@
 import {
+  apiErrorCodes,
   isTerminalRunEvent,
   type AskResult,
   type Case,
@@ -106,6 +107,9 @@ function addToUsage(
   };
 }
 
+export const caseAlreadyPlannedMessage =
+  "Documents cannot be added after the case has been planned. Start a new case to use different documents.";
+
 function startResponse(caseId: string, runId: string, mode: RunMode): RunStartResponse {
   return { caseId, runId, mode, streamUrl: `/cases/${encodeURIComponent(caseId)}/stream` };
 }
@@ -148,6 +152,15 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
   const recordedEvents = new Map<string, RunEvent[]>();
   const pendingRuns = new Map<string, PendingRun>();
   const failedOnce = new Set<string>();
+  const uploadsInFlight = new Map<string, number>();
+
+  function requireNoUploads(caseId: string) {
+    if ((uploadsInFlight.get(caseId) ?? 0) > 0) {
+      throw new ApiError("Wait for the upload to finish before running.", 409, {
+        code: apiErrorCodes.uploadInProgress,
+      });
+    }
+  }
 
   for (const state of [...sampleCaseStates, ...(options.seedStates ?? [])]) {
     states.set(state.case.id, clone(state));
@@ -319,6 +332,18 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
 
     async uploadDocumentAsync(caseId, file) {
       const state = requireEditable(caseId);
+      if (pendingRuns.has(caseId)) {
+        throw new ApiError("Wait for the run to finish before uploading.", 409, {
+          code: apiErrorCodes.runInProgress,
+        });
+      }
+
+      if (state.tasks.length > 0) {
+        throw new ApiError(caseAlreadyPlannedMessage, 409, {
+          code: apiErrorCodes.caseAlreadyPlanned,
+        });
+      }
+
       const id = createId("doc");
       const method = guessMethod(file);
       const document: CaseDocument = {
@@ -331,13 +356,24 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         status: "ready",
         extraction: extractionSummary(method, method === "parse" ? 1 : 0.9),
       };
-      states.set(caseId, { ...touch(state, {}), documents: [...state.documents, document] });
-      await new Promise((resolve) => setTimeout(resolve, replayIntervalMs));
+      uploadsInFlight.set(caseId, (uploadsInFlight.get(caseId) ?? 0) + 1);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, replayIntervalMs));
+        const current = requireState(caseId);
+        states.set(caseId, {
+          ...touch(current, {}),
+          documents: [...current.documents, document],
+        });
+      } finally {
+        uploadsInFlight.set(caseId, (uploadsInFlight.get(caseId) ?? 1) - 1);
+      }
+
       return clone(document);
     },
 
     async startRunAsync(caseId) {
       const state = requireEditable(caseId);
+      requireNoUploads(caseId);
       if (pendingRuns.has(caseId)) {
         return startResponse(caseId, pendingRuns.get(caseId)?.runId ?? "", "run");
       }
@@ -403,6 +439,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
             lastEventSeq: events.at(-1)?.seq ?? lastSeq,
             lastRunId: runId,
             lastEventType: "run-completed",
+            lastRunMode: "run",
           },
         };
       }
@@ -427,6 +464,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
 
     async retryRunAsync(caseId) {
       const state = requireEditable(caseId);
+      requireNoUploads(caseId);
       const failedIds = state.tasks
         .filter((task) => task.status === "failed")
         .map((task) => task.id);
@@ -489,6 +527,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
             lastEventSeq: events.at(-1)?.seq ?? lastSeq,
             lastRunId: runId,
             lastEventType: "run-completed",
+            lastRunMode: "retry",
           },
         },
       });

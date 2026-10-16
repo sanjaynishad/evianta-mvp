@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "@/components/ui/sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { describeError } from "@/lib/api/errors";
+import { retryWhileUploadingAsync } from "@/lib/api/upload-conflict";
 import { useDataSource } from "@/lib/data/data-source-context";
 import {
   matchChecklistItem,
@@ -130,7 +131,7 @@ export function IntakeView() {
       if (runAfterCreate) {
         setStatusMessage("Starting the run");
         try {
-          await dataSource.startRunAsync(created.id);
+          await retryWhileUploadingAsync(() => dataSource.startRunAsync(created.id));
         } catch (error) {
           toast.error("The run did not start", { description: describeError(error) });
         }

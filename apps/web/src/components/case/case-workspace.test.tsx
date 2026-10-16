@@ -1,6 +1,8 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { failedCaseId, failedCaseState, failedRunEvents, fixtureFailure } from "@/fixtures";
+import { failedRunMessage } from "@/fixtures/run-events";
+import { casePlannedUploadMessage } from "@/hooks/use-case-workspace";
 import {
   createTestDataSource,
   renderWithDataSource,
@@ -92,6 +94,8 @@ describe("CaseWorkspace", () => {
       expect(await screen.findByTestId("task-last-error")).toHaveTextContent(fixtureFailure.error);
       const blocked = screen.getByRole("list", { name: "Blocked steps" });
       expect(within(blocked).getAllByRole("listitem")).toHaveLength(2);
+      expect(screen.getByTestId("run-error")).toHaveTextContent(failedRunMessage);
+      expect(screen.getByTestId("upload-locked")).toHaveTextContent(casePlannedUploadMessage);
 
       fireEvent.click(screen.getByRole("button", { name: /Retry failed steps/ }));
 
@@ -132,6 +136,35 @@ describe("CaseWorkspace", () => {
       );
       expect(screen.getByText("4 of 4 steps done")).toBeInTheDocument();
       expect(screen.getByTestId("running-cost")).toHaveTextContent("$0.0213");
+    },
+    streamTimeoutMs * 2,
+  );
+
+  it(
+    "waits for an upload in flight before starting the run, then closes uploads",
+    async () => {
+      const dataSource = createTestDataSource({ replayIntervalMs: 50 });
+      const created = await dataSource.createCaseAsync({
+        title: "Sales check",
+        useCase: "data-analysis",
+      });
+      const startSpy = vi.spyOn(dataSource, "startRunAsync");
+      const { container } = renderWithDataSource(<CaseWorkspace caseId={created.id} />, dataSource);
+      const runButton = await screen.findByRole("button", { name: /Run case/ });
+      const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+
+      fireEvent.change(input, { target: { files: [new File(["a,b"], "sales.csv")] } });
+      fireEvent.click(runButton);
+
+      await waitFor(
+        () => expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument(),
+        { timeout: streamTimeoutMs },
+      );
+      expect(startSpy).toHaveBeenCalledTimes(1);
+      await expect(startSpy.mock.results[0]!.value).resolves.toMatchObject({ mode: "run" });
+      expect(screen.queryByText(/did not start/)).not.toBeInTheDocument();
+      expect(screen.getByText("sales.csv")).toBeInTheDocument();
+      expect(screen.getByTestId("upload-locked")).toHaveTextContent(casePlannedUploadMessage);
     },
     streamTimeoutMs * 2,
   );

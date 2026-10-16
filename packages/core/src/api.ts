@@ -52,9 +52,27 @@ export const extractionSummarySchema = z.object({
 export type ExtractionSummary = z.infer<typeof extractionSummarySchema>;
 
 // Document metadata without the storage path, plus its extraction state.
+export const documentErrorCodes = [
+  "unsupported-type",
+  "ocr-unavailable",
+  "ocr-failed",
+  "ocr-partial",
+  "extraction-failed",
+  "read-failed",
+] as const;
+
+export type DocumentErrorCode = (typeof documentErrorCodes)[number];
+
+export function isDocumentErrorCode(value: string | undefined): value is DocumentErrorCode {
+  return (documentErrorCodes as readonly (string | undefined)[]).includes(value);
+}
+
 export const caseDocumentSchema = documentMetadataSchema.omit({ gcsPath: true }).extend({
   status: documentStatusSchema,
+  // Client-safe message; provider and parser details stay in server logs.
   error: z.string().optional(),
+  // Usually a DocumentErrorCode; kept as a string so a new server code does not break parsing.
+  errorCode: z.string().optional(),
   extraction: extractionSummarySchema.optional(),
 });
 
@@ -81,12 +99,20 @@ export const runEventTypeSchema = z
   .string()
   .refine((value): value is RunEventType => (runEventTypes as readonly string[]).includes(value));
 
+export const runModeSchema = z.enum(["run", "retry"]);
+
+export type RunMode = z.infer<typeof runModeSchema>;
+
 export const caseRunStateSchema = z.object({
   active: z.boolean().default(false),
   // Seq of the newest persisted event; stream with `?after=` this value to see only new events.
   lastEventSeq: z.number().int().nonnegative().default(0),
   lastRunId: z.string().optional(),
   lastEventType: runEventTypeSchema.optional(),
+  // Absent when the last run failed before it started.
+  lastRunMode: runModeSchema.optional(),
+  // Present when the last run ended with run-failed.
+  lastRunError: z.string().optional(),
 });
 
 export type CaseRunState = z.infer<typeof caseRunStateSchema>;
@@ -105,10 +131,6 @@ export const caseStateSchema = z.object({
 export type CaseState = z.infer<typeof caseStateSchema>;
 
 export type CaseStateInput = z.input<typeof caseStateSchema>;
-
-export const runModeSchema = z.enum(["run", "retry"]);
-
-export type RunMode = z.infer<typeof runModeSchema>;
 
 export const runStartResponseSchema = z.object({
   caseId: z.string().min(1),
@@ -212,6 +234,15 @@ export const apiErrorBodySchema = z
   .passthrough();
 
 export type ApiErrorBody = z.infer<typeof apiErrorBodySchema>;
+
+// Error codes the web app reacts to; the API sends others too (see apps/api README).
+export const apiErrorCodes = {
+  runInProgress: "run-in-progress",
+  nothingToRetry: "nothing-to-retry",
+  uploadInProgress: "upload-in-progress",
+  caseAlreadyPlanned: "case-already-planned",
+  sampleReadOnly: sampleReadOnlyReason,
+} as const;
 
 export const agentDirectoryResponseSchema = z.object({
   roles: z.array(agentRoleSchema),

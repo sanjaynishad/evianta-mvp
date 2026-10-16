@@ -224,6 +224,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
             documents={state.documents}
             uploads={workspace.uploads}
             readOnly={readOnly}
+            uploadLockedReason={workspace.uploadLockedReason}
             onUpload={(files) => void workspace.uploadAsync(files)}
             onDismissUpload={workspace.dismissUpload}
           />

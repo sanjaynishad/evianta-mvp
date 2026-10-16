@@ -31,6 +31,9 @@ function roundCost(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
+export const failedRunMessage =
+  "One step failed. Completed work is kept; retry the failed steps to continue.";
+
 export function collectDependents(tasks: Task[], taskId: string): string[] {
   const dependents = new Set<string>();
   const queue = [taskId];
@@ -141,7 +144,7 @@ export function buildRunEvents(state: CaseState, options: BuildRunEventsOptions)
     events.push({
       ...base(),
       type: "run-failed",
-      error: "One step failed. Completed work is kept; retry the failed steps to continue.",
+      error: failedRunMessage,
       failedTaskIds: [options.failTaskId],
       totalTokenUsage: usage,
       totalCostEstimate: cost,
@@ -230,6 +233,8 @@ export function toFailedCaseState(state: CaseState, options: FailedStateOptions)
       lastEventSeq: options.lastEventSeq,
       lastRunId: options.runId,
       lastEventType: "run-failed",
+      lastRunMode: "run",
+      lastRunError: failedRunMessage,
     },
   };
 }

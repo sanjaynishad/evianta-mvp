@@ -64,7 +64,7 @@ function progressStatusFromState(state: CaseState): RunProgressStatus {
   return "idle";
 }
 
-// The case state does not carry a run-level error, only that the last run failed.
+// Fallback when a failed run left no message, for example state from an older API.
 export const runStoppedMessage = "The run stopped before it finished. Run the case again.";
 
 export function createRunProgress(state: CaseState): RunProgress {
@@ -72,13 +72,13 @@ export function createRunProgress(state: CaseState): RunProgress {
   const status = progressStatusFromState(state);
   const failedTask = state.tasks.find((task) => task.status === "failed");
   let error = failedTask?.lastError;
-  if (!error && status === "failed") {
-    error = runStoppedMessage;
+  if (status === "failed") {
+    error = state.run.lastRunError ?? error ?? runStoppedMessage;
   }
 
   return {
     runId: state.run.lastRunId,
-    mode: "run",
+    mode: state.run.lastRunMode ?? "run",
     status,
     tasks: state.tasks.map((task) => ({
       id: task.id,

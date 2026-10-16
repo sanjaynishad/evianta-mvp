@@ -5,6 +5,7 @@ import {
   askResultSchema,
   caseStateSchema,
   createCaseRequestSchema,
+  isDocumentErrorCode,
   runStartResponseSchema,
   sampleReadOnlyErrorBodySchema,
   sectionUpdateRequestSchema,
@@ -27,6 +28,8 @@ describe("caseStateSchema", () => {
           size: 2048,
           uploadedAt: now,
           status: "ready",
+          errorCode: "ocr-partial",
+          error: "Some pages could not be read.",
           extraction: {
             kind: "tabular",
             method: "parse",
@@ -40,12 +43,23 @@ describe("caseStateSchema", () => {
         },
       ],
       cost: { tokenUsage: usage, costEstimate: 0.01, runCount: 1 },
-      run: { active: false, lastEventSeq: 12, lastRunId: "run-1", lastEventType: "run-completed" },
+      run: {
+        active: false,
+        lastEventSeq: 12,
+        lastRunId: "run-1",
+        lastEventType: "run-failed",
+        lastRunMode: "retry",
+        lastRunError: "OCR is not available right now.",
+      },
     });
 
     expect(parsed.tasks).toEqual([]);
     expect(parsed.documents[0]?.status).toBe("ready");
-    expect(parsed.run.lastEventType).toBe("run-completed");
+    expect(parsed.documents[0]?.errorCode).toBe("ocr-partial");
+    expect(isDocumentErrorCode(parsed.documents[0]?.errorCode)).toBe(true);
+    expect(isDocumentErrorCode("new-code")).toBe(false);
+    expect(parsed.run.lastRunMode).toBe("retry");
+    expect(parsed.run.lastRunError).toBe("OCR is not available right now.");
   });
 
   it("defaults the run cursor and rejects unknown event types", () => {

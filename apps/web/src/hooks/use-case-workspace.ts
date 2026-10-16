@@ -1,12 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { CaseDocument, CaseState, DocumentStatus, RunEvent } from "@evianta/core";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  apiErrorCodes,
+  type CaseDocument,
+  type CaseState,
+  type DocumentStatus,
+  type RunEvent,
+} from "@evianta/core";
 import { toast } from "@/components/ui/sonner";
 import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { useResource } from "@/hooks/use-resource";
-import { describeError, isSampleReadOnlyError } from "@/lib/api/errors";
+import { describeError, hasApiErrorCode, isSampleReadOnlyError } from "@/lib/api/errors";
 import { paceRunStreamHandlers } from "@/lib/api/run-stream";
+import {
+  retryWhileUploadingAsync,
+  type UploadConflictRetryOptions,
+} from "@/lib/api/upload-conflict";
 import { useDataSource } from "@/lib/data/data-source-context";
 import type { StreamConnectionState } from "@/lib/data/types";
 import {
@@ -41,6 +51,11 @@ interface LiveProgress {
 
 export type WorkspaceAction = "run" | "retry";
 
+export const runActiveUploadMessage = "Wait for the run to finish before adding documents.";
+
+export const casePlannedUploadMessage =
+  "Documents cannot be added once the case has been planned, because later runs reuse the completed steps. Start a new case to use different documents.";
+
 const replayPaceMs = 450;
 const processingPollMs = 3000;
 const processingStatuses = new Set<DocumentStatus>(["pending", "processing"]);
@@ -62,6 +77,8 @@ export interface CaseWorkspaceController {
   connection: StreamConnectionState | undefined;
   busyAction: WorkspaceAction | undefined;
   uploads: LocalUpload[];
+  // Set when the API would reject an upload, with a reason to show instead of the drop area.
+  uploadLockedReason: string | undefined;
   reload: () => void;
   runAsync: () => Promise<void>;
   retryAsync: () => Promise<void>;
@@ -72,10 +89,12 @@ export interface CaseWorkspaceController {
 
 export function useCaseWorkspace(
   caseId: string,
-  options: { onTryCase?: () => void } = {},
+  options: { onTryCase?: () => void; uploadRetry?: UploadConflictRetryOptions } = {},
 ): CaseWorkspaceController {
   const dataSource = useDataSource();
   const caseState = useResource(`case:${caseId}`, () => dataSource.getCaseStateAsync(caseId));
+  const uploadsInFlight = useRef(new Set<Promise<unknown>>());
+  const uploadRetry = options.uploadRetry;
   const [live, setLive] = useState<LiveProgress | null>(null);
   const [streamRequest, setStreamRequest] = useState<StreamRequest | null>(null);
   // Seq of the last terminal event seen; older case state still reports that run as active.
@@ -212,10 +231,12 @@ export function useCaseWorkspace(
 
     setBusyAction(action);
     try {
-      const { runId } =
-        action === "run"
-          ? await dataSource.startRunAsync(caseId)
-          : await dataSource.retryRunAsync(caseId);
+      await Promise.allSettled([...uploadsInFlight.current]);
+      const { runId } = await retryWhileUploadingAsync(
+        () =>
+          action === "run" ? dataSource.startRunAsync(caseId) : dataSource.retryRunAsync(caseId),
+        uploadRetry,
+      );
       setLive({
         progress: {
           ...createRunProgress(state),
@@ -276,7 +297,7 @@ export function useCaseWorkspace(
         status: "uploading" as const,
       })),
     ]);
-    await Promise.all(
+    const settled = Promise.all(
       pending.map(async ({ id, file }) => {
         try {
           const document: CaseDocument = await dataSource.uploadDocumentAsync(caseId, file);
@@ -286,6 +307,14 @@ export function useCaseWorkspace(
           if (showReadOnlyToast(error)) {
             setUploads((current) => current.filter((upload) => upload.id !== id));
             return;
+          }
+
+          // The case was planned or started elsewhere; refresh so the upload area explains why.
+          if (
+            hasApiErrorCode(error, apiErrorCodes.caseAlreadyPlanned) ||
+            hasApiErrorCode(error, apiErrorCodes.runInProgress)
+          ) {
+            reload();
           }
 
           setUploads((current) =>
@@ -298,6 +327,19 @@ export function useCaseWorkspace(
         }
       }),
     );
+    uploadsInFlight.current.add(settled);
+    try {
+      await settled;
+    } finally {
+      uploadsInFlight.current.delete(settled);
+    }
+  }
+
+  let uploadLockedReason: string | undefined;
+  if (state?.run.active || activeRequest || busyAction) {
+    uploadLockedReason = runActiveUploadMessage;
+  } else if (state && state.tasks.length > 0) {
+    uploadLockedReason = casePlannedUploadMessage;
   }
 
   let progress: RunProgress | undefined;
@@ -317,6 +359,7 @@ export function useCaseWorkspace(
     connection,
     busyAction,
     uploads,
+    uploadLockedReason,
     reload,
     runAsync: () => startAsync("run"),
     retryAsync: () => startAsync("retry"),

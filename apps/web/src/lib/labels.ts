@@ -1,13 +1,15 @@
-import type {
-  AgentRole,
-  CaseStatus,
-  DeliverableFormat,
-  DocumentStatus,
-  ExtractionMethod,
-  FindingSeverity,
-  SectionReviewStatus,
-  TaskStatus,
-  UseCase,
+import {
+  isDocumentErrorCode,
+  type AgentRole,
+  type CaseStatus,
+  type DeliverableFormat,
+  type DocumentErrorCode,
+  type DocumentStatus,
+  type ExtractionMethod,
+  type FindingSeverity,
+  type SectionReviewStatus,
+  type TaskStatus,
+  type UseCase,
 } from "@evianta/core";
 import type { WorkStatus } from "@/components/patterns/status-badge";
 
@@ -76,6 +78,31 @@ export const documentStatusLabels: Record<DocumentStatus, string> = {
   partial: "Partly read",
   failed: "Failed",
 };
+
+export const documentErrorMessages: Record<DocumentErrorCode, string> = {
+  "unsupported-type":
+    "This file type cannot be read. Upload CSV, TSV, Excel, PDF, PNG, JPEG, or WebP files.",
+  "ocr-unavailable":
+    "Text recognition is unavailable right now. The file is read again when the case runs.",
+  "ocr-failed":
+    "Text recognition could not read this file. It is tried again when the case runs; a clearer scan helps.",
+  "ocr-partial": "Some pages could not be read. Check the pages flagged for review.",
+  "extraction-failed":
+    "The contents of this file could not be extracted. Check that it opens, then upload it again.",
+  "read-failed": "The stored file could not be read. It is tried again when the case runs.",
+};
+
+// A friendly message for known codes, otherwise the server's client-safe message.
+export function describeDocumentError(document: {
+  error?: string;
+  errorCode?: string;
+}): string | undefined {
+  if (isDocumentErrorCode(document.errorCode)) {
+    return documentErrorMessages[document.errorCode];
+  }
+
+  return document.error;
+}
 
 export const extractionMethodLabels: Record<ExtractionMethod, string> = {
   parse: "Parsed directly, no model cost",

@@ -61,6 +61,10 @@ export function isSampleReadOnlyError(error: unknown): error is SampleReadOnlyEr
   return error instanceof SampleReadOnlyError;
 }
 
+export function hasApiErrorCode(error: unknown, code: string): error is ApiError {
+  return error instanceof ApiError && error.code === code;
+}
+
 export function describeError(error: unknown): string {
   if (error instanceof ApiResponseValidationError) {
     return "The server sent a response this page could not read. Refresh to try again.";

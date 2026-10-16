@@ -6,7 +6,7 @@ import {
   failedRunEvents,
   getSampleStateForUseCase,
 } from "@/fixtures";
-import { buildRunEvents } from "@/fixtures/run-events";
+import { buildRunEvents, failedRunMessage } from "@/fixtures/run-events";
 import {
   applyRunEvent,
   canRetry,
@@ -24,7 +24,8 @@ describe("run progress", () => {
     expect(progress.status).toBe("failed");
     expect(getFailedTasks(progress).map((task) => task.id)).toEqual([fixtureFailure.taskId]);
     expect(getBlockedTasks(progress)).toHaveLength(2);
-    expect(progress.error).toBe(fixtureFailure.error);
+    expect(progress.error).toBe(failedRunMessage);
+    expect(getFailedTasks(progress)[0]?.lastError).toBe(fixtureFailure.error);
     expect(canRetry(progress)).toBe(true);
   });
 
@@ -108,15 +109,36 @@ describe("run progress", () => {
 
   it("derives status from the run cursor and explains a run that stopped outside a step", () => {
     const sample = getSampleStateForUseCase("data-analysis");
+    const failedRun = {
+      active: false,
+      lastEventSeq: 3,
+      lastRunId: "run-9",
+      lastEventType: "run-failed" as const,
+    };
     const running = createRunProgress({ ...sample, run: { ...sample.run, active: true } });
     const stopped = createRunProgress({
       ...sample,
-      run: { active: false, lastEventSeq: 3, lastRunId: "run-9", lastEventType: "run-failed" },
+      run: {
+        ...failedRun,
+        lastRunError:
+          "Text recognition is not available right now. It is retried when the case runs.",
+      },
     });
+    const withoutMessage = createRunProgress({ ...sample, run: failedRun });
 
     expect(running.status).toBe("running");
     expect(stopped.status).toBe("failed");
+    expect(stopped.mode).toBe("run");
     expect(getFailedTasks(stopped)).toEqual([]);
-    expect(stopped.error).toBe(runStoppedMessage);
+    expect(stopped.error).toMatch(/^Text recognition is not available/);
+    expect(withoutMessage.error).toBe(runStoppedMessage);
+  });
+
+  it("reads the mode of the last run", () => {
+    const sample = getSampleStateForUseCase("data-analysis");
+
+    expect(
+      createRunProgress({ ...sample, run: { ...sample.run, lastRunMode: "retry" } }).mode,
+    ).toBe("retry");
   });
 });
