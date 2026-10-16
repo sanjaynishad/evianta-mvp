@@ -41,13 +41,15 @@ const BASIS = "(?:the\\s+)?(?:date\\s+of\\s+)?(?:the\\s+)?(invoice|delivery|acce
 const CREDIT_TERM_PATTERNS = [
   new RegExp(
     `\\bwithin\\s+(\\d{1,3})\\s*(?:\\([a-z\\s-]+\\)\\s*)?days?\\s+(?:of|from|after)\\s+${BASIS}`,
-    "i",
+    "gi",
   ),
   new RegExp(
     `\\b(?:credit\\s+(?:period|days|terms)|payment\\s+terms?)\\s*(?:of|:|-)?\\s*(\\d{1,3})\\s*days?(?:\\s+(?:of|from|after)\\s+${BASIS})?`,
-    "i",
+    "gi",
   ),
 ];
+// Deadlines set by a letter or reminder, such as "within 15 days of receipt of this letter".
+const CORRESPONDENCE_DEADLINE = /\b(this|the|our|your)\s+(letter|notice|e-?mail|reminder)\b/i;
 
 function basisOf(value: string | undefined): CreditTermsBasis {
   const lower = value?.toLowerCase();
@@ -75,18 +77,25 @@ export function creditTermsInDocuments(
 
   for (const { metadata, extraction } of documents) {
     for (const page of extraction?.pages ?? []) {
-      for (const pattern of CREDIT_TERM_PATTERNS) {
-        const match = pattern.exec(page.text);
-        const days = Number(match?.[1]);
+      for (const [patternIndex, pattern] of CREDIT_TERM_PATTERNS.entries()) {
+        const found = [...page.text.matchAll(pattern)].find((match) => {
+          const quote = sentenceAround(page.text, match.index, match[0].length);
 
-        if (match && Number.isInteger(days) && days > 0) {
+          return (
+            patternIndex > 0 ||
+            (/\bpay|payment|credit/i.test(quote) && !CORRESPONDENCE_DEADLINE.test(quote))
+          );
+        });
+        const days = Number(found?.[1]);
+
+        if (found && Number.isInteger(days) && days > 0) {
           sources.push({
             creditDays: days,
-            basis: basisOf(match[2]),
+            basis: basisOf(found[2]),
             documentId: metadata.id,
             documentName: metadata.name,
             page: page.index,
-            quote: sentenceAround(page.text, match.index, match[0].length),
+            quote: sentenceAround(page.text, found.index, found[0].length),
           });
           break;
         }

@@ -142,6 +142,8 @@ export interface ChronologyEvent {
   title: string;
   /** Where the event is recorded, for example "invoices.csv D3" or "delivery-notes.pdf p.1". */
   source: string;
+  /** The document the event is recorded in. */
+  documentId?: string;
   invoiceNumbers: string[];
   dateKey: string;
   evidence: EvidenceReference[];
@@ -222,6 +224,10 @@ function dueDateEvents(reconciliation: PaymentReconciliation): ChronologyEvent[]
           line.dueDateBasis === "agreed-terms" && terms?.sources[0]
             ? `${terms.sources[0].documentName} p.${terms.sources[0].page}`
             : recordLocationLabel(line.invoice),
+        documentId:
+          line.dueDateBasis === "agreed-terms" && terms?.sources[0]
+            ? terms.sources[0].documentId
+            : line.invoice.documentId,
         invoiceNumbers: [line.invoice.invoiceNumber],
         dateKey: `due-date:${line.invoice.key}`,
         evidence: [
@@ -256,6 +262,7 @@ export function buildChronology(
       kind: "invoice",
       title: `Invoice ${invoice.invoiceNumber} raised for ${formatInrAmount(line.amount)}${invoice.poRef ? ` against ${invoice.poRef}` : ""}`,
       source: recordLocationLabel(invoice),
+      documentId: invoice.documentId,
       invoiceNumbers: [invoice.invoiceNumber],
       dateKey: `invoice-date:${invoice.key}`,
       evidence: [invoiceRowEvidence(invoice, `${invoice.invoiceNumber} invoice row`)],
@@ -286,6 +293,7 @@ export function buildChronology(
       kind: "payment",
       title: `Payment ${payment.label} of ${formatInrAmount(payment.amount ?? 0)} received ${targets}`,
       source: recordLocationLabel(payment),
+      documentId: payment.documentId,
       invoiceNumbers: allocations.map(({ line }) => line.invoice.invoiceNumber),
       dateKey: `payment-date:${slug(payment.label)}`,
       evidence: [recordRowEvidence(payment, `Payment ${payment.label} row`)],
@@ -302,6 +310,7 @@ export function buildChronology(
       kind: fact.kind,
       title: fact.label,
       source: fact.evidence[0]?.sourceRef ?? "document analysis",
+      ...(fact.evidence[0]?.documentId ? { documentId: fact.evidence[0].documentId } : {}),
       invoiceNumbers,
       dateKey: fact.key,
       evidence: upstreamEvidence(fact.evidence, fact.label),

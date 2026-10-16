@@ -286,16 +286,21 @@ export function supportingDocuments(
   }
 
   for (const fact of prepared.facts.events) {
-    for (const evidence of fact.evidence.slice(0, 1)) {
-      if (evidence.documentId) {
-        addUse(evidence.documentId, DOCUMENT_USE_LABELS[fact.kind]);
-        entry(evidence.documentId).events += 1;
-      }
+    const documentId = fact.evidence[0]?.documentId;
+
+    if (documentId) {
+      addUse(documentId, DOCUMENT_USE_LABELS[fact.kind]);
     }
   }
 
   for (const source of prepared.terms.terms?.sources ?? []) {
     addUse(source.documentId, `credit period (${source.creditDays} days, p.${source.page})`);
+  }
+
+  for (const event of prepared.chronology) {
+    if (event.documentId) {
+      entry(event.documentId).events += 1;
+    }
   }
 
   return [...byId.values()];

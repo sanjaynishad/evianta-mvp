@@ -256,7 +256,6 @@ export function documentFindings(
       severity: "info",
       confidence: confidenceOf(document.source, pages),
       evidence: sourceEvidence(document.source ?? { documentId: document.documentId }, title),
-      openQuestions: lowConfidenceQuestion(document.source, pages, `The ${label.toLowerCase()}`),
       ...(date && eventKind
         ? {
             dates: [
@@ -354,7 +353,6 @@ export function documentFindings(
       severity: "info",
       confidence: confidenceOf(delivery.source, pages),
       evidence: sourceEvidence(delivery.source, `${name}${forInvoices}`),
-      openQuestions: lowConfidenceQuestion(delivery.source, pages, `${name}`),
       ...(date
         ? {
             dates: [
@@ -364,7 +362,7 @@ export function documentFindings(
                   delivery.invoiceRefs,
                   delivery.reference ?? `${index + 1}`,
                 ),
-                label: `${name} delivered${forInvoices}`,
+                label: `Goods delivered${delivery.reference ? ` under ${delivery.reference}` : ""}${forInvoices}`,
                 date,
               },
             ],
@@ -383,7 +381,6 @@ export function documentFindings(
       severity: "info",
       confidence: confidenceOf(item.source, pages),
       evidence: sourceEvidence(item.source, `Correspondence from ${item.sender}`),
-      openQuestions: lowConfidenceQuestion(item.source, pages, "This correspondence"),
       ...(date
         ? {
             dates: [

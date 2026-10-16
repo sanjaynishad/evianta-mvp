@@ -211,7 +211,9 @@ export function legalRouteFindings(
         ...documents,
       ],
       assumptions: [
-        `${VERIFY_AGAINST_CURRENT_LAW}: confirm that ${route.reference ?? route.name} is current and applies to these facts.`,
+        route.kind === "contractual" && sources.length === 0
+          ? `Confirm that ${route.reference ?? route.name} is the agreed wording in force and applies to these facts.`
+          : `${VERIFY_AGAINST_CURRENT_LAW}: confirm that ${route.reference ?? route.name} is current and applies to these facts.`,
       ],
       openQuestions: conditionQuestions,
     };

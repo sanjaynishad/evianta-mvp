@@ -165,7 +165,9 @@ function lineSummary(line: InvoiceLine): string {
         ? `${line.daysOverdue} day(s) past the due date of ${line.dueDate}`
         : `not yet due (due ${line.dueDate})`;
 
-  return `[${invoiceNumber}] ${formatInrAmount(line.outstanding)} outstanding of ${formatInrAmount(line.amount)} after ${payments} payment(s); ${overdue}`;
+  const paidPart = payments === 0 ? "with no payment received" : `after ${payments} payment(s)`;
+
+  return `[${invoiceNumber}] ${formatInrAmount(line.outstanding)} outstanding of ${formatInrAmount(line.amount)} ${paidPart}; ${overdue}`;
 }
 
 function inferredQuestions(line: InvoiceLine): OpenQuestionDraft[] {
