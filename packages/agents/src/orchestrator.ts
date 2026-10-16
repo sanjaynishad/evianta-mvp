@@ -10,7 +10,7 @@ import type {
   TaskStatus,
   TokenUsage,
 } from "@evianta/core";
-import type { Store } from "@evianta/store";
+import type { LeaseFence, Store } from "@evianta/store";
 
 import { silentLogger, type AgentLogger } from "./agent.js";
 import {
@@ -125,7 +125,18 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
   const logger = options.logger ?? silentLogger;
   const newId = options.newId ?? randomUUID;
   const now = options.now ?? (() => new Date());
-  const activeCases = new Set<string>();
+  // Lease owner of each case this orchestrator is running; fenced writes require it.
+  const activeCases = new Map<string, string>();
+
+  function fenceFor(caseId: string): LeaseFence {
+    const leaseOwner = activeCases.get(caseId);
+
+    if (!leaseOwner) {
+      throw new OrchestratorError("run-in-progress", `Case "${caseId}" has no active run lease.`);
+    }
+
+    return { leaseOwner };
+  }
 
   async function getCaseOrThrowAsync(caseId: string): Promise<Case> {
     const caseRecord = await store.cases.getCaseAsync(caseId);
@@ -168,6 +179,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       };
     }
 
+    const fence = fenceFor(caseRecord.id);
     const documents = await loadDocumentSourcesAsync(caseRecord.id);
     const planning = await planWithCoordinatorAsync({
       caseRecord,
@@ -214,7 +226,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         attempts: 0,
       };
     });
-    const tasks = await store.tasks.createTasksAsync(caseRecord.id, taskInputs);
+    const tasks = await store.tasks.createTasksAsync(caseRecord.id, taskInputs, fence);
     const planningFindings: Finding[] = [];
 
     for (const task of tasks) {
@@ -228,19 +240,23 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       // The questions are already in the task instructions, so a failed note write is not fatal.
       try {
         planningFindings.push(
-          await store.findings.addFindingAsync(caseRecord.id, {
-            id: newId(),
-            taskId: task.id,
-            summary: "Coordinator planning notes",
-            ...(notes ? { detail: notes } : {}),
-            severity: "info",
-            confidence: "unassessed",
-            openQuestions: questions.map((question) => ({
+          await store.findings.addFindingAsync(
+            caseRecord.id,
+            {
               id: newId(),
-              text: question.text,
-              severity: question.severity,
-            })),
-          }),
+              taskId: task.id,
+              summary: "Coordinator planning notes",
+              ...(notes ? { detail: notes } : {}),
+              severity: "info",
+              confidence: "unassessed",
+              openQuestions: questions.map((question) => ({
+                id: newId(),
+                text: question.text,
+                severity: question.severity,
+              })),
+            },
+            fence,
+          ),
         );
       } catch (error) {
         logger.warn("Could not save coordinator planning notes.", {
@@ -277,8 +293,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       );
     }
 
-    activeCases.add(caseId);
     const owner = randomUUID();
+    activeCases.set(caseId, owner);
     let acquired = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let renewal: Promise<void> = Promise.resolve();
@@ -356,6 +372,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     }
 
     const runId = newId();
+    const fence = fenceFor(caseId);
     const emitAsync = createRunEventEmitter(store, events, caseId);
     const baseline = toTotals(caseRecord);
     let runUsage = emptyUsage();
@@ -377,6 +394,32 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       });
     };
 
+    // The store adds a task charge to the task totals when it applies it, exactly once, so an
+    // attempt interrupted after journaling is still counted when a later run reconciles.
+    const chargeTaskAsync = async (
+      taskId: string,
+      attempt: number,
+      usage: TokenUsage,
+      cost: Cost,
+    ) => {
+      await store.runs.recordChargeAsync(caseId, runId, `task:${taskId}:${attempt}`, {
+        taskId,
+        inputTokens: usage.input,
+        outputTokens: usage.output,
+        totalTokens: usage.total,
+        costEstimate: cost,
+      });
+
+      try {
+        await store.runs.reconcileUsageAsync(caseId);
+      } catch (error) {
+        logger.warn("Could not apply a task charge; it is applied when the run ends.", {
+          taskId,
+          error: messageOf(error),
+        });
+      }
+    };
+
     const completedTaskIds: string[] = [];
     const failedTaskIds: string[] = [];
     const blockedTaskIds: string[] = [];
@@ -396,7 +439,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       }
 
       if (tasks.length === 0) {
-        caseRecord = await store.cases.updateCaseStatusAsync(caseId, "planning");
+        caseRecord = await store.cases.updateCaseStatusAsync(caseId, "planning", fence);
         plan = await planAndPersistAsync(
           caseRecord,
           async (usage, cost) => {
@@ -414,7 +457,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         .filter((task) => task.status === "completed" && !selectedIds.includes(task.id))
         .map((task) => task.id);
 
-      await store.cases.updateCaseStatusAsync(caseId, "in-progress");
+      await store.cases.updateCaseStatusAsync(caseId, "in-progress", fence);
       await emitAsync({ type: "run-started", runId, mode, taskIds: selectedIds });
 
       for (const finding of plan?.planningFindings ?? []) {
@@ -475,10 +518,15 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           blockedTaskIds.push(id);
           taskById.set(
             id,
-            await store.tasks.updateTaskAsync(caseId, id, {
-              status: "blocked",
-              lastError: `Blocked because "${failed.title}" did not complete.`,
-            }),
+            await store.tasks.updateTaskAsync(
+              caseId,
+              id,
+              {
+                status: "blocked",
+                lastError: `Blocked because "${failed.title}" did not complete.`,
+              },
+              fence,
+            ),
           );
         }
 
@@ -581,6 +629,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
                 primary: primaryDeliverable,
                 specs: specs.filter((spec) => spec.key === key),
               })[0],
+            fence,
           );
         }
       };
@@ -614,11 +663,11 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         }
 
         for (const item of record.evidence) {
-          await store.evidence.addEvidenceAsync(caseId, item);
+          await store.evidence.addEvidenceAsync(caseId, item, fence);
         }
 
         for (const finding of record.findings) {
-          await store.findings.addFindingAsync(caseId, finding);
+          await store.findings.addFindingAsync(caseId, finding, fence);
         }
 
         await saveSectionsAsync(task.id, record.sections, output.deliverables ?? []);
@@ -629,41 +678,44 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       const runTaskAsync = async (initial: Task): Promise<void> => {
         const attempt = initial.attempts + 1;
         let task = initial;
+        let attemptUsage = emptyUsage();
+        let attemptCost = 0;
+        let charged = false;
+        let record: TaskRecord;
 
         await ensureLeaseAsync();
 
         try {
           if (task.assignedRole === "independent-review") {
-            await store.cases.updateCaseStatusAsync(caseId, "review");
+            await store.cases.updateCaseStatusAsync(caseId, "review", fence);
           }
 
+          // The attempt must be durable before any output of it can be persisted.
           status.set(task.id, "in-progress");
-          task = await store.tasks.updateTaskAsync(caseId, task.id, {
-            status: "in-progress",
-            attempts: attempt,
-            lastError: null,
-          });
+          task = await store.tasks.updateTaskAsync(
+            caseId,
+            task.id,
+            { status: "in-progress", attempts: attempt, lastError: null },
+            fence,
+          );
           taskById.set(task.id, task);
-          await emitAsync({
-            type: "task-started",
-            runId,
-            taskId: task.id,
-            title: task.title,
-            assignedRole: task.assignedRole,
-            attempt,
-          });
-        } catch (error) {
-          logger.warn("Could not start a task.", { taskId: task.id, error: messageOf(error) });
-        }
 
-        let attemptUsage = emptyUsage();
-        let attemptCost = 0;
-        let charged = false;
-        let record: TaskRecord;
-        let tokenUsage: TokenUsage;
-        let costEstimate: Cost;
+          try {
+            await emitAsync({
+              type: "task-started",
+              runId,
+              taskId: task.id,
+              title: task.title,
+              assignedRole: task.assignedRole,
+              attempt,
+            });
+          } catch (error) {
+            logger.warn("Could not publish a task start.", {
+              taskId: task.id,
+              error: messageOf(error),
+            });
+          }
 
-        try {
           const handler = handlers.get(task.assignedRole);
 
           if (!handler) {
@@ -677,18 +729,15 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           attemptCost = output.cost;
           charged = true;
           addRunUsage(output.usage, output.cost);
-          await chargeUsageAsync(`task:${task.id}:${attempt}`, attemptUsage, attemptCost);
+          await chargeTaskAsync(task.id, attempt, attemptUsage, attemptCost);
           await ensureLeaseAsync();
           record = await persistOutputAsync(task, output, attempt, context.upstreamFindings);
-          tokenUsage = addUsage(task.tokenUsage ?? emptyUsage(), attemptUsage);
-          costEstimate = roundCost((task.costEstimate ?? 0) + attemptCost);
-          task = await store.tasks.updateTaskAsync(caseId, task.id, {
-            status: "completed",
-            attempts: attempt,
-            tokenUsage,
-            costEstimate,
-            lastError: null,
-          });
+          task = await store.tasks.updateTaskAsync(
+            caseId,
+            task.id,
+            { status: "completed", attempts: attempt, lastError: null },
+            fence,
+          );
           taskById.set(task.id, task);
           status.set(task.id, "completed");
           completedTaskIds.push(task.id);
@@ -707,15 +756,14 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           failedTaskIds.push(task.id);
 
           try {
-            await chargeUsageAsync(`task:${task.id}:${attempt}`, attemptUsage, attemptCost);
+            await chargeTaskAsync(task.id, attempt, attemptUsage, attemptCost);
             await ensureLeaseAsync();
-            task = await store.tasks.updateTaskAsync(caseId, task.id, {
-              status: "failed",
-              attempts: attempt,
-              tokenUsage: addUsage(task.tokenUsage ?? emptyUsage(), attemptUsage),
-              costEstimate: roundCost((task.costEstimate ?? 0) + attemptCost),
-              lastError,
-            });
+            task = await store.tasks.updateTaskAsync(
+              caseId,
+              task.id,
+              { status: "failed", attempts: attempt, lastError },
+              fence,
+            );
             taskById.set(task.id, task);
 
             const blocked = await blockDependentsAsync(task);
@@ -762,17 +810,21 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             });
           }
 
-          const totals = caseTotals();
-
+          // Totals are read as each event is queued, so concurrent tasks never stream a lower total.
           await emitAsync({
             type: "task-completed",
             runId,
             taskId: task.id,
             findingIds: record.findings.map((finding) => finding.id),
-            tokenUsage,
-            costEstimate,
-            runningCostEstimate: totals.cost,
+            ...(task.tokenUsage ? { tokenUsage: task.tokenUsage } : {}),
+            ...(task.costEstimate !== undefined
+              ? { costEstimate: roundCost(task.costEstimate) }
+              : {}),
+            runningCostEstimate: caseTotals().cost,
           });
+
+          const totals = caseTotals();
+
           await emitAsync({
             type: "cost-updated",
             runId,
@@ -816,10 +868,15 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             blockedTaskIds.push(id);
             taskById.set(
               id,
-              await store.tasks.updateTaskAsync(caseId, id, {
-                status: "blocked",
-                lastError: "Blocked because a task it depends on has not completed.",
-              }),
+              await store.tasks.updateTaskAsync(
+                caseId,
+                id,
+                {
+                  status: "blocked",
+                  lastError: "Blocked because a task it depends on has not completed.",
+                },
+                fence,
+              ),
             );
           }
 
@@ -872,7 +929,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     await ensureLeaseAsync();
     await recordAsync("case usage", () => store.runs.reconcileUsageAsync(caseId));
     await recordAsync("case status", () =>
-      store.cases.updateCaseStatusAsync(caseId, finalError() ? "failed" : "completed"),
+      store.cases.updateCaseStatusAsync(caseId, finalError() ? "failed" : "completed", fence),
     );
 
     const statusError = finalError();
