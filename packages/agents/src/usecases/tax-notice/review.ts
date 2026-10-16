@@ -175,6 +175,70 @@ export function draftFiguresCheck(
   };
 }
 
+/**
+ * Data-quality gaps in the source records that make reconciled totals partial or uncertain, so
+ * the review cannot pass them as complete: rows without a deductor, unreadable values, names
+ * shared by several TANs, and 26AS and AIS disagreeing.
+ */
+export function reconciliationDataCheck(
+  reconciliation: TaxReconciliation,
+  reconciliationTaskIds: readonly string[],
+): AdditionalCheck {
+  return () => {
+    const issue = (severity: VerificationIssue["severity"], key: string, message: string) => ({
+      check: "reconciliation-data" as const,
+      severity,
+      key,
+      message,
+      findingIds: [],
+      taskIds: [...reconciliationTaskIds],
+    });
+    const issues: VerificationIssue[] = [];
+
+    for (const row of reconciliation.unattributedRows) {
+      issues.push(
+        issue(
+          "high",
+          `unattributed:${row.documentId}:${row.location.rowRange?.start}`,
+          `Row ${row.location.rowRange?.start ?? "?"} of ${row.documentName} has values but no deductor or TAN and is not in the reconciled totals.`,
+        ),
+      );
+    }
+
+    for (const line of reconciliation.lines.filter((item) => item.status === "incomplete")) {
+      issues.push(
+        issue(
+          "high",
+          `incomplete:${line.ref}`,
+          `${line.ref} (${line.deductorName}, ${line.period}) has blank or unreadable values, so its totals are incomplete.`,
+        ),
+      );
+    }
+
+    for (const deductor of reconciliation.ambiguousDeductors) {
+      issues.push(
+        issue(
+          "high",
+          `ambiguous:${deductor.name}`,
+          `"${deductor.name}" appears under several TANs (${deductor.tans.join(", ")}); its rows without a TAN were not reconciled.`,
+        ),
+      );
+    }
+
+    for (const disagreement of reconciliation.statementOverlap?.disagreements ?? []) {
+      issues.push(
+        issue(
+          "medium",
+          `statements:${disagreement.tan ?? disagreement.deductorName}:${disagreement.financialYear}`,
+          `Form 26AS and AIS disagree for ${disagreement.deductorName}, FY ${disagreement.financialYear} (26AS ${disagreement.taxPer26AS === undefined ? "no entry" : formatAmount(disagreement.taxPer26AS)}, AIS ${disagreement.taxPerAIS === undefined ? "no entry" : formatAmount(disagreement.taxPerAIS)}).`,
+        ),
+      );
+    }
+
+    return issues;
+  };
+}
+
 export interface TaxNoticeReviewOptions extends ReviewTaskHandlerOptions {
   /** Handles review for other use cases; the generic deterministic-first reviewer by default. */
   fallback?: TaskHandler;
@@ -225,6 +289,12 @@ export function createTaxNoticeReviewTaskHandler(
             tolerance,
           ),
           draftFiguresCheck(draftSections, expected, Math.max(tolerance, 0.5)),
+          reconciliationDataCheck(
+            reconciliation,
+            ctx.tasks
+              .filter((task) => task.assignedRole === "reconciliation")
+              .map((task) => task.id),
+          ),
         ],
       });
 

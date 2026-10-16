@@ -144,6 +144,15 @@ export function reconciliationContext(reconciliation: TaxReconciliation): Record
       unreadTables: reconciliation.unclassified.map(
         (table) => `${table.documentName} (${table.reason})`,
       ),
+      ...(reconciliation.unattributedRows.length > 0
+        ? { rowsWithoutDeductor: reconciliation.unattributedRows.length }
+        : {}),
+      ...(reconciliation.statementOverlap
+        ? {
+            taxCreditStatement: "Form 26AS is authoritative; AIS only corroborates it",
+            statementDisagreements: reconciliation.statementOverlap.disagreements,
+          }
+        : {}),
     },
   };
 }
@@ -348,6 +357,21 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
       (source) =>
         `${sourceLabel(source)} totals are not stated because some of its values are blank or unreadable.`,
     ),
+    ...(reconciliation.unattributedRows.length > 0
+      ? [
+          `Totals exclude ${reconciliation.unattributedRows.length} row(s) without a deductor or TAN.`,
+        ]
+      : []),
+    ...(reconciliation.statementOverlap
+      ? [
+          `Form 26AS is used as the TDS credit; AIS (${reconciliation.statementOverlap.corroborating.map((table) => table.documentName).join(", ")}) only corroborates it and is not added.`,
+        ]
+      : []),
+    ...(reconciliation.duplicateRows.length > 0
+      ? [
+          `${reconciliation.duplicateRows.length} tax-credit row(s) repeated in another uploaded copy of the statement were counted once.`,
+        ]
+      : []),
   ];
 
   return {
@@ -357,7 +381,10 @@ export function totalsFinding(reconciliation: TaxReconciliation): AgentFindingIn
         : `Reconciliation totals: TDS difference of ${formatRupees(headline)} against 26AS/AIS`,
     detail: figures.map((figure) => `${figure.label}: ${formatRupees(figure.value)}`).join("\n"),
     severity: material ? "high" : "info",
-    confidence: incompleteSources.length > 0 ? "medium" : "high",
+    confidence:
+      incompleteSources.length > 0 || reconciliation.unattributedRows.length > 0
+        ? "medium"
+        : "high",
     evidence: reconciliation.tables.map((table) => ({
       documentId: table.documentId,
       description: `${sourceLabel(table.source)} records (${table.rowCount} row(s))`,
@@ -381,6 +408,26 @@ export function reconciliationOpenQuestions(
     questions.push({
       text: `"${deductor.name}" appears under several TANs (${deductor.tans.join(", ")}), so its rows without a TAN were not assigned to either. Confirm which TAN they belong to.`,
       severity: "high",
+    });
+  }
+
+  for (const row of reconciliation.unattributedRows) {
+    questions.push({
+      text: `Row ${row.location.rowRange?.start ?? "?"} of ${row.documentName} has values but no deductor or TAN, so it was not reconciled and the totals may be incomplete. Identify the deductor or confirm the row can be ignored.`,
+      severity: "high",
+    });
+  }
+
+  for (const disagreement of reconciliation.statementOverlap?.disagreements ?? []) {
+    const who = disagreement.tan
+      ? `${disagreement.deductorName} (${disagreement.tan})`
+      : disagreement.deductorName;
+    const value = (amount: number | undefined) =>
+      amount === undefined ? "no entry" : formatRupees(amount);
+
+    questions.push({
+      text: `Form 26AS and AIS disagree for ${who}, FY ${disagreement.financialYear}: 26AS ${value(disagreement.taxPer26AS)}, AIS ${value(disagreement.taxPerAIS)}. The reconciliation uses 26AS; confirm which statement is current.`,
+      severity: "medium",
     });
   }
 

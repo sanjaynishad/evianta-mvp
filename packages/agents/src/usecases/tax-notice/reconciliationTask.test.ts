@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createSpecialistAgent } from "../../agents/specialist.js";
 import { createAgentRegistry } from "../../registry.js";
-import { createTaxNoticeHarnessAsync, DOCUMENT_IDS } from "../../testing/taxNotice.js";
+import { createTaxNoticeHarnessAsync, DOCUMENT_IDS, LEDGER_CSV } from "../../testing/taxNotice.js";
 import { reconciliationLineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
 
 describe("reconciliation handler", () => {
@@ -125,6 +125,37 @@ describe("reconciliation handler", () => {
     expect(call).toMatchObject({ tier: "cheap", system: "Custom reconciliation prompt." });
     expect(findings[0]?.summary.startsWith("[R-03]")).toBe(true);
     expect(findings[0]?.detail).toContain("No explanation was produced");
+  });
+
+  it("surfaces rows without a deductor and the independent review flags the partial totals", async () => {
+    const { orchestrator, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
+      tasks: [
+        { id: "rec", role: "reconciliation" },
+        { id: "review", role: "independent-review", dependsOn: ["rec"] },
+      ],
+      uploads: { ledger: `${LEDGER_CSV}\n2023-11-20,,194J,9000,900,UNK-01` },
+    });
+
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const { findings } = await readAsync();
+    const recQuestions = findings
+      .filter((finding) => finding.taskId === "rec")
+      .flatMap((finding) => finding.openQuestions);
+    const [verification] = findings.filter((finding) => finding.taskId === "review");
+
+    expect(recQuestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          text: expect.stringContaining("Row 12 of ledger.csv has values but no deductor or TAN"),
+        }),
+      ]),
+    );
+    expect(verification?.summary).toMatch(/found \d+ issue/);
+    expect(verification?.detail).toContain(
+      "[reconciliation-data] Row 12 of ledger.csv has values but no deductor or TAN",
+    );
   });
 
   it("flags a missing source and still reconciles the others", async () => {

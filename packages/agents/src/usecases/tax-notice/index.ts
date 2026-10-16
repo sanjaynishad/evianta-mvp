@@ -48,6 +48,8 @@ export {
   reconcileTaxRecords,
   type ReconciliationLine,
   type ReconciliationStatus,
+  type StatementDisagreement,
+  type StatementOverlap,
   type TaxReconciliation,
   type TaxReconcileOptions,
 } from "./reconcile.js";
@@ -65,6 +67,8 @@ export {
   mapTaxColumns,
   readTaxRecords,
   TAX_RECORD_SOURCES,
+  taxCreditStatementOf,
+  type TaxCreditStatement,
   type TaxRecordDocument,
   type TaxRecordRow,
   type TaxRecordSet,
@@ -100,6 +104,7 @@ export {
   draftFiguresCheck,
   expectedReconciliationFigures,
   quotedAmounts,
+  reconciliationDataCheck,
   reconciliationRecomputeCheck,
   type TaxNoticeReviewOptions,
 } from "./review.js";

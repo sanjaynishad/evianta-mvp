@@ -8,6 +8,7 @@ import {
   type TaxRecordRow,
   type TaxRecordSet,
   type TaxRecordSource,
+  type TaxRecordTable,
   type UnclassifiedTable,
 } from "./records.js";
 
@@ -89,16 +90,38 @@ export interface ExcludedRow {
   location: EvidenceLocation;
 }
 
+export interface StatementDisagreement {
+  deductorName: string;
+  tan?: string;
+  financialYear: string;
+  /** Undefined when the statement has no row for the deductor and year. */
+  taxPer26AS?: number;
+  taxPerAIS?: number;
+}
+
+/** Form 26AS and AIS were both uploaded: 26AS is reconciled and AIS only corroborates it. */
+export interface StatementOverlap {
+  authoritative: TableReference[];
+  corroborating: TableReference[];
+  disagreements: StatementDisagreement[];
+}
+
 export interface TaxReconciliation {
   tolerance: number;
   providedSources: TaxRecordSource[];
   missingSources: TaxRecordSource[];
+  /** Tables whose rows were reconciled. */
   tables: TableReference[];
   unclassified: UnclassifiedTable[];
   /** Names shared by several TANs; their name-only rows are not assigned to any TAN. */
   ambiguousDeductors: AmbiguousDeductor[];
   /** Total and subtotal rows left out of the sums. */
   excludedRows: ExcludedRow[];
+  /** Rows with content but no deductor or TAN, so they could not be reconciled. */
+  unattributedRows: ExcludedRow[];
+  /** Tax-credit rows repeated in another uploaded copy of the same statement, counted once. */
+  duplicateRows: ExcludedRow[];
+  statementOverlap?: StatementOverlap;
   warnings: string[];
   lines: ReconciliationLine[];
   totals: ReconciliationTotals;
@@ -323,9 +346,11 @@ export function reconcileTaxRecords(
     records.tables.some((table) => table.source === source),
   );
   const provided = new Set(providedSources);
+  const { reconciled, corroborating } = partitionTaxCreditStatements(records.tables);
+  const { tables, duplicates } = dropDuplicateStatementRows(reconciled);
   const available: MeasureAvailability = {};
 
-  for (const table of records.tables) {
+  for (const table of tables) {
     const measures = new Set(available[table.source] ?? []);
 
     for (const measure of MEASURES) {
@@ -337,8 +362,8 @@ export function reconcileTaxRecords(
     available[table.source] = measures;
   }
 
-  const allRows = records.tables.flatMap((table) => table.rows);
-  const deductors = resolveDeductors(allRows);
+  const allRows = tables.flatMap((table) => table.rows);
+  const deductors = resolveDeductors([...allRows, ...corroborating.flatMap((table) => table.rows)]);
   const rowsByDeductor = new Map<string, TaxRecordRow[]>();
 
   for (const row of allRows) {
@@ -431,17 +456,7 @@ export function reconcileTaxRecords(
     tolerance,
     providedSources,
     missingSources: TAX_RECORD_SOURCES.filter((source) => !provided.has(source)),
-    tables: records.tables.map((table) => ({
-      source: table.source,
-      documentId: table.documentId,
-      documentName: table.documentName,
-      tableName: table.table.name,
-      location: {
-        ...(table.table.sheet ? { sheet: table.table.sheet } : {}),
-        ...(table.table.range ? { cellRange: table.table.range } : {}),
-      },
-      rowCount: table.rows.length,
-    })),
+    tables: tables.map(tableReference),
     unclassified: records.unclassified,
     ambiguousDeductors: deductors.ambiguous,
     excludedRows: records.tables.flatMap((table) =>
@@ -451,6 +466,34 @@ export function reconcileTaxRecords(
         location: excludedRowLocation(table.table.range, table.table.sheet, rowIndex),
       })),
     ),
+    unattributedRows: records.tables.flatMap((table) =>
+      table.skippedRowIndexes.map((rowIndex) => ({
+        documentId: table.documentId,
+        documentName: table.documentName,
+        location: excludedRowLocation(table.table.range, table.table.sheet, rowIndex),
+      })),
+    ),
+    duplicateRows: duplicates.map((row) => ({
+      documentId: row.documentId,
+      documentName: row.documentName,
+      location: row.location,
+    })),
+    ...(corroborating.length > 0
+      ? {
+          statementOverlap: {
+            authoritative: tables
+              .filter((table) => table.source === "tax-credit")
+              .map(tableReference),
+            corroborating: corroborating.map(tableReference),
+            disagreements: compareStatements(
+              tables.filter((table) => table.source === "tax-credit"),
+              corroborating,
+              deductors.keyOf,
+              tolerance,
+            ),
+          },
+        }
+      : {}),
     warnings: records.tables.flatMap((table) => table.warnings),
     lines,
     totals: {
@@ -459,6 +502,141 @@ export function reconcileTaxRecords(
       ...(ledgerVsTaxCredit ? { ledgerVsTaxCredit } : {}),
     },
   };
+}
+
+function tableReference(table: TaxRecordTable): TableReference {
+  return {
+    source: table.source,
+    documentId: table.documentId,
+    documentName: table.documentName,
+    tableName: table.table.name,
+    location: {
+      ...(table.table.sheet ? { sheet: table.table.sheet } : {}),
+      ...(table.table.range ? { cellRange: table.table.range } : {}),
+    },
+    rowCount: table.rows.length,
+  };
+}
+
+/** With both statements uploaded, 26AS rows are reconciled and AIS rows only corroborate them. */
+function partitionTaxCreditStatements(tables: readonly TaxRecordTable[]) {
+  const isAis = (table: TaxRecordTable) =>
+    table.source === "tax-credit" && table.statement === "ais";
+  const has26as = tables.some((table) => table.source === "tax-credit" && !isAis(table));
+
+  if (!has26as || !tables.some(isAis)) {
+    return { reconciled: [...tables], corroborating: [] as TaxRecordTable[] };
+  }
+
+  return {
+    reconciled: tables.filter((table) => !isAis(table)),
+    corroborating: tables.filter(isAis),
+  };
+}
+
+function statementRowKey(row: TaxRecordRow): string {
+  return [
+    row.tan ?? normalizeDeductorName(row.deductorName) ?? "",
+    row.financialYear ?? "",
+    row.quarter ?? "",
+    row.section ?? "",
+    row.amount ?? "",
+    row.tax ?? "",
+  ].join("|");
+}
+
+/**
+ * Counts a tax-credit row once when another uploaded document of the same statement already has
+ * it, so a statement uploaded twice (or overlapping exports) is not summed twice. Identical rows
+ * within one document are kept, since a deductor can make the same deduction more than once.
+ */
+function dropDuplicateStatementRows(tables: readonly TaxRecordTable[]) {
+  const countsByKey = new Map<string, Map<string, number>>();
+  const duplicates: TaxRecordRow[] = [];
+  const deduped = tables.map((table) => {
+    if (table.source !== "tax-credit") {
+      return table;
+    }
+
+    const rows = table.rows.filter((row) => {
+      const key = `${table.statement ?? ""}|${statementRowKey(row)}`;
+      const counts = countsByKey.get(key) ?? new Map<string, number>();
+      const seenHere = (counts.get(row.documentId) ?? 0) + 1;
+      const seenElsewhere = Math.max(
+        0,
+        ...[...counts.entries()]
+          .filter(([documentId]) => documentId !== row.documentId)
+          .map(([, count]) => count),
+      );
+
+      counts.set(row.documentId, seenHere);
+      countsByKey.set(key, counts);
+
+      if (seenHere <= seenElsewhere) {
+        duplicates.push(row);
+
+        return false;
+      }
+
+      return true;
+    });
+
+    return rows.length === table.rows.length ? table : { ...table, rows };
+  });
+
+  return { tables: deduped, duplicates };
+}
+
+/** TDS per deductor and financial year in 26AS against AIS; reports any disagreement. */
+function compareStatements(
+  authoritative: readonly TaxRecordTable[],
+  corroborating: readonly TaxRecordTable[],
+  keyOf: (row: TaxRecordRow) => string,
+  tolerance: number,
+): StatementDisagreement[] {
+  const group = (tablesToGroup: readonly TaxRecordTable[]) => {
+    const groups = new Map<string, TaxRecordRow[]>();
+
+    for (const row of tablesToGroup.flatMap((table) => table.rows)) {
+      const key = `${keyOf(row)}|${row.financialYear ?? "unknown"}`;
+      groups.set(key, [...(groups.get(key) ?? []), row]);
+    }
+
+    return groups;
+  };
+
+  const per26as = group(authoritative);
+  const perAis = group(corroborating);
+  const disagreements: StatementDisagreement[] = [];
+
+  for (const key of [...new Set([...per26as.keys(), ...perAis.keys()])].sort()) {
+    const rows26as = per26as.get(key) ?? [];
+    const rowsAis = perAis.get(key) ?? [];
+    const tax26as = rows26as.length > 0 ? sumOf(rows26as, "tax") : undefined;
+    const taxAis = rowsAis.length > 0 ? sumOf(rowsAis, "tax") : undefined;
+    const bothKnown = tax26as !== undefined && taxAis !== undefined;
+
+    if (bothKnown && Math.abs(tax26as - taxAis) <= tolerance) {
+      continue;
+    }
+
+    if (!bothKnown && rows26as.length > 0 && rowsAis.length > 0) {
+      continue;
+    }
+
+    const rows = [...rows26as, ...rowsAis];
+    const tan = rows.find((row) => row.tan)?.tan;
+
+    disagreements.push({
+      deductorName: rows.find((row) => row.deductorName)?.deductorName ?? tan ?? key,
+      ...(tan ? { tan } : {}),
+      financialYear: rows[0]?.financialYear ?? "unknown",
+      ...(tax26as !== undefined ? { taxPer26AS: tax26as } : {}),
+      ...(taxAis !== undefined ? { taxPerAIS: taxAis } : {}),
+    });
+  }
+
+  return disagreements;
 }
 
 function excludedRowLocation(

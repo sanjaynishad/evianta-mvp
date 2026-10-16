@@ -56,14 +56,19 @@ export interface TaxRecordRow {
 
 export type TaxMeasure = "tax" | "amount";
 
+/** Which tax-credit statement a table comes from; Form 26AS is authoritative for TDS credit. */
+export type TaxCreditStatement = "26as" | "ais";
+
 export interface TaxRecordTable {
   source: TaxRecordSource;
+  /** Set for tax-credit tables. */
+  statement?: TaxCreditStatement;
   documentId: string;
   documentName: string;
   table: ExtractedTable;
   columns: TaxColumnMap;
   rows: TaxRecordRow[];
-  /** Data rows without a deductor or any value, such as blank lines. */
+  /** Rows with content but no deductor or TAN; reported, not reconciled. Blank lines are ignored. */
   skippedRowIndexes: number[];
   /** Total and subtotal rows, excluded so they are not counted as transactions. */
   aggregateRowIndexes: number[];
@@ -183,6 +188,12 @@ export function classifyTaxRecordSource(
   }
 
   return undefined;
+}
+
+export function taxCreditStatementOf(documentName: string, tableName: string): TaxCreditStatement {
+  return /\bais\b|\btis\b|annual information/i.test(`${documentName} ${tableName}`)
+    ? "ais"
+    : "26as";
 }
 
 export function parseAmount(cell: TableCell | undefined): number | undefined {
@@ -317,6 +328,14 @@ export function isAggregateRow(row: readonly TableCell[], columns: TaxColumnMap)
   return row.some((cell) => typeof cell === "string" && AGGREGATE_LABEL.test(cell.trim()));
 }
 
+function isBlankRow(row: readonly TableCell[]): boolean {
+  return row.every((cell) => textOf(cell) === undefined);
+}
+
+/**
+ * Reads a data row. A row that names a deductor or TAN is always kept, so a blank or unreadable
+ * money cell marks the row unreadable instead of silently dropping it from the sums.
+ */
 function readRow(
   source: TaxRecordSource,
   metadata: DocumentMetadata,
@@ -336,7 +355,7 @@ function readRow(
   const amount = parseAmount(cell("amount"));
   const tax = parseAmount(cell("tax"));
 
-  if ((!tan && !deductorName) || (amount === undefined && tax === undefined)) {
+  if (!tan && !deductorName) {
     return undefined;
   }
 
@@ -425,6 +444,11 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
         continue;
       }
 
+      if (columns.tax === undefined && columns.amount === undefined) {
+        skip("none of its amount columns could be used");
+        continue;
+      }
+
       const warnings = ambiguous.map(
         (entry) =>
           `${metadata.name}: amounts were not compared because several columns could hold them (${entry.names.join(", ")}).`,
@@ -434,6 +458,10 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
       const aggregateRowIndexes: number[] = [];
 
       table.rows.forEach((row, rowIndex) => {
+        if (isBlankRow(row)) {
+          return;
+        }
+
         if (isAggregateRow(row, columns)) {
           aggregateRowIndexes.push(rowIndex);
 
@@ -451,6 +479,9 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
 
       tables.push({
         source,
+        ...(source === "tax-credit"
+          ? { statement: taxCreditStatementOf(metadata.name, table.name) }
+          : {}),
         documentId: metadata.id,
         documentName: metadata.name,
         table,

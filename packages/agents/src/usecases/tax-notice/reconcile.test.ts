@@ -325,3 +325,96 @@ describe("reconciliation edge cases", () => {
     ]);
   });
 });
+
+describe("overlapping statements and incomplete rows", () => {
+  it("keeps identified rows whose money cells are blank and reports rows without a deductor", async () => {
+    const ledger = [
+      LEDGER_CSV,
+      "2023-10-15,Northwind Bank Ltd,194A,,,INT-03",
+      ",,,,,",
+      "2023-11-20,,194J,9000,900,UNK-01",
+    ].join("\n");
+    const tdsOnlyReturn = [
+      "TAN,Deductor,Financial year,TDS claimed",
+      "MUMN10001A,Northwind Bank Ltd,2023-24,1000",
+      "DELS20002B,Sunrise Consulting Pvt Ltd,2023-24,",
+      "BLRA30003C,Asha Salaries Ltd,2023-24,90000",
+    ].join("\n");
+    const records = readTaxRecords(
+      await fixtureDocumentsAsync({ ledger, returnComputation: tdsOnlyReturn }),
+    );
+    const reconciliation = reconcileTaxRecords(records);
+    const ledgerTable = records.tables.find((table) => table.source === "ledger");
+    const returnTable = records.tables.find((table) => table.source === "return");
+
+    expect(ledgerTable?.rows.find((row) => row.quote.includes("INT-03"))?.unreadable).toEqual([
+      "tax",
+      "amount",
+    ]);
+    expect(ledgerTable?.skippedRowIndexes).toEqual([12]);
+    expect(returnTable?.rows[1]).toMatchObject({ tan: "DELS20002B", unreadable: ["tax"] });
+    expect(reconciliation.unattributedRows).toEqual([
+      expect.objectContaining({
+        documentId: "doc-ledger",
+        location: { rowRange: { start: 14, end: 14 } },
+      }),
+    ]);
+    expect(
+      reconciliation.lines
+        .filter((line) => line.status === "incomplete")
+        .map((line) => line.deductorName),
+    ).toEqual(["Northwind Bank Ltd", "Sunrise Consulting Pvt Ltd"]);
+    expect(reconciliation.totals.bySource.ledger?.tax).toBeUndefined();
+    expect(reconciliation.totals.bySource.return?.tax).toBeUndefined();
+    expect(reconciliation.totals.returnVsTaxCredit?.tax).toBeUndefined();
+  });
+
+  it("uses 26AS as the tax credit and AIS only to corroborate it", async () => {
+    const documents = [
+      ...(await fixtureDocumentsAsync()),
+      await csvDocumentAsync(
+        "doc-ais",
+        "ais-export.csv",
+        TAX_CREDIT_CSV.replace(
+          "BLRA30003C,Asha Salaries Ltd,192,2024-03-31,225000,22500,F",
+          "BLRA30003C,Asha Salaries Ltd,192,2024-03-31,225000,20000,F",
+        ),
+      ),
+    ];
+    const reconciliation = reconcileTaxRecords(readTaxRecords(documents));
+
+    expect(reconciliation.totals.bySource["tax-credit"]).toMatchObject({
+      tax: 128600,
+      rowCount: 9,
+    });
+    expect(reconciliation.totals.returnVsTaxCredit?.tax).toBe(12400);
+    expect(reconciliation.tables.map((table) => table.documentId)).not.toContain("doc-ais");
+    expect(reconciliation.statementOverlap).toMatchObject({
+      authoritative: [expect.objectContaining({ documentId: "doc-26as" })],
+      corroborating: [expect.objectContaining({ documentId: "doc-ais" })],
+      disagreements: [
+        {
+          deductorName: "Asha Salaries Ltd",
+          tan: "BLRA30003C",
+          financialYear: "2023-24",
+          taxPer26AS: 90000,
+          taxPerAIS: 87500,
+        },
+      ],
+    });
+  });
+
+  it("counts a statement uploaded twice once", async () => {
+    const documents = [
+      ...(await fixtureDocumentsAsync()),
+      await csvDocumentAsync("doc-26as-copy", "form-26as (1).csv", TAX_CREDIT_CSV),
+    ];
+    const reconciliation = reconcileTaxRecords(readTaxRecords(documents));
+
+    expect(reconciliation.totals.bySource["tax-credit"]?.tax).toBe(128600);
+    expect(reconciliation.duplicateRows).toHaveLength(9);
+    expect(reconciliation.duplicateRows.every((row) => row.documentId === "doc-26as-copy")).toBe(
+      true,
+    );
+  });
+});
