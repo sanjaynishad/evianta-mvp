@@ -409,6 +409,41 @@ export function describeStoreContract(
         expect(sampleExtraction?.pages[0]?.text).toBe("Demand of Rs. 48,210");
         expect(copyEvents.at(-1)).toMatchObject({ seq: 3, runId: "run-2" });
       });
+
+      it("copies a complete extraction while the sample's extraction is replaced", async () => {
+        const sample = await seedSampleAsync();
+
+        await store.documents.saveExtractionAsync(
+          sample.id,
+          extractionInput("doc-1", "v0 ".repeat(90_000)),
+        );
+
+        const writes = (async () => {
+          for (let round = 1; round <= 3; round += 1) {
+            await store.documents.saveExtractionAsync(
+              sample.id,
+              extractionInput("doc-1", `v${round} `.repeat(90_000)),
+            );
+          }
+        })();
+        const copies = (async () => {
+          const copyIds: string[] = [];
+
+          for (let round = 0; round < 3; round += 1) {
+            copyIds.push((await store.cases.copyCaseAsync(sample.id, "visitor-a")).id);
+          }
+
+          return copyIds;
+        })();
+
+        const [, copyIds] = await Promise.all([writes, copies]);
+
+        for (const copyId of copyIds) {
+          const extraction = await store.documents.getExtractionAsync(copyId, "doc-1");
+
+          expect(extraction?.pages[0]?.text).toMatch(/^v\d /);
+        }
+      });
     });
 
     describe("tasks", () => {
