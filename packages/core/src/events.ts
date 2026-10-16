@@ -32,6 +32,8 @@ export const taskCompletedEventSchema = runEventBaseSchema.extend({
   findingIds: z.array(z.string()).default([]),
   tokenUsage: tokenUsageSchema.optional(),
   costEstimate: costEstimateSchema.optional(),
+  // Case cost so far, including earlier runs.
+  runningCostEstimate: costEstimateSchema.optional(),
 });
 
 export const taskFailedEventSchema = runEventBaseSchema.extend({

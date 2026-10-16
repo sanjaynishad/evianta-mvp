@@ -107,4 +107,29 @@ describe("findingSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("carries optional figures with components and dates", () => {
+    const parsed = findingSchema.parse({
+      id: "finding-4",
+      taskId: "task-1",
+      summary: "Outstanding amount",
+      figures: [
+        {
+          key: "outstanding",
+          label: "Outstanding amount",
+          value: 70000,
+          unit: "INR",
+          components: [
+            { label: "Invoiced", value: 100000 },
+            { label: "Paid", value: -30000 },
+          ],
+        },
+      ],
+      dates: [{ key: "invoice-date", label: "Invoice date", date: "2025-04-01" }],
+    });
+
+    expect(parsed.figures?.[0]?.components).toHaveLength(2);
+    expect(parsed.dates?.[0]?.date).toBe("2025-04-01");
+    expect(findingSchema.parse({ id: "f", taskId: "t", summary: "s" }).figures).toBeUndefined();
+  });
 });
