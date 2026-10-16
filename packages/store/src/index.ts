@@ -1,12 +1,15 @@
-import { getApps, initializeApp, type App } from "firebase-admin/app";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
-
-let app: App | undefined;
-
-export function getFirestoreClient(): Firestore {
-  if (!app) {
-    app = getApps()[0] ?? initializeApp();
-  }
-
-  return getFirestore(app);
-}
+export {
+  createGcsDocumentStore,
+  type GcsDocumentStoreOptions,
+} from "./documents/gcsDocumentStore.js";
+export { createInMemoryDocumentStore } from "./documents/memoryDocumentStore.js";
+export {
+  defaultSignedUrlTtlSeconds,
+  type DocumentStore,
+  type SignedUrlOptions,
+} from "./documents/documentStore.js";
+export { StoreConflictError, StoreNotFoundError, type StoreEntity } from "./errors.js";
+export { getFirestoreClient } from "./firestore/client.js";
+export { createFirestoreStore } from "./firestore/firestoreStore.js";
+export { createInMemoryStore } from "./memoryStore.js";
+export type * from "./types.js";

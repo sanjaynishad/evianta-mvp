@@ -1,0 +1,329 @@
+import {
+  agentProfileSchema,
+  deliverableSchema,
+  documentMetadataSchema,
+  evidenceSchema,
+  extractedDocumentSchema,
+  findingSchema,
+  taskSchema,
+  type AgentProfile,
+  type AgentRole,
+  type Case,
+  type Deliverable,
+  type DocumentMetadata,
+  type Evidence,
+  type ExtractedDocument,
+  type Finding,
+  type RunEvent,
+  type Task,
+} from "@evianta/core";
+
+import { StoreConflictError, StoreNotFoundError, type StoreEntity } from "./errors.js";
+import {
+  applyCaseApproval,
+  applyCaseStatus,
+  applyCaseUsageIncrement,
+  applyOpenQuestionUpdate,
+  applySectionUpdate,
+  applyTaskUpdate,
+  buildCaseCopy,
+  buildNewCase,
+  buildRunEvent,
+  compareCasesNewestFirst,
+  compareProfilesByRole,
+  findingHasQuestion,
+  resolvePageSize,
+} from "./mutations.js";
+import type { Store } from "./types.js";
+
+class CaseScopedCollection<T> {
+  private readonly byCase = new Map<string, Map<string, T>>();
+
+  constructor(private readonly entity: StoreEntity) {}
+
+  list(caseId: string): T[] {
+    return [...(this.byCase.get(caseId)?.values() ?? [])].map((item) => structuredClone(item));
+  }
+
+  get(caseId: string, id: string): T | undefined {
+    const item = this.byCase.get(caseId)?.get(id);
+
+    return item === undefined ? undefined : structuredClone(item);
+  }
+
+  getOrThrow(caseId: string, id: string): T {
+    const item = this.get(caseId, id);
+
+    if (item === undefined) {
+      throw new StoreNotFoundError(this.entity, id);
+    }
+
+    return item;
+  }
+
+  create(caseId: string, id: string, item: T): T {
+    if (this.byCase.get(caseId)?.has(id)) {
+      throw new StoreConflictError(this.entity, id);
+    }
+
+    return this.put(caseId, id, item);
+  }
+
+  put(caseId: string, id: string, item: T): T {
+    let items = this.byCase.get(caseId);
+
+    if (!items) {
+      items = new Map();
+      this.byCase.set(caseId, items);
+    }
+
+    items.set(id, structuredClone(item));
+
+    return structuredClone(item);
+  }
+
+  copyCase(sourceCaseId: string, targetCaseId: string, transform: (item: T) => T): void {
+    const source = this.byCase.get(sourceCaseId);
+
+    if (!source) {
+      return;
+    }
+
+    const target = new Map<string, T>();
+
+    for (const [id, item] of source) {
+      target.set(id, transform(structuredClone(item)));
+    }
+
+    this.byCase.set(targetCaseId, target);
+  }
+}
+
+export function createInMemoryStore(): Store {
+  const profiles = new Map<AgentRole, AgentProfile>();
+  const cases = new Map<string, Case>();
+  const tasks = new CaseScopedCollection<Task>("task");
+  const findings = new CaseScopedCollection<Finding>("finding");
+  const evidence = new CaseScopedCollection<Evidence>("evidence");
+  const deliverables = new CaseScopedCollection<Deliverable>("deliverable");
+  const documents = new CaseScopedCollection<DocumentMetadata>("document");
+  const extractions = new CaseScopedCollection<ExtractedDocument>("extraction");
+  const events = new CaseScopedCollection<RunEvent>("event");
+
+  function getCaseOrThrow(caseId: string): Case {
+    const found = cases.get(caseId);
+
+    if (!found) {
+      throw new StoreNotFoundError("case", caseId);
+    }
+
+    return structuredClone(found);
+  }
+
+  function putCase(value: Case): Case {
+    cases.set(value.id, structuredClone(value));
+
+    return structuredClone(value);
+  }
+
+  return {
+    agents: {
+      async listProfilesAsync(options) {
+        return [...profiles.values()]
+          .filter((profile) => !options?.enabledOnly || profile.enabled)
+          .sort(compareProfilesByRole)
+          .map((profile) => structuredClone(profile));
+      },
+      async getProfileAsync(role) {
+        const profile = profiles.get(role);
+
+        return profile === undefined ? undefined : structuredClone(profile);
+      },
+      async upsertProfileAsync(input) {
+        const profile = agentProfileSchema.parse(input);
+        profiles.set(profile.role, structuredClone(profile));
+
+        return profile;
+      },
+    },
+    cases: {
+      async createCaseAsync(input) {
+        const created = buildNewCase(input);
+
+        if (cases.has(created.id)) {
+          throw new StoreConflictError("case", created.id);
+        }
+
+        return putCase(created);
+      },
+      async getCaseAsync(caseId) {
+        const found = cases.get(caseId);
+
+        return found === undefined ? undefined : structuredClone(found);
+      },
+      async listCasesForVisitorAsync(visitorId) {
+        return [...cases.values()]
+          .filter((item) => item.visitorId === visitorId && !item.isSample)
+          .sort(compareCasesNewestFirst)
+          .map((item) => structuredClone(item));
+      },
+      async listSampleCasesAsync() {
+        return [...cases.values()]
+          .filter((item) => item.isSample)
+          .sort(compareCasesNewestFirst)
+          .map((item) => structuredClone(item));
+      },
+      async listAllCasesAsync(options) {
+        const pageSize = resolvePageSize(options);
+        const sorted = [...cases.values()].sort(compareCasesNewestFirst);
+        let start = 0;
+
+        if (options?.cursor !== undefined) {
+          const cursorIndex = sorted.findIndex((item) => item.id === options.cursor);
+
+          if (cursorIndex === -1) {
+            throw new StoreNotFoundError("case", options.cursor);
+          }
+
+          start = cursorIndex + 1;
+        }
+
+        const page = sorted.slice(start, start + pageSize).map((item) => structuredClone(item));
+        const hasMore = start + pageSize < sorted.length;
+
+        return { cases: page, nextCursor: hasMore ? page.at(-1)?.id : undefined };
+      },
+      async updateCaseStatusAsync(caseId, status) {
+        return putCase(applyCaseStatus(getCaseOrThrow(caseId), status));
+      },
+      async updateCaseUsageAsync(caseId, increment) {
+        return putCase(applyCaseUsageIncrement(getCaseOrThrow(caseId), increment));
+      },
+      async recordApprovalAsync(caseId, approval) {
+        return putCase(applyCaseApproval(getCaseOrThrow(caseId), approval));
+      },
+      async copyCaseAsync(sourceCaseId, visitorId) {
+        const copy = buildCaseCopy(getCaseOrThrow(sourceCaseId), visitorId);
+        const withCaseId = <T extends { caseId: string }>(item: T): T => ({
+          ...item,
+          caseId: copy.id,
+        });
+        const unchanged = <T>(item: T): T => item;
+
+        tasks.copyCase(sourceCaseId, copy.id, withCaseId);
+        findings.copyCase(sourceCaseId, copy.id, unchanged);
+        evidence.copyCase(sourceCaseId, copy.id, unchanged);
+        deliverables.copyCase(sourceCaseId, copy.id, withCaseId);
+        documents.copyCase(sourceCaseId, copy.id, withCaseId);
+        extractions.copyCase(sourceCaseId, copy.id, unchanged);
+        events.copyCase(sourceCaseId, copy.id, withCaseId);
+
+        return putCase(copy);
+      },
+    },
+    tasks: {
+      async createTaskAsync(input) {
+        const task = taskSchema.parse(input);
+
+        return tasks.create(task.caseId, task.id, task);
+      },
+      async getTasksForCaseAsync(caseId) {
+        return tasks.list(caseId);
+      },
+      async updateTaskAsync(caseId, taskId, update) {
+        const next = applyTaskUpdate(tasks.getOrThrow(caseId, taskId), update);
+
+        return tasks.put(caseId, taskId, next);
+      },
+    },
+    findings: {
+      async addFindingAsync(caseId, input) {
+        const finding = findingSchema.parse(input);
+
+        return findings.create(caseId, finding.id, finding);
+      },
+      async getFindingsForCaseAsync(caseId) {
+        return findings.list(caseId);
+      },
+      async updateOpenQuestionAsync(caseId, questionId, update) {
+        const finding = findings
+          .list(caseId)
+          .find((candidate) => findingHasQuestion(candidate, questionId));
+
+        if (!finding) {
+          throw new StoreNotFoundError("open-question", questionId);
+        }
+
+        return findings.put(
+          caseId,
+          finding.id,
+          applyOpenQuestionUpdate(finding, questionId, update),
+        );
+      },
+    },
+    evidence: {
+      async addEvidenceAsync(caseId, input) {
+        const item = evidenceSchema.parse(input);
+
+        return evidence.create(caseId, item.id, item);
+      },
+      async getEvidenceForCaseAsync(caseId) {
+        return evidence.list(caseId);
+      },
+    },
+    deliverables: {
+      async saveDeliverableAsync(input) {
+        const deliverable = deliverableSchema.parse(input);
+
+        return deliverables.put(deliverable.caseId, deliverable.id, deliverable);
+      },
+      async getDeliverablesForCaseAsync(caseId) {
+        return deliverables.list(caseId);
+      },
+      async getDeliverableAsync(caseId, deliverableId) {
+        return deliverables.get(caseId, deliverableId);
+      },
+      async updateSectionAsync(caseId, deliverableId, sectionId, update) {
+        const next = applySectionUpdate(
+          deliverables.getOrThrow(caseId, deliverableId),
+          sectionId,
+          update,
+        );
+
+        return deliverables.put(caseId, deliverableId, next);
+      },
+    },
+    documents: {
+      async addDocumentMetadataAsync(input) {
+        const metadata = documentMetadataSchema.parse(input);
+
+        return documents.create(metadata.caseId, metadata.id, metadata);
+      },
+      async getDocumentsForCaseAsync(caseId) {
+        return documents.list(caseId);
+      },
+      async getDocumentAsync(caseId, documentId) {
+        return documents.get(caseId, documentId);
+      },
+      async saveExtractionAsync(caseId, input) {
+        const extraction = extractedDocumentSchema.parse(input);
+
+        return extractions.put(caseId, extraction.documentId, extraction);
+      },
+      async getExtractionAsync(caseId, documentId) {
+        return extractions.get(caseId, documentId);
+      },
+    },
+    events: {
+      async appendEventAsync(caseId, input) {
+        const lastSeq = events.list(caseId).at(-1)?.seq ?? 0;
+        const event = buildRunEvent(caseId, lastSeq + 1, input);
+
+        return events.create(caseId, String(event.seq), event);
+      },
+      async listEventsAsync(caseId, afterSeq = 0) {
+        return events.list(caseId).filter((event) => event.seq > afterSeq);
+      },
+    },
+  };
+}
