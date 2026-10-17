@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { EvidenceEntry } from "@/lib/evidence";
+import { evidenceNamingLabel, type EvidenceEntry } from "@/lib/evidence";
 import { parseTextTable, parseTextTimeline, type TextTable } from "@/lib/section-content";
 import { cn } from "@/lib/utils";
 import { EvidenceHoverChip } from "./evidence-hover-chip";
@@ -70,7 +70,8 @@ function ComparisonTable({
   const discrepancies = table.rows.filter((row) => row.discrepancy === true).length;
   const matched = table.rows.filter((row) => row.discrepancy === false).length;
   const unstated = table.rows.length - discrepancies - matched;
-  const showSources = sources.length > 0;
+  const rowSources = table.rows.map((row) => evidenceNamingLabel(sources, row.cells[0] ?? ""));
+  const showSources = rowSources.some((entries) => entries.length > 0);
 
   function statusBadge(discrepancy: boolean | undefined, total: boolean) {
     if (discrepancy === undefined) {
@@ -111,8 +112,8 @@ function ComparisonTable({
       <Table data-comparison-table={compares || undefined}>
         <TableCaption className="pb-3 text-left">
           {compares
-            ? `${matched} matched, ${discrepancies} ${discrepancies === 1 ? "discrepancy" : "discrepancies"}${unstated > 0 ? `, ${unstated} without a stated difference` : ""}. Each row links to the sources compared.`
-            : `${title}. Sources are linked on each row.`}
+            ? `${matched} matched, ${discrepancies} ${discrepancies === 1 ? "discrepancy" : "discrepancies"}${unstated > 0 ? `, ${unstated} without a stated difference` : ""}. Rows link to the sources that name them; sources for the whole table are listed below it.`
+            : `${title}. Sources for the whole table are listed below it.`}
         </TableCaption>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -146,13 +147,16 @@ function ComparisonTable({
             >
               {renderCells(row.cells)}
               {compares ? <TableCell>{statusBadge(row.discrepancy, false)}</TableCell> : null}
-              {showSources ? (
+              {showSources && rowSources[rowIndex]!.length === 0 ? (
+                <TableCell className="print:hidden" />
+              ) : null}
+              {showSources && rowSources[rowIndex]!.length > 0 ? (
                 <TableCell className="print:hidden">
                   <ul
                     aria-label={`Sources for ${row.cells[0] ?? "row"}`}
                     className="flex flex-wrap gap-1"
                   >
-                    {sources.map((entry) => (
+                    {rowSources[rowIndex]!.map((entry) => (
                       <li key={entry.evidence.id}>
                         <EvidenceHoverChip
                           entry={entry}

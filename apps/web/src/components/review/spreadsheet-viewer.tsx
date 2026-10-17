@@ -55,13 +55,14 @@ function initialWindow(
   return { start, end: Math.max(start, end) };
 }
 
-function formatCell(value: TableCell): string {
+export function formatCell(value: TableCell): string {
   if (value === null) {
     return "";
   }
 
   if (typeof value === "number") {
-    return formatNumber(value, { maximumFractionDigits: 2 });
+    // Keep the source precision: rates and small amounts must stay verifiable.
+    return formatNumber(value, { maximumFractionDigits: 20 });
   }
 
   if (typeof value === "boolean") {

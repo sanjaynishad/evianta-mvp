@@ -4,6 +4,7 @@ import { useState } from "react";
 import { FileText } from "lucide-react";
 import type { ExtractedDocument } from "@evianta/core";
 import { EmptyState } from "@/components/patterns/empty-state";
+import { findQuoteRange } from "@/lib/evidence-location";
 import { ViewerToolbar } from "./viewer-toolbar";
 
 export interface TextSourceViewerProps {
@@ -15,25 +16,21 @@ export interface TextSourceViewerProps {
 }
 
 function highlightQuote(text: string, quote: string | undefined) {
-  if (!quote) {
-    return text;
-  }
-
-  const index = text.toLowerCase().indexOf(quote.toLowerCase());
-  if (index < 0) {
+  const range = quote ? findQuoteRange(text, quote) : undefined;
+  if (!range) {
     return text;
   }
 
   return (
     <>
-      {text.slice(0, index)}
+      {text.slice(0, range.start)}
       <mark
         data-quote-highlight
         className="rounded-sm bg-highlight-subtle px-0.5 text-foreground ring-1 ring-highlight/50"
       >
-        {text.slice(index, index + quote.length)}
+        {text.slice(range.start, range.end)}
       </mark>
-      {text.slice(index + quote.length)}
+      {text.slice(range.end)}
     </>
   );
 }

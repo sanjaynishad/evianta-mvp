@@ -60,6 +60,26 @@ export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): Ev
 
 export type DocumentViewKind = "pdf" | "image" | "spreadsheet" | "text";
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Evidence whose description, excerpt, or quote names the label, for example a reconciliation
+// row's party. Rows never inherit citations that do not mention them.
+export function evidenceNamingLabel(entries: EvidenceEntry[], label: string): EvidenceEntry[] {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0 || /^(grand )?total$/i.test(label.trim())) {
+    return [];
+  }
+
+  const pattern = new RegExp(`(^|\\W)${words.map(escapeRegExp).join("\\s+")}(\\W|$)`, "i");
+  return entries.filter(({ evidence }) =>
+    [evidence.description, evidence.excerpt, evidence.location?.textQuote].some(
+      (text) => text !== undefined && pattern.test(text),
+    ),
+  );
+}
+
 export function getDocumentKind(
   document: Pick<CaseDocument, "name" | "mimeType">,
 ): DocumentViewKind {

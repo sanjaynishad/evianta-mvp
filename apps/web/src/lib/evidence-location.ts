@@ -32,6 +32,42 @@ function normalizeText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+// Finds a quote in text ignoring case and differences in whitespace, and returns the matching
+// range as offsets into the original text.
+export function findQuoteRange(
+  text: string,
+  quote: string,
+): { start: number; end: number } | undefined {
+  const needle = normalizeText(quote);
+  if (!needle) {
+    return undefined;
+  }
+
+  let normalized = "";
+  const offsets: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (/\s/.test(char)) {
+      if (normalized.length > 0 && !normalized.endsWith(" ")) {
+        normalized += " ";
+        offsets.push(index);
+      }
+
+      continue;
+    }
+
+    normalized += char.toLowerCase();
+    offsets.push(index);
+  }
+
+  const found = normalized.indexOf(needle);
+  if (found < 0) {
+    return undefined;
+  }
+
+  return { start: offsets[found]!, end: offsets[found + needle.length - 1]! + 1 };
+}
+
 // Finds the spans that together contain the quote, comparing case- and whitespace-insensitively.
 export function findQuoteInSpans(quote: string, spans: TextSpan[]): BoundingBox[] | undefined {
   const needle = normalizeText(quote);

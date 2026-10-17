@@ -237,26 +237,39 @@ export function useReviewActions({
       return false;
     }
 
-    const previous = state.case;
+    const previousApproval = state.case.approval;
     const cleaned = cleanNote(note);
-    const optimistic = {
-      ...previous,
-      approval: {
-        approvedAt: now().toISOString(),
-        unresolvedQuestionIds: unresolvedQuestions(state.findings).map((item) => item.question.id),
-        note: cleaned,
-      },
+    const optimisticApproval = {
+      approvedAt: now().toISOString(),
+      unresolvedQuestionIds: unresolvedQuestions(state.findings).map((item) => item.question.id),
+      note: cleaned,
     };
-    mutate((current) => ({ ...current, case: optimistic }));
+    // Only the approval field is guarded, so other updates to the case (such as refreshed usage)
+    // that land while the request is pending are kept.
+    mutate((current) => ({ ...current, case: { ...current.case, approval: optimisticApproval } }));
     setKey(approveActionKey, true);
     try {
       const response = await dataSource.approveCaseAsync(caseId, cleaned);
       mutate((current) =>
-        current.case === optimistic ? { ...current, case: response.case } : current,
+        current.case.approval === optimisticApproval
+          ? {
+              ...current,
+              case: {
+                ...current.case,
+                approval: response.case.approval,
+                status: response.case.status,
+                updatedAt: response.case.updatedAt,
+              },
+            }
+          : current,
       );
       return true;
     } catch (error) {
-      mutate((current) => (current.case === optimistic ? { ...current, case: previous } : current));
+      mutate((current) =>
+        current.case.approval === optimisticApproval
+          ? { ...current, case: { ...current.case, approval: previousApproval } }
+          : current,
+      );
       reportFailure("The case was not approved", error);
       return false;
     } finally {

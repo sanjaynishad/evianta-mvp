@@ -253,6 +253,74 @@ describe("review workspace", { timeout }, () => {
     ).toBeInTheDocument();
   });
 
+  it("links reconciliation rows only to the sources that name them", async () => {
+    renderWithDataSource(<CaseWorkspace caseId="sample-tax-notice" />);
+
+    const section = await screen.findByRole("region", { name: "TDS reconciliation" });
+    const mehta = within(section).getByRole("list", { name: "Sources for Mehta Exports" });
+    expect(
+      within(mehta)
+        .getAllByRole("button")
+        .map((chip) => chip.getAttribute("data-evidence-id")),
+    ).toEqual(["b-ev-ledger-rows"]);
+    expect(
+      within(section).queryByRole("list", { name: "Sources for Other deductors" }),
+    ).not.toBeInTheDocument();
+    const sectionSources = within(section).getByRole("list", {
+      name: "Evidence for TDS reconciliation",
+    });
+    expect(within(sectionSources).getAllByRole("button")).toHaveLength(2);
+  });
+
+  it("keeps approval consistent when usage refreshes while approval is pending", async () => {
+    const copy = visitorCopy(taxSample, "case-approval-race");
+    const dataSource = createTestDataSource({ seedStates: [copy] });
+    const realApprove = dataSource.approveCaseAsync.bind(dataSource);
+    const pending: { settle?: (approve: boolean) => void } = {};
+    vi.spyOn(dataSource, "approveCaseAsync").mockImplementation(
+      (caseId, note) =>
+        new Promise((resolve, reject) => {
+          pending.settle = (approve) =>
+            approve
+              ? resolve(realApprove(caseId, note))
+              : reject(new ApiError("The server is busy.", 503));
+        }),
+    );
+    const refreshSpy = vi.spyOn(dataSource, "getCaseStateAsync");
+    renderWithDataSource(<CaseWorkspace caseId={copy.case.id} />, dataSource);
+
+    async function approveWhileAskSettlesAsync() {
+      fireEvent.click(
+        await screen.findByRole("button", { name: /^Review (and approve|approval)$/ }),
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Approve this case" });
+      fireEvent.click(within(dialog).getByRole("button", { name: /^Approve/ }));
+      expect(await screen.findByTestId("approval-badge")).toBeInTheDocument();
+      const loads = refreshSpy.mock.calls.length;
+      fireEvent.mouseDown(screen.getByRole("tab", { name: /Ask/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Why is the TDS mismatch 12,400?" }));
+      await waitFor(() => expect(refreshSpy.mock.calls.length).toBeGreaterThan(loads), slow);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    await approveWhileAskSettlesAsync();
+    await act(async () => {
+      pending.settle?.(false);
+    });
+    await waitFor(() => expect(screen.queryByTestId("approval-badge")).not.toBeInTheDocument());
+
+    await approveWhileAskSettlesAsync();
+    await act(async () => {
+      pending.settle?.(true);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("approval-badge")).toHaveTextContent("16 Oct 2026"),
+    );
+    expect(screen.getByTestId("approval-badge")).toHaveTextContent("with 2 open items");
+  });
+
   it("streams an Ask answer, cites evidence, and shows the findings used", async () => {
     const dataSource = createTestDataSource();
     let finish: () => void = () => {};

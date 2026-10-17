@@ -4,6 +4,7 @@ import {
   columnLabel,
   columnNumber,
   findQuoteInSpans,
+  findQuoteRange,
   parseCellRange,
   rangeContainsCell,
   resolveRegionHighlight,
@@ -35,6 +36,21 @@ describe("findQuoteInSpans", () => {
 
   it("returns undefined when the quote is not on the page", () => {
     expect(findQuoteInSpans("Total TDS", page.spans ?? [])).toBeUndefined();
+  });
+});
+
+describe("findQuoteRange", () => {
+  it("matches across line breaks and repeated spaces and returns original offsets", () => {
+    const text = "Particulars\nDifference\n12,400 due";
+    const range = findQuoteRange(text, "difference  12,400");
+
+    expect(range).toEqual({ start: 12, end: 29 });
+    expect(text.slice(range!.start, range!.end)).toBe("Difference\n12,400");
+    expect(findQuoteRange("Total\t\tTDS   1,86,600", "Total TDS 1,86,600")).toEqual({
+      start: 0,
+      end: 21,
+    });
+    expect(findQuoteRange(text, "missing")).toBeUndefined();
   });
 });
 
