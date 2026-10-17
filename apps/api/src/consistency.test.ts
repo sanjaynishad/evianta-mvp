@@ -175,16 +175,26 @@ describe("case state consistency", () => {
   });
 
   it("does not admit a run while an approval is being recorded", async () => {
-    const gate = createGate();
+    const readGate = createGate();
+    const writeGate = createGate();
     const store = createInMemoryStore();
     const getFindingsAsync = store.findings.getFindingsForCaseAsync.bind(store.findings);
+    const recordApprovalAsync = store.cases.recordApprovalAsync.bind(store.cases);
     let approvalReading = false;
+    let approvalWriting = false;
 
     store.findings.getFindingsForCaseAsync = async (caseId) => {
       approvalReading = true;
-      await gate.opened;
+      await readGate.opened;
 
       return getFindingsAsync(caseId);
+    };
+
+    store.cases.recordApprovalAsync = async (caseId, approval) => {
+      approvalWriting = true;
+      await writeGate.opened;
+
+      return recordApprovalAsync(caseId, approval);
     };
 
     const { app } = createTestHarness({
@@ -201,13 +211,23 @@ describe("case state consistency", () => {
       .send({ note: "Looks right." })
       .then((response) => response);
 
-    await waitForAsync(() => approvalReading);
+    try {
+      await waitForAsync(() => approvalReading);
 
-    const blocked = await request(app).post(`/cases/${caseRecord.id}/run`).expect(409);
+      const blockedDuringRead = await request(app).post(`/cases/${caseRecord.id}/run`).expect(409);
 
-    expect(blocked.body).toMatchObject({ error: "approval-in-progress" });
+      expect(blockedDuringRead.body).toMatchObject({ error: "approval-in-progress" });
+      readGate.release();
+      await waitForAsync(() => approvalWriting);
 
-    gate.release();
+      const blockedDuringWrite = await request(app).post(`/cases/${caseRecord.id}/run`).expect(409);
+
+      expect(blockedDuringWrite.body).toMatchObject({ error: "approval-in-progress" });
+    } finally {
+      readGate.release();
+      writeGate.release();
+      await approval;
+    }
 
     expect((await approval).status).toBe(200);
     await request(app).post(`/cases/${caseRecord.id}/run`).expect(202);
