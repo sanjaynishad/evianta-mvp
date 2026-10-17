@@ -276,8 +276,9 @@ function labelColumn(columnNames: readonly string[]): number | undefined {
   return FREE_TEXT_COLUMN.test(columnNames[0] ?? "") ? undefined : 0;
 }
 
+// The whole identifier, including trailing letters and single digits, as in "INV-1", "INV-1001/24A".
 const INVOICE_NUMBER_IN_TEXT =
-  /\b(?:inv|invoice|bill)[\s#:.-]*(?:no\.?\s*)?[A-Z0-9][A-Z0-9/-]*\d\b/gi;
+  /\b(?:inv|invoice|bill)[\s#:.-]*(?:no\.?\s*)?(?=[A-Z0-9/-]*\d)[A-Z0-9](?:[A-Z0-9/-]*[A-Z0-9])?(?![A-Z0-9/-]*[A-Z0-9])/gi;
 const PLACEHOLDER_REF = /^(n\/?a|nil|none|-+|tbd|on\s+account|advance)$/i;
 
 function withoutLetterPrefix(key: string): string {
@@ -408,7 +409,8 @@ function readInvoices(
     const quote = renderRow(row);
     const amount = parseRecordAmount(cell(amountColumn));
 
-    if (!invoiceNumber || amount === undefined) {
+    // Credit notes are not modelled, so a negative amount would corrupt the totals.
+    if (!invoiceNumber || amount === undefined || amount < 0) {
       set.unreadable.push({
         kind: "invoices",
         documentId: metadata.id,
@@ -416,9 +418,11 @@ function readInvoices(
         rowIndex,
         location,
         quote,
-        reason: invoiceNumber
-          ? `the amount of ${invoiceNumber} is blank or unreadable`
-          : "the invoice number is blank",
+        reason: !invoiceNumber
+          ? "the invoice number is blank"
+          : amount === undefined
+            ? `the amount of ${invoiceNumber} is blank or unreadable`
+            : `the amount of ${invoiceNumber} is negative; credit notes are not handled, so it was left out`,
       });
 
       return;
@@ -530,7 +534,9 @@ function readPayments(
     // Invoice references are resolved once every invoice register has been read.
     pending.push(() => {
       set.payments.push({
-        label: reference ?? `${metadata.name} row ${location.rowRange?.start ?? rowIndex + 2}`,
+        label:
+          reference ??
+          `${metadata.name}${table.sheet ? ` ${table.sheet}` : ""} row ${location.rowRange?.start ?? rowIndex + 2}`,
         ...(reference ? { reference } : {}),
         date,
         amount,

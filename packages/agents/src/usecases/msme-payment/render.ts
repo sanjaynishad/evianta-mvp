@@ -1,6 +1,10 @@
 import { formatInr, formatInrAmount, markdownTableOf, MSMED_MAX_CREDIT_DAYS } from "./constants.js";
 import { recordLocationLabel } from "./records.js";
-import type { InvoiceLine, PaymentReconciliation } from "./reconcile.js";
+import {
+  inferredAllocationNote,
+  type InvoiceLine,
+  type PaymentReconciliation,
+} from "./reconcile.js";
 
 const STATUS_LABELS: Readonly<Record<InvoiceLine["status"], string>> = {
   paid: "Paid",
@@ -15,7 +19,8 @@ function paymentsCell(line: InvoiceLine): string {
 
   return line.allocations
     .map((allocation) => {
-      const how = allocation.method === "reference" ? "" : ", matched by amount (inferred)";
+      const note = inferredAllocationNote(allocation.method);
+      const how = note ? `, ${note}` : "";
 
       return `${allocation.payment.label} ${allocation.payment.date ?? ""}: ${formatInr(allocation.amount)}${how}`;
     })

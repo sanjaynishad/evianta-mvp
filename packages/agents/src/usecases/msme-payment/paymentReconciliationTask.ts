@@ -42,6 +42,7 @@ import {
   hasPaymentData,
   outstandingComponents,
   type InvoiceLine,
+  type PaymentAllocation,
   type PaymentReconcileOptions,
   type PaymentReconciliation,
   type UnallocatedPayment,
@@ -170,11 +171,19 @@ function lineSummary(line: InvoiceLine): string {
   return `[${invoiceNumber}] ${formatInrAmount(line.outstanding)} outstanding of ${formatInrAmount(line.amount)} ${paidPart}; ${overdue}`;
 }
 
+function inferredAllocationText(line: InvoiceLine, allocation: PaymentAllocation): string {
+  const payment = `Payment ${allocation.payment.label} on ${allocation.payment.date}`;
+
+  return allocation.method === "reference-split"
+    ? `${payment} names ${allocation.payment.invoiceRefs.join(", ")} but does not cover them all or say how it splits; ${formatInrAmount(allocation.amount)} of it was applied to ${line.invoice.invoiceNumber}, oldest invoice first.`
+    : `${payment} has no invoice reference; ${formatInrAmount(allocation.amount)} was matched to ${line.invoice.invoiceNumber} because the amount equals its open balance.`;
+}
+
 function inferredQuestions(line: InvoiceLine): OpenQuestionDraft[] {
   return line.allocations
     .filter((allocation) => allocation.method !== "reference")
     .map((allocation) => ({
-      text: `Payment ${allocation.payment.label} of ${formatInrAmount(allocation.amount)} on ${allocation.payment.date} has no invoice reference and was matched to ${line.invoice.invoiceNumber} because the amount equals its open balance. Confirm with the buyer's remittance advice.`,
+      text: `${inferredAllocationText(line, allocation)} Confirm with the buyer's remittance advice.`,
       severity: "medium" as const,
     }));
 }
@@ -199,11 +208,9 @@ export function invoiceLineFinding(
     severity: overdue ? "high" : open || line.inferred ? "medium" : "info",
     confidence: line.inferred ? "medium" : "high",
     evidence: lineEvidence(line),
-    assumptions: line.inferred
-      ? [
-          `A payment without an invoice reference was applied to ${line.invoice.invoiceNumber} because its amount equals the open balance.`,
-        ]
-      : [],
+    assumptions: line.allocations
+      .filter((allocation) => allocation.method !== "reference")
+      .map((allocation) => inferredAllocationText(line, allocation)),
     openQuestions: [
       ...inferredQuestions(line),
       ...(explanation?.followUp && open

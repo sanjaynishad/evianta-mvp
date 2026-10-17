@@ -8,8 +8,9 @@ import {
   recordLocationLabel,
   resolveInvoiceKey,
   type InvoiceRecord,
+  type PaymentRecord,
 } from "./records.js";
-import type { InvoiceLine, PaymentReconciliation } from "./reconcile.js";
+import type { InvoiceLine, PaymentAllocation, PaymentReconciliation } from "./reconcile.js";
 
 export const DOCUMENT_EVENT_KINDS = [
   "agreement",
@@ -210,13 +211,32 @@ function upstreamEvidence(evidence: readonly Evidence[], description: string): E
   return evidence.slice(0, 2).map((item) => ({ evidenceId: item.id, description }));
 }
 
-function allocationText(line: InvoiceLine | undefined, method: string | undefined): string {
-  if (!line) {
+/** Unique per source row, so payments from different sheets never share a date key. */
+export function paymentDateKey(
+  payment: Pick<PaymentRecord, "documentId" | "tableName" | "rowIndex">,
+): string {
+  return [
+    "payment-date",
+    payment.documentId,
+    slug(payment.tableName),
+    String(payment.rowIndex + 1),
+  ].join(":");
+}
+
+function allocationText(
+  line: InvoiceLine | undefined,
+  allocation: PaymentAllocation | undefined,
+): string {
+  if (!line || !allocation) {
     return " (not matched to an invoice)";
   }
 
-  return method === "reference"
-    ? ` against ${line.invoice.invoiceNumber}`
+  if (allocation.method === "reference") {
+    return ` against ${line.invoice.invoiceNumber}`;
+  }
+
+  return allocation.method === "reference-split"
+    ? ` of which ${formatInrAmount(allocation.amount)} applied to ${line.invoice.invoiceNumber} (split inferred)`
     : ` matched to ${line.invoice.invoiceNumber} by amount (inferred)`;
 }
 
@@ -307,7 +327,7 @@ export function buildChronology(
     const targets =
       allocations.length > 0
         ? allocations
-            .map(({ line, allocation }) => allocationText(line, allocation.method).trim())
+            .map(({ line, allocation }) => allocationText(line, allocation).trim())
             .join("; ")
         : allocationText(undefined, undefined).trim();
 
@@ -318,7 +338,7 @@ export function buildChronology(
       source: recordLocationLabel(payment),
       documentId: payment.documentId,
       invoiceNumbers: allocations.map(({ line }) => line.invoice.invoiceNumber),
-      dateKey: `payment-date:${slug(payment.label)}`,
+      dateKey: paymentDateKey(payment),
       evidence: [recordRowEvidence(payment, `Payment ${payment.label} row`)],
     });
   }
@@ -374,9 +394,13 @@ export interface EvidenceGap {
   evidence: EvidenceReference[];
 }
 
+/** Only a delivery backed by source evidence counts as proof; a bare model assertion does not. */
 function hasDeliveryFor(facts: DocumentFacts, invoiceKey: string): boolean {
   return facts.events.some(
-    (event) => event.kind === "delivery" && event.invoiceKeys.includes(invoiceKey),
+    (event) =>
+      event.kind === "delivery" &&
+      event.invoiceKeys.includes(invoiceKey) &&
+      event.evidence.some((item) => item.documentId !== undefined),
   );
 }
 
@@ -561,16 +585,35 @@ export function findInconsistencies(
 
   for (const repeat of reconciliation.records.duplicatePayments) {
     const where = `${recordLocationLabel(repeat.payment)} and ${recordLocationLabel(repeat.original)}`;
+    // The balance impact comes from what was actually applied, not from the row being kept.
+    const applied = reconciliation.lines.reduce(
+      (sum, line) =>
+        sum +
+        line.allocations
+          .filter((allocation) => allocation.payment === repeat.payment)
+          .reduce((total, allocation) => total + allocation.amount, 0),
+      0,
+    );
+    const lookAlike =
+      applied > 0
+        ? {
+            summary: `Payments in ${where} have the same date and amount; ${formatInrAmount(applied)} of the later one was applied to invoices`,
+            question: `Confirm whether ${where} are two receipts or one recorded twice; if one, the outstanding amount is understated by ${formatInrAmount(applied)}.`,
+          }
+        : {
+            summary: `Payments in ${where} have the same date and amount; the later one was not applied to any invoice`,
+            question: `Confirm whether ${where} are two receipts or one recorded twice. The later one does not change the outstanding amount.`,
+          };
 
     gaps.push({
       kind: "inconsistency",
-      severity: repeat.countedOnce ? "medium" : "high",
+      severity: repeat.countedOnce || applied === 0 ? "medium" : "high",
       summary: repeat.countedOnce
         ? `Payment ${repeat.payment.label} is recorded twice (${where}); it was counted once`
-        : `Payments in ${where} have the same date and amount; both were deducted`,
+        : lookAlike.summary,
       question: repeat.countedOnce
         ? `Confirm that ${where} are the same receipt of ${formatInrAmount(repeat.payment.amount ?? 0)}.`
-        : `Confirm whether ${where} are two receipts or one recorded twice; if one, the outstanding amount is understated by ${formatInrAmount(repeat.payment.amount ?? 0)}.`,
+        : lookAlike.question,
       invoiceNumbers: [],
       evidence: [
         recordRowEvidence(repeat.original, `Payment ${repeat.original.label} row`),

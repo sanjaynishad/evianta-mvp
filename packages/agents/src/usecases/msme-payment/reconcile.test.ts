@@ -195,6 +195,119 @@ describe("resolveInvoiceKey", () => {
   });
 });
 
+describe("data-integrity guards", () => {
+  const TWO_INVOICES = [
+    "Invoice No,Invoice Date,Due Date,Amount",
+    "INV-A,2025-01-01,2025-01-31,1000",
+    "INV-B,2025-03-01,2025-04-30,1000",
+  ].join("\n");
+
+  it("applies a partial payment naming several invoices oldest first and marks it inferred", async () => {
+    const forward = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-03-10,UTR1,INV-A; INV-B,500",
+    ];
+    const reversed = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-03-10,UTR1,INV-B; INV-A,500",
+    ];
+    const results = await Promise.all(
+      [forward, reversed].map(async (rows) => {
+        const documents = [
+          await csvDocumentAsync("doc-i", "invoices.csv", TWO_INVOICES),
+          await csvDocumentAsync("doc-p", "payments.csv", rows.join("\n")),
+        ];
+
+        return reconcilePayments(readPaymentRecords(documents), resolveCreditTerms(documents), {
+          asOfDate: "2025-03-31",
+        });
+      }),
+    );
+
+    for (const reconciliation of results) {
+      const [first, second] = reconciliation.lines;
+
+      expect(first).toMatchObject({ outstanding: 500, inferred: true });
+      expect(first?.allocations[0]).toMatchObject({ method: "reference-split", amount: 500 });
+      expect(second).toMatchObject({ outstanding: 1000, inferred: false });
+      expect(reconciliation.totals.overdue).toBe(500);
+    }
+  });
+
+  it("treats a payment that covers every invoice it names as confirmed", async () => {
+    const payments = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-03-10,UTR1,INV-A; INV-B,2000",
+    ];
+    const documents = [
+      await csvDocumentAsync("doc-i", "invoices.csv", TWO_INVOICES),
+      await csvDocumentAsync("doc-p", "payments.csv", payments.join("\n")),
+    ];
+    const reconciliation = reconcilePayments(
+      readPaymentRecords(documents),
+      resolveCreditTerms(documents),
+      {
+        asOfDate: "2025-03-31",
+      },
+    );
+
+    expect(reconciliation.lines.every((line) => !line.inferred && line.outstanding === 0)).toBe(
+      true,
+    );
+  });
+
+  it("rejects negative invoice amounts instead of corrupting the totals", async () => {
+    const invoices = [
+      "Invoice No,Invoice Date,Amount",
+      "INV-1,2025-01-01,1000",
+      "INV-2,2025-01-02,-100",
+    ];
+    const documents = [await csvDocumentAsync("doc-i", "invoices.csv", invoices.join("\n"))];
+    const records = readPaymentRecords(documents);
+    const reconciliation = reconcilePayments(records, resolveCreditTerms(documents), {
+      asOfDate: "2025-03-31",
+    });
+
+    expect(records.unreadable.map((row) => row.reason)).toEqual([
+      "the amount of INV-2 is negative; credit notes are not handled, so it was left out",
+    ]);
+    expect(reconciliation.totals).toMatchObject({ invoiced: 1000, outstanding: 1000 });
+  });
+
+  it("matches complete invoice identifiers written in a narration", async () => {
+    const invoices = [
+      "Invoice No,Invoice Date,Amount",
+      "INV-1,2025-01-01,700",
+      "INV-1001,2025-01-02,500",
+    ];
+    const payments = [
+      "Payment Date,UTR,Amount Received,Narration",
+      "2025-02-01,UTR1,500,Paid against INV-1001/24A",
+      "2025-02-02,UTR2,700,Paid against INV-1",
+    ];
+    const documents = [
+      await csvDocumentAsync("doc-i", "invoices.csv", invoices.join("\n")),
+      await csvDocumentAsync("doc-p", "payments.csv", payments.join("\n")),
+    ];
+    const records = readPaymentRecords(documents);
+    const reconciliation = reconcilePayments(records, resolveCreditTerms(documents), {
+      asOfDate: "2025-03-31",
+    });
+
+    expect(records.payments.map((payment) => payment.invoiceRefs)).toEqual([
+      ["INV-1001/24A"],
+      ["INV-1"],
+    ]);
+    expect(reconciliation.unallocated.map((item) => item.payment.label)).toEqual(["UTR1"]);
+    expect(
+      reconciliation.lines.map((line) => [line.invoice.invoiceNumber, line.outstanding]),
+    ).toEqual([
+      ["INV-1", 0],
+      ["INV-1001", 500],
+    ]);
+  });
+});
+
 describe("credit terms", () => {
   it("reads the agreed credit period verbatim from a page", () => {
     expect(creditTermsInDocuments([AGREEMENT])).toEqual([

@@ -10,7 +10,23 @@ import type { CreditTerms, CreditTermsResolution } from "./terms.js";
 
 export const DEFAULT_PAYMENT_TOLERANCE = 0.5;
 
-export type AllocationMethod = "reference" | "amount-match" | "date-order";
+/**
+ * reference: the payment names the invoice. reference-split: it names several invoices and does not
+ * cover them all, so it was applied oldest first (inferred). amount-match and date-order: no
+ * reference, matched to an equal open balance (inferred).
+ */
+export type AllocationMethod = "reference" | "reference-split" | "amount-match" | "date-order";
+
+/** How an inferred allocation was made, for tables and the chronology; empty for a written reference. */
+export function inferredAllocationNote(method: AllocationMethod): string {
+  if (method === "reference") {
+    return "";
+  }
+
+  return method === "reference-split"
+    ? "split oldest first across the invoices it names (inferred)"
+    : "matched by amount (inferred)";
+}
 
 export interface PaymentAllocation {
   payment: PaymentRecord;
@@ -200,10 +216,18 @@ export function reconcilePayments(
       continue;
     }
 
-    const known = resolved.flatMap((entry) => (entry.line ? [entry.line] : []));
+    // Oldest invoice first, so the result never depends on the order references were written in.
+    const targets = [
+      ...new Set(resolved.flatMap((entry) => (entry.line ? [entry.line] : []))),
+    ].sort((left, right) => lines.indexOf(left) - lines.indexOf(right));
+    const openBalance = round2(targets.reduce((sum, line) => sum + line.remaining, 0));
+    // A payment that names several invoices but covers less than their balances does not say how
+    // it splits; the split below is an assumption the user must confirm.
+    const method: AllocationMethod =
+      targets.length > 1 && amount < openBalance - tolerance ? "reference-split" : "reference";
     let left = amount;
 
-    for (const line of [...new Set(known)]) {
+    for (const line of targets) {
       if (payment.date && line.invoice.invoiceDate && payment.date < line.invoice.invoiceDate) {
         issues.push({
           message: `Payment ${payment.label} dated ${payment.date} references ${line.invoice.invoiceNumber}, which is dated later (${line.invoice.invoiceDate}).`,
@@ -212,14 +236,14 @@ export function reconcilePayments(
         });
       }
 
-      left = round2(left - allocate(line, payment, left, "reference"));
+      left = round2(left - allocate(line, payment, left, method));
     }
 
     if (left > tolerance) {
       unallocated.push({
         payment,
         amount: left,
-        reason: `it exceeds the open balance of ${describeRefs(known.map((line) => line.invoice.invoiceNumber))} by this amount`,
+        reason: `it exceeds the open balance of ${describeRefs(targets.map((line) => line.invoice.invoiceNumber))} by this amount`,
       });
     }
   }

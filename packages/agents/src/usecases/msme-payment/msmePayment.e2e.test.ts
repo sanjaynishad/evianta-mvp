@@ -213,7 +213,9 @@ describe("MSME delayed-payment use case end to end", () => {
         }),
         expect.objectContaining({
           severity: "medium",
-          text: expect.stringContaining("Payment UTR25012503 of Rs 58,000"),
+          text: expect.stringContaining(
+            "Payment UTR25012503 on 2025-01-25 has no invoice reference",
+          ),
         }),
       ]),
     );

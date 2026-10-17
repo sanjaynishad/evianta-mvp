@@ -15,6 +15,7 @@ import {
   findInconsistencies,
   findMissingDocuments,
   parseDocumentEventKey,
+  paymentDateKey,
 } from "./chronology.js";
 import { statedInvoiceAmountFigureKey } from "./constants.js";
 
@@ -283,5 +284,56 @@ describe("evidence gaps", () => {
       expect.objectContaining({ documentId: MSME_DOCUMENT_IDS.invoices, cellRange: "D4" }),
       expect.objectContaining({ evidenceId: "ev-f-letter" }),
     ]);
+  });
+
+  it("does not let a delivery without source evidence clear the missing-delivery question", async () => {
+    const reconciliation = await reconcileMsmeFixtureAsync();
+    const unsupported = {
+      ...documentFinding("f-DC-505", MSME_DOCUMENT_IDS.deliveries, 1, [
+        {
+          key: documentEventDateKey("delivery", ["INV-1005"], "DC-505"),
+          label: "Goods delivered under DC-505 for INV-1005",
+          date: "2025-01-07",
+        },
+      ]),
+      evidence: [],
+    };
+    const gaps = findMissingDocuments(
+      reconciliation,
+      documentFactsFromFindings([...DOCUMENT_FINDINGS, unsupported]),
+    );
+
+    expect(gaps[0]?.summary).toMatch(/^\[INV-1005\] No delivery record/);
+  });
+
+  it("describes a repeated reference-free payment by what was actually applied", async () => {
+    const invoices = ["Invoice No,Invoice Date,Amount", "INV-1,2025-01-01,1000"].join("\n");
+    const payments = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-01-10,,INV-1,1000",
+      "2025-01-10,,INV-1,1000",
+    ].join("\n");
+    const reconciliation = await reconcileMsmeFixtureAsync(invoices, payments);
+    const [gap] = findInconsistencies(reconciliation, { events: [], statedAmounts: [] });
+
+    expect(reconciliation.totals.outstanding).toBe(0);
+    expect(gap).toMatchObject({
+      severity: "medium",
+      summary:
+        "Payments in payments.csv D3 and payments.csv D2 have the same date and amount; the later one was not applied to any invoice",
+    });
+  });
+});
+
+describe("paymentDateKey", () => {
+  it("is unique per document, table, and row even when labels match", () => {
+    const row = { documentId: "doc-payments", rowIndex: 0 };
+
+    expect(paymentDateKey({ ...row, tableName: "Sheet1" })).not.toBe(
+      paymentDateKey({ ...row, tableName: "Sheet2" }),
+    );
+    expect(paymentDateKey({ ...row, tableName: "Receipts 2025" })).toBe(
+      "payment-date:doc-payments:Receipts-2025:1",
+    );
   });
 });

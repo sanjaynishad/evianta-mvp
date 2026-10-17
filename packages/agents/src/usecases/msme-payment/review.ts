@@ -93,25 +93,35 @@ export function outstandingRecomputeCheck(
     );
 }
 
-const AMOUNT_PATTERN = /(?:\brs\.?|\binr\b|₹)\s*(\d+(?:,\d+)*(?:\.\d+)?)/gi;
+// A minus sign counts only when attached to the amount, so "Rs 1,92,000 - Rs 5,000" stays positive.
+const AMOUNT_PATTERN =
+  /(?:(?<=^|[\s(:])([-−]))?(?:\brs\.?|\binr\b|₹)\s*([-−])?(\d+(?:,\d+)*(?:\.\d+)?)/gi;
 
 export interface MsmeQuotedAmount {
   text: string;
+  /** Signed: "-Rs 1,87,000" and "Rs -12,345" are negative. */
   value: number;
 }
 
-/** Rupee amounts quoted in text, such as "Rs 1,87,000", "Rs. 50,000/-", or "₹75,000". */
+/** Rupee amounts quoted in text, such as "Rs 1,87,000", "Rs. 50,000/-", "₹75,000", or "Rs -500". */
 export function quotedRupeeAmounts(text: string): MsmeQuotedAmount[] {
   return [...text.matchAll(AMOUNT_PATTERN)].flatMap((match) => {
-    const digits = (match[1] ?? "").replace(/,/g, "");
-    const value = Number(digits);
+    const digits = (match[3] ?? "").replace(/,/g, "");
+    const magnitude = Number(digits);
+    const negative = Boolean(match[1] || match[2]);
 
-    return digits.length > 0 && Number.isFinite(value) ? [{ text: match[0].trim(), value }] : [];
+    return digits.length > 0 && Number.isFinite(magnitude)
+      ? [{ text: match[0].trim(), value: negative ? -magnitude : magnitude }]
+      : [];
   });
 }
 
 const RUPEE_UNIT = /^(inr|rs\.?|rupees?)$/i;
 
+/**
+ * Signed amounts a quote may match. Figures keep their sign; a negative component is a deduction
+ * (such as a payment subtracted from an invoice), so the amount deducted is known as a positive value.
+ */
 function knownAmounts(
   findings: readonly VerificationFinding[],
   expected: readonly MsmeExpectedFigure[],
@@ -125,7 +135,7 @@ function knownAmounts(
         continue;
       }
 
-      values.add(Math.abs(figure.value));
+      values.add(figure.value);
 
       for (const component of figure.components ?? []) {
         values.add(Math.abs(component.value));
@@ -134,12 +144,12 @@ function knownAmounts(
   }
 
   for (const figure of expected) {
-    values.add(Math.abs(figure.value));
+    values.add(figure.value);
   }
 
   for (const record of [...reconciliation.records.invoices, ...reconciliation.records.payments]) {
     if (record.amount !== undefined) {
-      values.add(Math.abs(record.amount));
+      values.add(record.amount);
     }
   }
 

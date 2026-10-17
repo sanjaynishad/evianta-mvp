@@ -46,6 +46,14 @@ describe("quoted amounts and dates", () => {
     ).toEqual([187000, 50000, 75000, 5000.5]);
   });
 
+  it("keeps the sign of a quoted amount and ignores a subtraction operator", () => {
+    expect(
+      quotedRupeeAmounts("-Rs 1,87,000, Rs -12,345, and Rs 1,92,000 - Rs 5,000").map(
+        (amount) => amount.value,
+      ),
+    ).toEqual([-187000, -12345, 192000, 5000]);
+  });
+
   it("reads ISO, day-first, and named-month dates", () => {
     expect(
       quotedDates(
@@ -111,6 +119,33 @@ describe("MSME review checks", () => {
     ]);
 
     expect(issues.map((issue) => issue.key)).toEqual(["amount:60"]);
+  });
+
+  it("flags a negative quote of a positive total but accepts deducted payments", async () => {
+    const reconciliation = await reconcileMsmeFixtureAsync();
+    const check = quotedAmountsCheck(
+      [section("Proposed follow-up draft", "Outstanding: -Rs 1,87,000 after Rs 60,000 received.")],
+      expectedPaymentFigures(reconciliation),
+      reconciliation,
+    );
+    const issues = check([
+      finding({
+        figures: [
+          {
+            key: "outstanding:INV1002",
+            label: "INV-1002 outstanding",
+            value: 90000,
+            unit: "INR",
+            components: [
+              { label: "INV-1002", value: 150000 },
+              { label: "UTR24122002", value: -60000 },
+            ],
+          },
+        ],
+      }),
+    ]);
+
+    expect(issues.map((issue) => issue.key)).toEqual(["amount:-187000"]);
   });
 
   it("flags dates that are not in the records or findings", async () => {
