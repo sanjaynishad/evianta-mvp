@@ -335,6 +335,12 @@ export function paymentTotalsFinding(reconciliation: PaymentReconciliation): Age
           `${formatInrAmount(totals.unallocated)} of payments could not be applied to an invoice and is not deducted.`,
         ]
       : []),
+    ...reconciliation.records.duplicatePayments
+      .filter((repeat) => repeat.countedOnce)
+      .map(
+        (repeat) =>
+          `Payment ${repeat.payment.label} in ${recordLocationLabel(repeat.payment)} repeats ${recordLocationLabel(repeat.original)} (same date, amount, and invoices) and is counted once.`,
+      ),
   ];
 
   return {
@@ -403,8 +409,10 @@ export function paymentReconciliationQuestions(
 
   for (const table of reconciliation.records.unclassified) {
     questions.push({
-      text: `The table in ${table.documentName} was not used: ${table.reason}. Confirm whether it holds relevant records.`,
-      severity: "low",
+      text: table.recordKind
+        ? `The ${table.recordKind === "invoices" ? "invoice register" : "payment record"} in ${table.documentName} was not read: ${table.reason}. Rename the amount column or remove the others so it can be included.`
+        : `The table in ${table.documentName} was not used: ${table.reason}. Confirm whether it holds relevant records.`,
+      severity: table.recordKind ? "high" : "low",
     });
   }
 

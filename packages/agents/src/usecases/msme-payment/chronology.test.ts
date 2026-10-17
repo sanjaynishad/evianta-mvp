@@ -240,6 +240,24 @@ describe("evidence gaps", () => {
     expect(gaps[0]?.evidence[0]).toMatchObject({ cellRange: "D6" });
   });
 
+  it("does not ask to register an invoice that is registered but dated after the as-of date", async () => {
+    const reconciliation = await reconcileMsmeFixtureAsync(
+      INVOICES_CSV,
+      PAYMENTS_CSV,
+      "2025-01-01",
+    );
+    const mention = documentFinding("f-mention", MSME_DOCUMENT_IDS.correspondence, 1, [
+      {
+        key: documentEventDateKey("correspondence", ["INV-1005"], "9"),
+        label: "Email about INV-1005",
+        date: "2024-12-30",
+      },
+    ]);
+    const gaps = findMissingDocuments(reconciliation, documentFactsFromFindings([mention]));
+
+    expect(gaps.map((gap) => gap.summary).join("\n")).not.toContain("not in the invoice register");
+  });
+
   it("flags a missing agreement when no credit period is known", async () => {
     const reconciliation = await reconcileMsmeFixtureAsync();
     const gaps = findMissingDocuments(

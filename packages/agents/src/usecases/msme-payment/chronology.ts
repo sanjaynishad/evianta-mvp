@@ -387,7 +387,8 @@ export function findMissingDocuments(
 ): EvidenceGap[] {
   const facts = alignToRegister(reconciliation, documentFacts);
   const gaps: EvidenceGap[] = [];
-  const registerKeys = new Set(reconciliation.lines.map((line) => line.invoice.key));
+  // Membership uses the whole register; invoices after the as-of date are registered, just not totalled.
+  const registerKeys = new Set(reconciliation.records.invoices.map((invoice) => invoice.key));
 
   for (const line of reconciliation.lines) {
     if (hasDeliveryFor(facts, line.invoice.key)) {
@@ -555,6 +556,26 @@ export function findInconsistencies(
       question: `Confirm whether ${recordLocationLabel(duplicate)} is a duplicate of ${duplicate.invoiceNumber} or a separate invoice.`,
       invoiceNumbers: [duplicate.invoiceNumber],
       evidence: [invoiceRowEvidence(duplicate, `Repeated ${duplicate.invoiceNumber} row`)],
+    });
+  }
+
+  for (const repeat of reconciliation.records.duplicatePayments) {
+    const where = `${recordLocationLabel(repeat.payment)} and ${recordLocationLabel(repeat.original)}`;
+
+    gaps.push({
+      kind: "inconsistency",
+      severity: repeat.countedOnce ? "medium" : "high",
+      summary: repeat.countedOnce
+        ? `Payment ${repeat.payment.label} is recorded twice (${where}); it was counted once`
+        : `Payments in ${where} have the same date and amount; both were deducted`,
+      question: repeat.countedOnce
+        ? `Confirm that ${where} are the same receipt of ${formatInrAmount(repeat.payment.amount ?? 0)}.`
+        : `Confirm whether ${where} are two receipts or one recorded twice; if one, the outstanding amount is understated by ${formatInrAmount(repeat.payment.amount ?? 0)}.`,
+      invoiceNumbers: [],
+      evidence: [
+        recordRowEvidence(repeat.original, `Payment ${repeat.original.label} row`),
+        recordRowEvidence(repeat.payment, `Repeated payment ${repeat.payment.label} row`),
+      ],
     });
   }
 

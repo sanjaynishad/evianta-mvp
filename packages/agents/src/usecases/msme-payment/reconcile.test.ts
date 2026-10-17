@@ -10,7 +10,7 @@ import {
   reconcileMsmeFixtureAsync as reconcileFixtureAsync,
   textPaymentDocument as textDocument,
 } from "../../testing/msmePayment.js";
-import { readPaymentRecords } from "./records.js";
+import { readPaymentRecords, resolveInvoiceKey } from "./records.js";
 import { outstandingComponents, reconcilePayments } from "./reconcile.js";
 import { creditTermsInDocuments, resolveCreditTerms } from "./terms.js";
 
@@ -107,6 +107,91 @@ describe("readPaymentRecords", () => {
         reason: "the amount of INV-2 is blank or unreadable",
       }),
     ]);
+  });
+
+  it("never reads a quantity total as the invoice amount", async () => {
+    const invoices = [
+      "Invoice No,Invoice Date,Total Quantity,Amount (INR)",
+      "INV-1,2024-01-01,300,100000",
+    ].join("\n");
+    const records = readPaymentRecords([await csvDocumentAsync("doc-i", "invoices.csv", invoices)]);
+
+    expect(records.invoices[0]).toMatchObject({ amount: 100000, location: { cellRange: "D2" } });
+  });
+
+  it("reports a register with several possible amount columns instead of guessing", async () => {
+    const invoices = [
+      "Invoice No,Invoice Date,Taxable Value,GST Amount",
+      "INV-1,2024-01-01,100000,18000",
+    ].join("\n");
+    const records = readPaymentRecords([await csvDocumentAsync("doc-i", "invoices.csv", invoices)]);
+
+    expect(records.invoices).toEqual([]);
+    expect(records.unclassified).toEqual([
+      expect.objectContaining({
+        recordKind: "invoices",
+        reason:
+          "several columns could hold the amount (Taxable Value, GST Amount) and none is clearly the one to use",
+      }),
+    ]);
+  });
+
+  it("counts a receipt recorded in two sources once and keeps split allocations", async () => {
+    const bank = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-01-10,UTR77,INV-1001,40000",
+      "2025-01-12,UTR78,INV-1002,30000",
+      "2025-01-12,UTR78,INV-1003,30000",
+      "2025-01-20,,INV-1004,1000",
+      "2025-01-20,,INV-1004,1000",
+    ].join("\n");
+    const ledger = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-01-10,UTR77,INV-1001,40000",
+    ].join("\n");
+    const documents = [
+      await csvDocumentAsync("doc-invoices", "invoices.csv", INVOICES_CSV),
+      await csvDocumentAsync("doc-bank", "bank-payments.csv", bank),
+      await csvDocumentAsync("doc-ledger", "receipts-payments.csv", ledger),
+    ];
+    const records = readPaymentRecords(documents);
+    const reconciliation = reconcilePayments(records, resolveCreditTerms(documents), {
+      asOfDate: "2025-03-31",
+    });
+
+    expect(records.payments.map((payment) => payment.label)).toEqual([
+      "UTR77",
+      "UTR78",
+      "UTR78",
+      "bank-payments.csv row 5",
+      "bank-payments.csv row 6",
+    ]);
+    expect(
+      records.duplicatePayments.map((repeat) => [
+        repeat.payment.documentId,
+        repeat.payment.label,
+        repeat.countedOnce,
+      ]),
+    ).toEqual([
+      ["doc-bank", "bank-payments.csv row 6", false],
+      ["doc-ledger", "UTR77", true],
+    ]);
+    expect(
+      reconciliation.lines.find((line) => line.invoice.invoiceNumber === "INV-1001")?.outstanding,
+    ).toBe(60000);
+  });
+});
+
+describe("resolveInvoiceKey", () => {
+  const keys = new Set(["INV1001", "INV1002"]);
+
+  it("resolves descriptive labels and bare numbers but keeps series prefixes", () => {
+    expect(resolveInvoiceKey("INV-1001", keys)).toBe("INV1001");
+    expect(resolveInvoiceKey("Invoice INV-1001", keys)).toBe("INV1001");
+    expect(resolveInvoiceKey("Invoice 1001", keys)).toBe("INV1001");
+    expect(resolveInvoiceKey("Bill no. 1002", keys)).toBe("INV1002");
+    expect(resolveInvoiceKey("1002", keys)).toBe("INV1002");
+    expect(resolveInvoiceKey("OLD-1001", keys)).toBeUndefined();
   });
 });
 

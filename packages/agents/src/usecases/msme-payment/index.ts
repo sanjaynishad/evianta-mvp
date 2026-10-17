@@ -125,11 +125,13 @@ export {
   classifyRecordTable,
   normalizeInvoiceNumber,
   readPaymentRecords,
+  resolveInvoiceKey,
   type InvoiceRecord,
   type PaymentCaseDocument,
   type PaymentRecord,
   type PaymentRecordKind,
   type PaymentRecordSet,
+  type RepeatedPayment,
 } from "./records.js";
 export {
   DEFAULT_PAYMENT_TOLERANCE,

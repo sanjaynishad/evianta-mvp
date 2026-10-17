@@ -19,6 +19,11 @@ export interface PaymentCaseDocument {
 type InvoiceColumn = "invoiceNumber" | "invoiceDate" | "dueDate" | "amount" | "poRef";
 type PaymentColumn = "date" | "amount" | "invoiceRef" | "reference" | "narration";
 
+// Headers such as "Total Quantity" or "Credit days" hold no money even though they say total or credit.
+const NON_MONETARY = /\b(qty|quantity|units?|count|pcs|nos|weight|days|rate|percent(age)?)\b|%/i;
+// Among several money columns, the one that clearly holds the invoice or receipt amount.
+const PREFERRED_AMOUNT = /\btotal\b|invoice\s*(amount|value)|amount\s*(paid|received)/i;
+
 // Checked in order, so "Invoice date" is a date column and "Invoice no" is the number column.
 const INVOICE_COLUMN_PATTERNS: ReadonlyArray<[InvoiceColumn, RegExp]> = [
   ["dueDate", /\bdue\b/i],
@@ -94,6 +99,16 @@ export interface UnclassifiedRecordTable {
   documentName: string;
   tableName: string;
   reason: string;
+  /** Set when the table is a record table that could not be read safely. */
+  recordKind?: PaymentRecordKind;
+}
+
+export interface RepeatedPayment {
+  payment: PaymentRecord;
+  /** The earlier row it repeats. */
+  original: PaymentRecord;
+  /** True when it is the same receipt and was counted once; false when both rows are counted. */
+  countedOnce: boolean;
 }
 
 export interface PaymentRecordSet {
@@ -104,6 +119,8 @@ export interface PaymentRecordSet {
   unreadable: UnreadableRecordRow[];
   /** Later rows that repeat an invoice number already in the register. */
   duplicateInvoices: InvoiceRecord[];
+  /** Payment rows that repeat an earlier receipt, counted once, or look alike and need checking. */
+  duplicatePayments: RepeatedPayment[];
   unclassified: UnclassifiedRecordTable[];
 }
 
@@ -128,12 +145,42 @@ function columnMap<C extends string>(
   return map;
 }
 
-function preferredAmountColumn(columnNames: readonly string[], fallback?: number) {
-  const totals = columnNames
-    .map((name, index) => ({ name, index }))
-    .filter(({ name }) => /total|invoice\s*(amount|value)/i.test(name));
+interface ColumnSelection<C extends string> {
+  columns: Partial<Record<C, number>>;
+  /** Several money columns could hold the amount and none is clearly the one to use. */
+  ambiguousAmount?: string[];
+}
 
-  return totals.length === 1 ? totals[0]?.index : fallback;
+/** Maps columns by header, choosing the amount column only among monetary headers. */
+function selectColumns<C extends string>(
+  columnNames: readonly string[],
+  patterns: ReadonlyArray<[C, RegExp]>,
+): ColumnSelection<C> {
+  const amountKind = "amount" as C;
+  const amountPattern = patterns.find(([kind]) => kind === amountKind)?.[1];
+  const columns = columnMap(
+    columnNames,
+    patterns.filter(([kind]) => kind !== amountKind),
+  );
+  const taken = new Set(Object.values(columns) as number[]);
+  const candidates = columnNames
+    .map((name, index) => ({ name, index }))
+    .filter(
+      ({ name, index }) =>
+        !taken.has(index) && amountPattern?.test(name) === true && !NON_MONETARY.test(name),
+    );
+  const preferred = candidates.filter(({ name }) => PREFERRED_AMOUNT.test(name));
+  const chosen = candidates.length === 1 ? candidates : preferred;
+
+  if (chosen.length === 1 && chosen[0]) {
+    columns[amountKind] = chosen[0].index;
+
+    return { columns };
+  }
+
+  return candidates.length > 1
+    ? { columns, ambiguousAmount: candidates.map(({ name }) => name) }
+    : { columns };
 }
 
 export function classifyRecordTable(
@@ -143,12 +190,17 @@ export function classifyRecordTable(
 ): PaymentRecordKind | undefined {
   const name = `${documentName} ${tableName}`.toLowerCase();
   const headers = columnNames.join(" ").toLowerCase();
-  const invoiceColumns = columnMap(columnNames, INVOICE_COLUMN_PATTERNS);
-  const paymentColumns = columnMap(columnNames, PAYMENT_COLUMN_PATTERNS);
+  const invoiceSelection = selectColumns(columnNames, INVOICE_COLUMN_PATTERNS);
+  const paymentSelection = selectColumns(columnNames, PAYMENT_COLUMN_PATTERNS);
+  const invoiceColumns = invoiceSelection.columns;
+  const paymentColumns = paymentSelection.columns;
+  // An ambiguous amount still marks a record table; the reader reports it instead of guessing.
   const looksLikePayments =
-    paymentColumns.amount !== undefined && paymentColumns.date !== undefined;
+    (paymentColumns.amount !== undefined || paymentSelection.ambiguousAmount !== undefined) &&
+    paymentColumns.date !== undefined;
   const looksLikeInvoices =
-    invoiceColumns.invoiceNumber !== undefined && invoiceColumns.amount !== undefined;
+    invoiceColumns.invoiceNumber !== undefined &&
+    (invoiceColumns.amount !== undefined || invoiceSelection.ambiguousAmount !== undefined);
 
   if (/payment|receipt|remittance|\bbank\b|collection/.test(name) && looksLikePayments) {
     return "payments";
@@ -232,26 +284,29 @@ function withoutLetterPrefix(key: string): string {
   return key.replace(/^[A-Z]+/, "");
 }
 
+const DESCRIPTIVE_LABEL = /^(?:invoice|bill)\b\.?\s*(?:no\.?|number|#)?\s*[:#.-]?\s*/i;
+
 /**
- * The register key a written reference points to: an exact match, else a match ignoring a letter
- * prefix ("1002" or "Invoice 1002" for "INV-1002") when exactly one invoice fits.
+ * The register key a written reference points to: an exact match, after dropping a descriptive
+ * label such as "Invoice" or "Bill no."; else a bare number ("1002") matched to the one invoice
+ * with that number. Series prefixes such as "OLD-1001" are never dropped.
  */
 export function resolveInvoiceKey(ref: string, knownKeys: ReadonlySet<string>): string | undefined {
-  const normalized = normalizeInvoiceNumber(ref);
+  for (const candidate of [ref, ref.trim().replace(DESCRIPTIVE_LABEL, "")]) {
+    const normalized = normalizeInvoiceNumber(candidate);
 
-  if (knownKeys.has(normalized)) {
-    return normalized;
+    if (knownKeys.has(normalized)) {
+      return normalized;
+    }
+
+    if (/^\d+$/.test(normalized)) {
+      const matches = [...knownKeys].filter((key) => withoutLetterPrefix(key) === normalized);
+
+      return matches.length === 1 ? matches[0] : undefined;
+    }
   }
 
-  const bare = withoutLetterPrefix(normalized);
-
-  if (bare.length === 0) {
-    return undefined;
-  }
-
-  const matches = [...knownKeys].filter((key) => withoutLetterPrefix(key) === bare);
-
-  return matches.length === 1 ? matches[0] : undefined;
+  return undefined;
 }
 
 /** Every reference written in an invoice reference cell, such as "INV-1001; INV-1002". */
@@ -308,6 +363,10 @@ export function paymentInvoiceRefs(
   return [...refs.values()];
 }
 
+function ambiguousAmountReason(names: readonly string[]): string {
+  return `several columns could hold the amount (${names.join(", ")}) and none is clearly the one to use`;
+}
+
 function readInvoices(
   metadata: DocumentMetadata,
   table: ExtractedTable,
@@ -315,9 +374,21 @@ function readInvoices(
   seen: Map<string, InvoiceRecord>,
 ): number {
   const columnNames = table.columns.map((column) => column.name);
-  const columns = columnMap(columnNames, INVOICE_COLUMN_PATTERNS);
-  const amountColumn = preferredAmountColumn(columnNames, columns.amount);
+  const { columns, ambiguousAmount } = selectColumns(columnNames, INVOICE_COLUMN_PATTERNS);
+  const amountColumn = columns.amount;
   let count = 0;
+
+  if (ambiguousAmount) {
+    set.unclassified.push({
+      documentId: metadata.id,
+      documentName: metadata.name,
+      tableName: table.name,
+      reason: ambiguousAmountReason(ambiguousAmount),
+      recordKind: "invoices",
+    });
+
+    return 0;
+  }
 
   table.rows.forEach((row, rowIndex) => {
     const cell = (index: number | undefined) => (index === undefined ? undefined : row[index]);
@@ -393,10 +464,23 @@ function readPayments(
   pending: Array<() => void>,
   knownKeys: ReadonlySet<string>,
 ): number {
-  const columns = columnMap(
+  const { columns, ambiguousAmount } = selectColumns(
     table.columns.map((column) => column.name),
     PAYMENT_COLUMN_PATTERNS,
   );
+
+  if (ambiguousAmount) {
+    set.unclassified.push({
+      documentId: metadata.id,
+      documentName: metadata.name,
+      tableName: table.name,
+      reason: ambiguousAmountReason(ambiguousAmount),
+      recordKind: "payments",
+    });
+
+    return 0;
+  }
+
   const keyColumns = [
     columns.date,
     columns.reference,
@@ -472,6 +556,58 @@ function wholeTableLocation(table: ExtractedTable): EvidenceLocation {
   };
 }
 
+function sameSource(left: PaymentRecord, right: PaymentRecord): boolean {
+  return left.documentId === right.documentId && left.tableName === right.tableName;
+}
+
+/**
+ * Separates receipts recorded twice, for example in a bank export and a receipts ledger. Rows with
+ * the same reference, date, amount, and invoices are one receipt; so are rows without a reference
+ * that match on date, amount, and invoices across different sources. Split allocations (same
+ * reference, different invoices) stay separate. Other look-alikes are kept and reported.
+ */
+export function separateRepeatedPayments(
+  payments: readonly PaymentRecord[],
+  knownKeys: ReadonlySet<string>,
+): { kept: PaymentRecord[]; duplicates: RepeatedPayment[] } {
+  const kept: PaymentRecord[] = [];
+  const duplicates: RepeatedPayment[] = [];
+  const invoicesOf = (payment: PaymentRecord) =>
+    payment.invoiceRefs
+      .map((ref) => resolveInvoiceKey(ref, knownKeys) ?? normalizeInvoiceNumber(ref))
+      .sort()
+      .join("+");
+  const referenceOf = (payment: PaymentRecord) =>
+    payment.reference ? normalizeInvoiceNumber(payment.reference) : "";
+
+  for (const payment of payments) {
+    const sameReceipt = kept.find(
+      (other) =>
+        other.date === payment.date &&
+        other.amount === payment.amount &&
+        invoicesOf(other) === invoicesOf(payment) &&
+        referenceOf(other) === referenceOf(payment),
+    );
+    const confirmed =
+      sameReceipt !== undefined &&
+      (referenceOf(payment) !== "" ||
+        (invoicesOf(payment) !== "" && !sameSource(sameReceipt, payment)));
+
+    if (sameReceipt && confirmed) {
+      duplicates.push({ payment, original: sameReceipt, countedOnce: true });
+      continue;
+    }
+
+    if (sameReceipt) {
+      duplicates.push({ payment, original: sameReceipt, countedOnce: false });
+    }
+
+    kept.push(payment);
+  }
+
+  return { kept, duplicates };
+}
+
 /** Finds invoice registers and payment records in the extractions and reads their rows. Pure. */
 export function readPaymentRecords(documents: readonly PaymentCaseDocument[]): PaymentRecordSet {
   const set: PaymentRecordSet = {
@@ -480,6 +616,7 @@ export function readPaymentRecords(documents: readonly PaymentCaseDocument[]): P
     tables: [],
     unreadable: [],
     duplicateInvoices: [],
+    duplicatePayments: [],
     unclassified: [],
   };
   const classified: Array<{
@@ -527,6 +664,10 @@ export function readPaymentRecords(documents: readonly PaymentCaseDocument[]): P
     resolve();
   }
 
+  const { kept, duplicates } = separateRepeatedPayments(set.payments, knownKeys);
+
+  set.payments = kept;
+  set.duplicatePayments = duplicates;
   set.tables = classified.map(({ kind, metadata, table }) => ({
     kind,
     documentId: metadata.id,
