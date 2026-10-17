@@ -4,6 +4,8 @@ dist
 .turbo
 .git
 .github
+.tmp
+gha-creds-*.json
 *.md
 .env
 .env.*

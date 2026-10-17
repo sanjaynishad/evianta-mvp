@@ -14,6 +14,8 @@ ENV NEXT_PUBLIC_EVIANTA_API_URL=$NEXT_PUBLIC_EVIANTA_API_URL
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter "@evianta/web..." build
+RUN test -f /app/apps/web/.next/standalone/apps/web/server.js \
+    && test -d /app/apps/web/.next/static
 
 FROM node:22-slim AS runner
 WORKDIR /app

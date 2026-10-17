@@ -1,3 +1,4 @@
+import { firestoreDatabaseId } from "@evianta/env";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
@@ -6,7 +7,7 @@ let firestore: Firestore | undefined;
 export function getFirestoreClient(): Firestore {
   if (!firestore) {
     const app = getApps()[0] ?? initializeApp();
-    const client = getFirestore(app);
+    const client = getFirestore(app, firestoreDatabaseId);
 
     try {
       client.settings({ ignoreUndefinedProperties: true });

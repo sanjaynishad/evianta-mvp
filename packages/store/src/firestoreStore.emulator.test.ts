@@ -1,4 +1,9 @@
-import { firestoreEmulatorHost, gcsBucket, storageEmulatorHost } from "@evianta/env";
+import {
+  firestoreDatabaseId,
+  firestoreEmulatorHost,
+  gcsBucket,
+  storageEmulatorHost,
+} from "@evianta/env";
 import { Storage } from "@google-cloud/storage";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { describe, expect, it } from "vitest";
@@ -22,7 +27,7 @@ function getTestFirestore() {
 
 async function clearFirestoreAsync(): Promise<void> {
   const response = await fetch(
-    `http://${firestoreEmulatorHost}/emulator/v1/projects/${projectId}/databases/(default)/documents`,
+    `http://${firestoreEmulatorHost}/emulator/v1/projects/${projectId}/databases/${encodeURIComponent(firestoreDatabaseId)}/documents`,
     { method: "DELETE" },
   );
 

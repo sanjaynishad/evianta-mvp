@@ -12,6 +12,7 @@
       "dependsOn": ["^build"],
       "passThroughEnv": [
         "EVIANTA_AI_PROVIDER",
+        "FIRESTORE_DATABASE_ID",
         "GCS_BUCKET",
         "EVIANTA_USAGE_VIEW_PATH",
         "FIRESTORE_EMULATOR_HOST",
@@ -31,6 +32,7 @@
         "GOOGLE_API_KEY",
         "GOOGLE_CLOUD_PROJECT",
         "GOOGLE_CLOUD_LOCATION",
+        "FIRESTORE_DATABASE_ID",
         "GCS_BUCKET",
         "EVIANTA_USAGE_VIEW_PATH",
         "FIRESTORE_EMULATOR_HOST",
