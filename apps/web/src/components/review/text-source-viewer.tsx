@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FileText } from "lucide-react";
 import type { ExtractedDocument } from "@evianta/core";
 import { EmptyState } from "@/components/patterns/empty-state";
+import { useMotionSafe } from "@/hooks/use-motion-safe";
 import { findQuoteRange } from "@/lib/evidence-location";
+import { scrollIntoPane } from "@/lib/scroll";
 import { ViewerToolbar } from "./viewer-toolbar";
 
 export interface TextSourceViewerProps {
@@ -43,11 +45,20 @@ export function TextSourceViewer({
   quote,
   requestId,
 }: TextSourceViewerProps) {
+  const { reduced } = useMotionSafe();
+  const scrollRef = useRef<HTMLPreElement>(null);
   const pages = extraction?.pages ?? [];
   const [navigation, setNavigation] = useState({ requestId, page: targetPage });
   const page = navigation.requestId === requestId ? navigation.page : targetPage;
   const current = pages.find((candidate) => candidate.index === page) ?? pages[0];
   const [zoom, setZoom] = useState(1);
+
+  useEffect(() => {
+    const highlight = scrollRef.current?.querySelector<HTMLElement>("[data-quote-highlight]");
+    if (highlight) {
+      scrollIntoPane(highlight, { block: "center", behavior: reduced ? "auto" : "smooth" });
+    }
+  }, [requestId, current?.index, current?.text, quote, reduced]);
 
   if (!current) {
     return (
@@ -73,6 +84,7 @@ export function TextSourceViewer({
         Extracted text, shown because the original cannot be displayed here.
       </p>
       <pre
+        ref={scrollRef}
         data-slot="text-source-viewer"
         style={{ fontSize: `${0.75 * zoom}rem` }}
         className="relative max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md border bg-card p-3 leading-relaxed"

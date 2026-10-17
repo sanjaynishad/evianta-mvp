@@ -116,8 +116,10 @@ export function SpreadsheetViewer({
 
   useEffect(() => {
     const row = scrollRef.current?.querySelector<HTMLElement>("[data-focus-row]");
-    if (row) {
-      scrollIntoPane(row, { block: "center", behavior: reduced ? "auto" : "smooth" });
+    const target = row?.querySelector<HTMLElement>("[data-cell][data-highlighted]") ?? row;
+
+    if (target) {
+      scrollIntoPane(target, { block: "center", behavior: reduced ? "auto" : "smooth" });
     }
   }, [requestId, reduced, table?.name]);
 

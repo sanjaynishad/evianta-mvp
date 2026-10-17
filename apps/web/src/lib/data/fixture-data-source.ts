@@ -730,7 +730,11 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         throw new ApiError("This section could not be found.", 404, { code: "not-found" });
       }
 
-      states.set(caseId, { ...state, deliverables });
+      const next = { ...state, deliverables };
+      states.set(
+        caseId,
+        update.editedContent !== undefined ? touch(next, { approval: undefined }) : next,
+      );
       return wait(clone(updated));
     },
 

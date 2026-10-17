@@ -129,6 +129,25 @@ describe("fixture Ask", () => {
 });
 
 describe("fixture data source", () => {
+  it.each(["Reviewer text", null])(
+    "clears case approval when section content changes to %s",
+    async (editedContent) => {
+      const dataSource = createTestDataSource();
+      const copy = await dataSource.copyCaseAsync("sample-tax-notice");
+      await dataSource.approveCaseAsync(copy.id);
+
+      await dataSource.updateSectionAsync(copy.id, "b-deliverable-pack", "b-section-draft", {
+        reviewStatus: "approved",
+      });
+      expect((await dataSource.getCaseStateAsync(copy.id)).case.approval).toBeDefined();
+
+      await dataSource.updateSectionAsync(copy.id, "b-deliverable-pack", "b-section-draft", {
+        editedContent,
+      });
+      expect((await dataSource.getCaseStateAsync(copy.id)).case.approval).toBeUndefined();
+    },
+  );
+
   it("copies a sample without its usage or approval, like the store", async () => {
     const approvedSample = structuredClone(getSampleStateForUseCase("data-analysis"));
     approvedSample.case.approval = {

@@ -159,11 +159,14 @@ export function useReviewActions({
         const saved = await dataSource.updateSectionAsync(caseId, deliverableId, sectionId, update);
         const savedSection = saved.sections.find((section) => section.id === sectionId);
         if (savedSection) {
-          mutate((current) =>
-            replaceSection(current, deliverableId, sectionId, (section) =>
+          mutate((current) => {
+            const reconciled = replaceSection(current, deliverableId, sectionId, (section) =>
               section === optimistic ? savedSection : section,
-            ),
-          );
+            );
+            return update.editedContent !== undefined
+              ? { ...reconciled, case: { ...reconciled.case, approval: undefined } }
+              : reconciled;
+          });
         }
 
         return true;
