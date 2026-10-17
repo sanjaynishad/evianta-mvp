@@ -19,6 +19,8 @@ export interface UploadChecklistProps {
   files: IntakeFile[];
   onAddFiles: (files: File[], itemId?: string) => void;
   onRemoveFile: (id: string) => void;
+  // Ignores drops while the case is being submitted; buttons are disabled by the enclosing form.
+  disabled?: boolean;
 }
 
 function formatSize(bytes: number): string {
@@ -55,6 +57,7 @@ export function UploadChecklist({
   files,
   onAddFiles,
   onRemoveFile,
+  disabled = false,
 }: UploadChecklistProps) {
   const generalInputRef = useRef<HTMLInputElement>(null);
   const itemInputRefs = useRef(new Map<string, HTMLInputElement>());
@@ -69,7 +72,7 @@ export function UploadChecklist({
     event.preventDefault();
     setDragging(false);
     const dropped = Array.from(event.dataTransfer.files);
-    if (dropped.length > 0) {
+    if (!disabled && dropped.length > 0) {
       onAddFiles(dropped);
     }
   }
@@ -164,7 +167,7 @@ export function UploadChecklist({
       <div
         onDragOver={(event) => {
           event.preventDefault();
-          setDragging(true);
+          setDragging(!disabled);
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}

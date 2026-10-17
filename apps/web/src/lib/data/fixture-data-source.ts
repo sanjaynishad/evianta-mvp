@@ -306,11 +306,14 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
       const copyId = createId("case");
       const createdAt = now().toISOString();
       const copy = rekeyState(source, copyId);
+      // Mirrors buildCaseCopy in @evianta/store: a copy starts without usage or sign-off.
       copy.case = {
         ...copy.case,
         isSample: false,
         sourceCaseId: source.case.id,
         visitorId: visitorId(),
+        usage: undefined,
+        approval: undefined,
         createdAt,
         updatedAt: createdAt,
       };

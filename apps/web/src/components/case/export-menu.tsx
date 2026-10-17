@@ -35,7 +35,7 @@ export function ExportMenu({
           Export
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
+      <DropdownMenuContent align="end" className="w-60 print:hidden">
         <DropdownMenuLabel>Export {deliverableTitle}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {docxUrl ? (

@@ -93,6 +93,56 @@ describe("IntakeView", () => {
     expect(await dataSource.listCasesAsync()).toHaveLength(1);
   });
 
+  it("freezes the form while the case is being created", async () => {
+    const dataSource = createTestDataSource();
+    let releaseCreate: () => void = () => {};
+
+    const createCaseAsync = dataSource.createCaseAsync.bind(dataSource);
+    vi.spyOn(dataSource, "createCaseAsync").mockImplementation(
+      (request) =>
+        new Promise((resolve) => {
+          releaseCreate = () => resolve(createCaseAsync(request));
+        }),
+    );
+    const upload = vi.spyOn(dataSource, "uploadDocumentAsync");
+    const { container } = renderWithDataSource(<IntakeView />, dataSource);
+
+    fireEvent.click(screen.getByRole("radio", { name: /Business data analysis/ }));
+    const inputs = container.querySelectorAll<HTMLInputElement>('input[type="file"]');
+    const generalInput = inputs[inputs.length - 1]!;
+    addFiles(generalInput, [new File(["a,b"], "sales.csv", { type: "text/csv" })]);
+    fireEvent.click(screen.getByRole("button", { name: /Create case/ }));
+
+    expect(screen.getByLabelText("Title")).toBeDisabled();
+    expect(screen.getByLabelText("Short description")).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Income-tax notice response/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove sales.csv" })).toBeDisabled();
+    for (const input of inputs) {
+      expect(input).toBeDisabled();
+    }
+
+    for (const button of screen.getAllByRole("button", { name: /Add file for/ })) {
+      expect(button).toBeDisabled();
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove sales.csv" }));
+    expect(screen.getByText("sales.csv")).toBeInTheDocument();
+    addFiles(generalInput, [new File(["c,d"], "late.csv", { type: "text/csv" })]);
+    fireEvent.drop(screen.getByText(/Drop any files here/).parentElement!, {
+      dataTransfer: { files: [new File(["e,f"], "dropped.csv", { type: "text/csv" })] },
+    });
+    expect(screen.queryByText("late.csv")).not.toBeInTheDocument();
+    expect(screen.queryByText("dropped.csv")).not.toBeInTheDocument();
+
+    releaseCreate();
+
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/cases\/case-/)),
+    );
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[1].name).toBe("sales.csv");
+  });
+
   it("does not start the run when a file fails to upload", async () => {
     const dataSource = createTestDataSource();
     const startRun = vi.spyOn(dataSource, "startRunAsync");

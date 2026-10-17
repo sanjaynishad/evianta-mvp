@@ -141,6 +141,76 @@ describe("CaseWorkspace", () => {
   );
 
   it(
+    "reconciles a snapshot whose cursor already points at a finished run",
+    async () => {
+      const dataSource = createTestDataSource();
+      const copy = await dataSource.copyCaseAsync("sample-data-analysis");
+      const getStateAsync = dataSource.getCaseStateAsync.bind(dataSource);
+      let staleSnapshots = 0;
+      vi.spyOn(dataSource, "getCaseStateAsync").mockImplementation(async (id) => {
+        const state = await getStateAsync(id);
+        if (staleSnapshots === 0) {
+          staleSnapshots += 1;
+          expect(state.run.lastEventType).toBe("run-completed");
+          return { ...state, run: { ...state.run, active: true } };
+        }
+
+        return state;
+      });
+      // The API closes such a stream without a terminal event, which reads as a dropped connection.
+      const subscribeSpy = vi
+        .spyOn(dataSource, "subscribeToRun")
+        .mockImplementation((_caseId, handlers) => {
+          const timer = setTimeout(() => handlers.onConnectionChange?.("reconnecting"), 0);
+          return () => clearTimeout(timer);
+        });
+      renderWithDataSource(<CaseWorkspace caseId={copy.id} />, dataSource);
+
+      await waitFor(() => expect(screen.getByRole("button", { name: /Run again/ })).toBeEnabled(), {
+        timeout: streamTimeoutMs,
+      });
+      expect(subscribeSpy).toHaveBeenCalledTimes(1);
+      expect(subscribeSpy.mock.calls[0]?.[2]).toMatchObject({ runId: undefined });
+      expect(staleSnapshots).toBe(1);
+    },
+    streamTimeoutMs * 2,
+  );
+
+  it(
+    "keeps a newly active run subscribed before its first event",
+    async () => {
+      const dataSource = createTestDataSource();
+      const copy = await dataSource.copyCaseAsync("sample-data-analysis");
+      const getStateAsync = dataSource.getCaseStateAsync.bind(dataSource);
+      const stateSpy = vi.spyOn(dataSource, "getCaseStateAsync").mockImplementation(async (id) => {
+        const state = await getStateAsync(id);
+        return { ...state, run: { ...state.run, active: true } };
+      });
+      const unsubscribe = vi.fn();
+      const subscribeSpy = vi
+        .spyOn(dataSource, "subscribeToRun")
+        .mockImplementation((_caseId, handlers) => {
+          const timer = setTimeout(() => handlers.onConnectionChange?.("reconnecting"), 0);
+          return () => {
+            clearTimeout(timer);
+            unsubscribe();
+          };
+        });
+      const { unmount } = renderWithDataSource(<CaseWorkspace caseId={copy.id} />, dataSource);
+
+      await waitFor(() => expect(stateSpy).toHaveBeenCalledTimes(2), {
+        timeout: streamTimeoutMs,
+      });
+      expect(screen.getByRole("button", { name: /Run again/ })).toBeDisabled();
+      expect(subscribeSpy).toHaveBeenCalledTimes(1);
+      expect(subscribeSpy.mock.calls[0]?.[2]).toMatchObject({ runId: undefined });
+      expect(unsubscribe).not.toHaveBeenCalled();
+      unmount();
+    },
+    streamTimeoutMs * 2,
+  );
+
+  it(
     "holds the run until uploads finish, then closes uploads once planned",
     async () => {
       const dataSource = createTestDataSource({ replayIntervalMs: 50 });

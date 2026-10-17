@@ -34,7 +34,10 @@ export function EvidenceDrawer({ entry, findingTitles, onOpenChange }: EvidenceD
 
   return (
     <Sheet open={Boolean(entry)} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="flex w-full flex-col gap-5 sm:max-w-md">
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-5 overflow-y-auto overscroll-contain sm:max-w-md"
+      >
         {evidence && entry ? (
           <>
             <SheetHeader>

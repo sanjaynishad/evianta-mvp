@@ -54,8 +54,13 @@ export function IntakeView() {
   const [statusMessage, setStatusMessage] = useState("");
   const [titleError, setTitleError] = useState<string>();
   const definition = useCase ? useCaseDefinitions[useCase] : undefined;
+  const locked = Boolean(submitting);
 
   function handleUseCaseChange(next: UseCase) {
+    if (locked) {
+      return;
+    }
+
     setUseCase(next);
     if (!detailsEdited) {
       setTitle(useCaseDefinitions[next].exampleTitle);
@@ -72,6 +77,10 @@ export function IntakeView() {
   }
 
   function handleAddFiles(selected: File[], itemId?: string) {
+    if (locked) {
+      return;
+    }
+
     const { supported: added, unsupported } = partitionUploadFiles(selected);
     if (unsupported.length > 0) {
       toast.error(`Skipped ${unsupported.map((file) => file.name).join(", ")}`, {
@@ -93,8 +102,16 @@ export function IntakeView() {
     ]);
   }
 
+  function handleRemoveFile(id: string) {
+    if (locked) {
+      return;
+    }
+
+    setFiles((current) => current.filter((entry) => entry.id !== id));
+  }
+
   async function submitAsync(runAfterCreate: boolean) {
-    if (!useCase) {
+    if (!useCase || locked) {
       return;
     }
 
@@ -166,63 +183,67 @@ export function IntakeView() {
       {dataSource.mode === "fixtures" ? <FixtureModeNotice /> : null}
 
       <form id={formId} onSubmit={handleSubmit} className="flex flex-col gap-8" noValidate>
-        <section aria-labelledby={`${formId}-step-1`} className="flex flex-col gap-3">
-          <StepHeading step={1} title="Choose the work" id={`${formId}-step-1`} />
-          <UseCasePicker value={useCase} onChange={handleUseCaseChange} />
-        </section>
+        {/* Submission uses the details and files as they were when it started. */}
+        <fieldset disabled={locked} className="contents">
+          <section aria-labelledby={`${formId}-step-1`} className="flex flex-col gap-3">
+            <StepHeading step={1} title="Choose the work" id={`${formId}-step-1`} />
+            <UseCasePicker value={useCase} onChange={handleUseCaseChange} />
+          </section>
+        </fieldset>
 
         {definition ? (
           <>
-            <section aria-labelledby={`${formId}-step-2`} className="flex flex-col gap-4">
-              <StepHeading step={2} title="Describe the case" id={`${formId}-step-2`} />
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${formId}-title`}>Title</Label>
-                <Input
-                  id={`${formId}-title`}
-                  value={title}
-                  maxLength={200}
-                  aria-invalid={titleError ? true : undefined}
-                  aria-describedby={titleError ? `${formId}-title-error` : undefined}
-                  onChange={(event) => {
-                    setTitle(event.target.value);
-                    setDetailsEdited(true);
-                  }}
-                />
-                {titleError ? (
-                  <p id={`${formId}-title-error`} className="text-sm text-danger">
-                    {titleError}
-                  </p>
-                ) : null}
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${formId}-description`}>Short description</Label>
-                <Textarea
-                  id={`${formId}-description`}
-                  value={description}
-                  rows={3}
-                  maxLength={4000}
-                  onChange={(event) => {
-                    setDescription(event.target.value);
-                    setDetailsEdited(true);
-                  }}
-                />
-              </div>
-            </section>
+            <fieldset disabled={locked} className="contents">
+              <section aria-labelledby={`${formId}-step-2`} className="flex flex-col gap-4">
+                <StepHeading step={2} title="Describe the case" id={`${formId}-step-2`} />
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${formId}-title`}>Title</Label>
+                  <Input
+                    id={`${formId}-title`}
+                    value={title}
+                    maxLength={200}
+                    aria-invalid={titleError ? true : undefined}
+                    aria-describedby={titleError ? `${formId}-title-error` : undefined}
+                    onChange={(event) => {
+                      setTitle(event.target.value);
+                      setDetailsEdited(true);
+                    }}
+                  />
+                  {titleError ? (
+                    <p id={`${formId}-title-error`} className="text-sm text-danger">
+                      {titleError}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${formId}-description`}>Short description</Label>
+                  <Textarea
+                    id={`${formId}-description`}
+                    value={description}
+                    rows={3}
+                    maxLength={4000}
+                    onChange={(event) => {
+                      setDescription(event.target.value);
+                      setDetailsEdited(true);
+                    }}
+                  />
+                </div>
+              </section>
 
-            <section aria-labelledby={`${formId}-step-3`} className="flex flex-col gap-3">
-              <StepHeading step={3} title="Add documents" id={`${formId}-step-3`} />
-              <p className="text-sm text-muted-foreground">
-                Use synthetic or anonymised documents only. This demo is public.
-              </p>
-              <UploadChecklist
-                checklist={definition.checklist}
-                files={files}
-                onAddFiles={handleAddFiles}
-                onRemoveFile={(id) =>
-                  setFiles((current) => current.filter((entry) => entry.id !== id))
-                }
-              />
-            </section>
+              <section aria-labelledby={`${formId}-step-3`} className="flex flex-col gap-3">
+                <StepHeading step={3} title="Add documents" id={`${formId}-step-3`} />
+                <p className="text-sm text-muted-foreground">
+                  Use synthetic or anonymised documents only. This demo is public.
+                </p>
+                <UploadChecklist
+                  checklist={definition.checklist}
+                  files={files}
+                  disabled={locked}
+                  onAddFiles={handleAddFiles}
+                  onRemoveFile={handleRemoveFile}
+                />
+              </section>
+            </fieldset>
 
             <div className="flex flex-wrap items-center gap-3 border-t pt-4">
               <Button

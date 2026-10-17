@@ -98,6 +98,7 @@ export function useCaseWorkspace(
   const dataSource = useDataSource();
   const caseState = useResource(`case:${caseId}`, () => dataSource.getCaseStateAsync(caseId));
   const uploadsInFlight = useRef(new Set<Promise<unknown>>());
+  const reconciling = useRef(false);
   const uploadRetry = options.uploadRetry;
   const [live, setLive] = useState<LiveProgress | null>(null);
   const [streamRequest, setStreamRequest] = useState<StreamRequest | null>(null);
@@ -186,7 +187,45 @@ export function useCaseWorkspace(
   }
 
   const handleStreamError = useLatestCallback((error: Error) => {
-    toast.error("Live progress was interrupted", { description: describeError(error) });
+    void (async () => {
+      if (!(await reconcileAfterInterruptionAsync())) {
+        toast.error("Live progress was interrupted", { description: describeError(error) });
+      }
+    })();
+  });
+
+  // A stream that drops or closes without a terminal event may belong to a run that already
+  // finished (the server closes once a finished run is released, for example when the snapshot
+  // cursor pointed at its terminal event). Refetch, and stop streaming once the run is inactive.
+  // A genuinely new run stays active, so its subscription keeps waiting for the first event.
+  async function reconcileAfterInterruptionAsync(): Promise<boolean> {
+    if (reconciling.current) {
+      return false;
+    }
+
+    reconciling.current = true;
+    try {
+      const refreshed = await dataSource.getCaseStateAsync(caseId);
+      mutate(() => refreshed);
+      if (refreshed.run.active) {
+        return false;
+      }
+
+      setStreamRequest(null);
+      setLive((current) => current && { ...current, settled: true });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      reconciling.current = false;
+    }
+  }
+
+  const handleConnectionChange = useLatestCallback((next: StreamConnectionState) => {
+    setConnection(next);
+    if (next === "reconnecting") {
+      void reconcileAfterInterruptionAsync();
+    }
   });
 
   const requestId = activeRequest?.id;
@@ -203,7 +242,7 @@ export function useCaseWorkspace(
       onEvent: (event: RunEvent) => handleEvent(event, requestReplay),
       onTerminal: (event: RunEvent) => handleTerminal(event),
       onError: (error: Error) => handleStreamError(error),
-      onConnectionChange: setConnection,
+      onConnectionChange: handleConnectionChange,
     };
     const paced =
       requestReplay && dataSource.mode === "live"
@@ -227,6 +266,7 @@ export function useCaseWorkspace(
     handleEvent,
     handleTerminal,
     handleStreamError,
+    handleConnectionChange,
   ]);
 
   const hasProcessingDocuments = Boolean(
