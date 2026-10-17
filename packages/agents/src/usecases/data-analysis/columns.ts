@@ -35,6 +35,33 @@ export interface DatasetRoles {
 
 export const MAX_CATEGORY_COLUMNS = 3;
 export const MAX_CATEGORY_DISTINCT = 50;
+export const MAX_COLUMN_NAME_CHARS = 64;
+
+export function columnDisplayNames(columns: readonly Pick<ColumnProfile, "name">[]): string[] {
+  const used = new Set(
+    columns.map((column) => column.name).filter((name) => name.length <= MAX_COLUMN_NAME_CHARS),
+  );
+
+  return columns.map((column, index) => {
+    if (column.name.length <= MAX_COLUMN_NAME_CHARS) {
+      return column.name;
+    }
+
+    let name: string;
+    let suffix = index + 1;
+
+    do {
+      const ending = `... (${suffix})`;
+
+      name = `${column.name.slice(0, MAX_COLUMN_NAME_CHARS - ending.length)}${ending}`;
+      suffix += 1;
+    } while (used.has(name));
+
+    used.add(name);
+
+    return name;
+  });
+}
 
 const TYPE_SHARE = 0.6;
 

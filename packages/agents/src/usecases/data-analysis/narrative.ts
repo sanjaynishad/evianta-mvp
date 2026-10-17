@@ -7,7 +7,7 @@ const PLACEHOLDER = /\{\{\s*([^{}\s]+)\s*\}\}/g;
 // A number not glued to a word, identifier, or date, with its sign, currency mark, and percent sign,
 // for example "-40.5%", "₹92,000", "Rs. 1,200", or ".5%".
 const LITERAL_NUMBER =
-  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)(-\s?)?(₹|rs\.?|inr|usd|eur|gbp|\$|€|£)?\s?(-)?(\d(?:[\d,]*\d)?(?:\.\d+)?|\.\d+)(%)?(?![\p{L}\p{N}_])/giu;
+  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)(-\s?)?(₹|rs\.?|inr|usd|eur|gbp|\$|€|£)?\s?(-)?(\d(?:[\d,]*\d)?(?:\.\d+)?|\.\d+)(%)?(?:\s*(₹|rs\.?|inr|usd|eur|gbp|\$|€|£))?(?![\p{L}\p{N}_])/giu;
 const DATE_LIKE = /\b\d{4}-\d{2}(?:-\d{2})?\b|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g;
 const MAX_FREE_INTEGER = 12;
 const MIN_YEAR = 1900;
@@ -65,14 +65,17 @@ interface LiteralNumber {
   kind: "currency" | "percent" | "plain";
   /** The denomination a currency literal names, such as USD for "$"; undefined if unrecognized. */
   currencyCode?: CurrencyCode;
+  conflictingCurrency: boolean;
   integerLike: boolean;
   grouped: boolean;
 }
 
 function parseLiteral(match: RegExpMatchArray): LiteralNumber | undefined {
-  const [token, leadingSign, currency, innerSign, digits, percent] = match;
+  const [token, leadingSign, currency, innerSign, digits, percent, trailingCurrency] = match;
   const value = Number((digits ?? "").replace(/,/g, ""));
-  const currencyCode = currency ? currencyMarker(currency) : undefined;
+  const leadingCode = currency ? currencyMarker(currency) : undefined;
+  const trailingCode = trailingCurrency ? currencyMarker(trailingCurrency) : undefined;
+  const currencyCode = leadingCode ?? trailingCode;
 
   if (!Number.isFinite(value)) {
     return undefined;
@@ -82,8 +85,9 @@ function parseLiteral(match: RegExpMatchArray): LiteralNumber | undefined {
     token: token.trim(),
     value,
     negative: Boolean(leadingSign) !== Boolean(innerSign),
-    kind: currency ? "currency" : percent ? "percent" : "plain",
+    kind: currency || trailingCurrency ? "currency" : percent ? "percent" : "plain",
     ...(currencyCode ? { currencyCode } : {}),
+    conflictingCurrency: Boolean(leadingCode && trailingCode && leadingCode !== trailingCode),
     integerLike: !(digits ?? "").includes("."),
     grouped: (digits ?? "").includes(","),
   };
@@ -138,7 +142,8 @@ export function findUnverifiedNumbers(
 
     // An amount in another denomination is never the computed figure, whatever its digits.
     const wrongCurrency =
-      literal.kind === "currency" && literal.currencyCode !== options.currencyCode;
+      literal.kind === "currency" &&
+      (literal.conflictingCurrency || literal.currencyCode !== options.currencyCode);
 
     if (wrongCurrency || !allowed.some((candidate) => matchesAllowed(literal, candidate))) {
       unverified.push(literal.token);

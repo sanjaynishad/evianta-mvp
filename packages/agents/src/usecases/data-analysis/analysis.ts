@@ -16,6 +16,7 @@ import {
 } from "./cells.js";
 import {
   blankRowIndexes,
+  columnDisplayNames,
   duplicateRowIndexes,
   profileColumns,
   selectRoles,
@@ -135,8 +136,22 @@ export function profileTable(table: ExtractedTable) {
     table,
     rows.filter((row) => !repeats.has(row)),
   );
-  const roles = selectRoles(unique.columns);
+  const inferredRoles = selectRoles(unique.columns);
   const all = profileColumns(table, rows);
+  const names = columnDisplayNames(all.columns);
+  const displayColumn = (column: ColumnProfile): ColumnProfile => ({
+    ...column,
+    name: names[column.index] ?? column.name,
+  });
+  const roles: DatasetRoles = {
+    ...inferredRoles,
+    ...(inferredRoles.amount ? { amount: displayColumn(inferredRoles.amount) } : {}),
+    ...(inferredRoles.date ? { date: displayColumn(inferredRoles.date) } : {}),
+    ...(inferredRoles.quantity ? { quantity: displayColumn(inferredRoles.quantity) } : {}),
+    ...(inferredRoles.unitPrice ? { unitPrice: displayColumn(inferredRoles.unitPrice) } : {}),
+    ...(inferredRoles.identifier ? { identifier: displayColumn(inferredRoles.identifier) } : {}),
+    categories: inferredRoles.categories.map(displayColumn),
+  };
   const dateColumns = new Map<number, DateColumnResolution>();
 
   if (roles.date) {
@@ -150,7 +165,7 @@ export function profileTable(table: ExtractedTable) {
 
   const profiling: ColumnProfiling = {
     columns: all.columns.map((column, index) => ({
-      ...column,
+      ...displayColumn(column),
       role: unique.columns[index]?.role ?? column.role,
     })),
     dateColumns,

@@ -97,4 +97,43 @@ describe("findUnverifiedNumbers", () => {
     ]);
     expect(findUnverifiedNumbers("Sales were $92,000.", allowed)).toEqual(["$92,000"]);
   });
+
+  it("validates suffix denominations, attached codes, and conflicting currency markers", () => {
+    const text =
+      "92,000 USD; 92000USD; 92,000 INR; 92000INR; 95000USD; $92,000 INR; ₹92,000 USD; 92000 EUR; 92000GBP.";
+
+    expect(findUnverifiedNumbers(text, allowed, { currencyCode: "INR" })).toEqual([
+      "92,000 USD",
+      "92000USD",
+      "95000USD",
+      "$92,000 INR",
+      "₹92,000 USD",
+      "92000 EUR",
+      "92000GBP",
+    ]);
+    expect(findUnverifiedNumbers(text, allowed, { currencyCode: "USD" })).toEqual([
+      "92,000 INR",
+      "92000INR",
+      "95000USD",
+      "$92,000 INR",
+      "₹92,000 USD",
+      "92000 EUR",
+      "92000GBP",
+    ]);
+    expect(findUnverifiedNumbers("4 USD; 2024 INR; 92000INR", allowed)).toEqual([
+      "4 USD",
+      "2024 INR",
+      "92000INR",
+    ]);
+    expect(
+      findUnverifiedNumbers(
+        "$123; 123 USD; 123 INR; USD123USD",
+        [{ value: 123, unit: "currency" }],
+        { currencyCode: "USD" },
+      ),
+    ).toEqual(["123 INR"]);
+    expect(findUnverifiedNumbers("92000   USD", allowed, { currencyCode: "INR" })).toEqual([
+      "92000   USD",
+    ]);
+  });
 });

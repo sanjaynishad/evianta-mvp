@@ -171,7 +171,7 @@ export function buildAnalystContext(
     .slice(0, Math.max(0, maxSampleRows))
     .map((row) =>
       Object.fromEntries(
-        table.columns.map((column, index) => [
+        analysis.columns.map((column, index) => [
           column.name,
           cellText(table.rows[row]?.[index]).slice(0, MAX_SAMPLE_CELL_CHARS),
         ]),
@@ -311,15 +311,13 @@ function metricEvidenceIndex(analysis: DataAnalysis): Map<string, EvidenceRefere
     }
   });
 
-  if (analysis.trend) {
-    for (const id of [
-      analysis.trend.slopeMetricId,
-      analysis.trend.growthMetricId,
-      analysis.trend.averageChangeMetricId,
-    ]) {
-      if (id) {
-        index.set(id, columns);
-      }
+  for (const id of [
+    "trend-slope-per-month",
+    "growth-first-to-last-pct",
+    "average-monthly-change-pct",
+  ]) {
+    if (analysis.metricsById.has(id)) {
+      index.set(id, columns);
     }
   }
 
@@ -762,7 +760,7 @@ export function buildDataAnalystTaskOutput(
       title: "Anomalies",
       kind: "text",
       content: [anomalyNarrative.text.trim(), anomalyList(analysis)].filter(Boolean).join("\n\n"),
-      findingIndexes: built.anomalies,
+      findingIndexes: built.anomalies.length > 0 ? built.anomalies : trendIndexes,
     },
     {
       title: "Data quality",

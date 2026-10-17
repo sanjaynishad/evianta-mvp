@@ -1,7 +1,12 @@
 import type { ExtractedTable } from "@evianta/core";
 import { describe, expect, it } from "vitest";
 
-import { profileColumns, selectRoles } from "./columns.js";
+import {
+  columnDisplayNames,
+  MAX_COLUMN_NAME_CHARS,
+  profileColumns,
+  selectRoles,
+} from "./columns.js";
 
 function table(columns: string[], rows: ExtractedTable["rows"]): ExtractedTable {
   return {
@@ -12,6 +17,16 @@ function table(columns: string[], rows: ExtractedTable["rows"]): ExtractedTable 
 }
 
 describe("column roles", () => {
+  it("bounds long display names without colliding with other columns", () => {
+    const long = "Region ".repeat(100);
+    const reserved = `${long.slice(0, MAX_COLUMN_NAME_CHARS - 7)}... (1)`;
+    const names = columnDisplayNames([{ name: long }, { name: long }, { name: reserved }]);
+
+    expect(names.every((name) => name.length <= MAX_COLUMN_NAME_CHARS)).toBe(true);
+    expect(new Set(names).size).toBe(3);
+    expect(names[2]).toBe(reserved);
+  });
+
   it("tells prices, quantities, identifiers, and amounts apart by name", () => {
     const data = table(
       ["Invoice No", "Txn Date", "Unit Price", "Units", "Total Cost", "Net Sales", "Store"],

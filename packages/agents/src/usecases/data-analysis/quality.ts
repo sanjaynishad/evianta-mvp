@@ -124,7 +124,7 @@ export interface AmountCurrency {
 }
 
 export function amountCurrency(
-  table: Pick<ExtractedTable, "rows">,
+  table: Pick<ExtractedTable, "rows"> & Partial<Pick<ExtractedTable, "columns">>,
   rows: readonly number[],
   amount: Pick<ColumnProfile, "index" | "name">,
   /** Rows that vote for the base currency; pass deduplicated rows so repeats count once. */
@@ -150,10 +150,11 @@ export function amountCurrency(
     }
   }
 
-  let base = currencyMarker(amount.name);
+  const headerCurrency = currencyMarker(table.columns?.[amount.index]?.name ?? amount.name);
+  let base = headerCurrency;
 
   for (const [code, count] of counts) {
-    if (!base || (!currencyMarker(amount.name) && count > (counts.get(base) ?? 0))) {
+    if (!base || (!headerCurrency && count > (counts.get(base) ?? 0))) {
       base = code;
     }
   }

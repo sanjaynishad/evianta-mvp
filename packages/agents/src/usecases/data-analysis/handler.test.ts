@@ -22,6 +22,7 @@ import {
   type DataAnalystOutputInput,
 } from "./agent.js";
 import { analyzeTable } from "./analysis.js";
+import { MAX_COLUMN_NAME_CHARS } from "./columns.js";
 import { buildDataAnalystTaskOutput, DATA_ANALYST_REPORT_SECTIONS } from "./handler.js";
 
 const analystOutput: DataAnalystOutputInput = {
@@ -136,6 +137,73 @@ function section(deliverable: Deliverable | undefined, title: string) {
 }
 
 describe("business data analyst through the orchestrator", () => {
+  it("bounds source headers in prompts and persisted outputs while preserving inference and locations", async () => {
+    const long = "x".repeat(300_000);
+    const headers = [
+      `${long} Amount (INR)`,
+      `${long} Date`,
+      `${long} Region`,
+      `${long} Region extra`,
+    ];
+    const csv = [
+      headers.join(","),
+      "10,2024-01-01,North,Online",
+      "20,2024-02-01,South,Retail",
+      "pending,2024-03-01,North,Online",
+    ].join("\n");
+    const { result, ai, analysis, findings, deliverables } = await runSalesCaseAsync(
+      { ...formats[0], bytes: () => Buffer.from(csv) },
+      { summary: "Total {{total-amount}}." },
+    );
+
+    expect(result.status).toBe("completed");
+    expect(analysis.source.table.columns.map((column) => column.name)).toEqual(headers);
+    expect(analysis.roles.amount.index).toBe(0);
+    expect(analysis.roles.date?.index).toBe(1);
+    expect(analysis.roles.categories.map((column) => column.index)).toEqual([2, 3]);
+    expect(analysis.currencyCode).toBe("INR");
+    expect(analysis.metricsById.get("total-amount")?.value).toBe(30);
+    expect(analysis.columns.every((column) => column.name.length <= MAX_COLUMN_NAME_CHARS)).toBe(
+      true,
+    );
+    expect(new Set(analysis.columns.map((column) => column.name)).size).toBe(4);
+    expect(ai.calls[1]?.prompt.length).toBeLessThan(100_000);
+    expect(ai.calls[1]?.prompt).not.toContain(long);
+    expect(JSON.stringify({ findings, deliverables }).length).toBeLessThan(150_000);
+    expect(
+      findings.flatMap((finding) => finding.evidence).map((item) => item.location?.cellRange),
+    ).toContain("A4");
+    expect(byFormat(deliverables, "dashboard")).toBeDefined();
+  });
+
+  it.each([
+    ["undated", "Amount\n100\n200", "total-amount"],
+    ["one month", "Date,Amount\n2024-01-01,100", "period-2024-01-total"],
+    ["two months", "Date,Amount\n2024-01-01,100\n2024-02-01,200", "period-2024-02-total"],
+    [
+      "three months",
+      "Date,Amount\n2024-01-01,100\n2024-02-01,200\n2024-03-01,300",
+      "period-2024-03-total",
+    ],
+  ])(
+    "persists an evidence-linked anomalies section for %s data with no anomalies",
+    async (_name, csv, metricId) => {
+      const { result, analysis, deliverables } = await runSalesCaseAsync(
+        { ...formats[0], bytes: () => Buffer.from(csv) },
+        { summary: "Sales.", anomalies: `Observed {{${metricId}}}.` },
+      );
+      const report = byFormat(deliverables, "report");
+      const anomalies = section(report, "Anomalies");
+
+      expect(analysis.anomalies).toEqual([]);
+      expect(result.status).toBe("completed");
+      expect(report).toBeDefined();
+      expect(anomalies?.findingIds.length).toBeGreaterThan(0);
+      expect(anomalies?.evidenceIds.length).toBeGreaterThan(0);
+      expect(anomalies?.content).toContain("Observed");
+    },
+  );
+
   it.each(formats)("produces a report and a dashboard from $name", async (format) => {
     const { ai, ingested, result, findings, deliverables, tasks, analysis } =
       await runSalesCaseAsync(format);
@@ -341,6 +409,33 @@ describe("buildDataAnalystTaskOutput", () => {
 });
 
 describe("insight evidence", () => {
+  it.each(["growth-first-to-last-pct", "average-monthly-change-pct"])(
+    "cites date and amount columns for the two-month %s metric without a slope",
+    async (metricId) => {
+      const { result, analysis, findings } = await runSalesCaseAsync(
+        {
+          ...formats[0],
+          bytes: () => Buffer.from("Date,Amount\n2024-01-01,100\n2024-02-01,200"),
+        },
+        {
+          summary: "Sales.",
+          insights: [
+            {
+              summary: `Change {{${metricId}}}.`,
+              severity: "medium",
+              metricIds: [metricId],
+            },
+          ],
+        },
+      );
+      const insight = findings.find((finding) => finding.summary === "Change 100%.");
+
+      expect(result.status).toBe("completed");
+      expect(analysis.trend).toBeUndefined();
+      expect(insight?.evidence.map((item) => item.location?.cellRange)).toEqual(["B2:B3", "A2:A3"]);
+    },
+  );
+
   it("cites both months for a month-over-month change", async () => {
     const buffer = new TextEncoder().encode(salesCsv());
     const extraction = await extractFixtureAsync(
