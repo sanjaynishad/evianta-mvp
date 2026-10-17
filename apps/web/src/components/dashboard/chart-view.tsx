@@ -182,6 +182,7 @@ function ChartBody({ spec, size }: Pick<ChartViewProps, "spec" | "size">) {
 export function ChartView({ spec, footer, size, className }: ChartViewProps) {
   const valueFormat = spec.yAxis?.format ?? "number";
   const captionId = `${spec.id}-caption`;
+  const tableId = `${spec.id}-values`;
   return (
     <figure
       data-chart-id={spec.id}
@@ -198,7 +199,12 @@ export function ChartView({ spec, footer, size, className }: ChartViewProps) {
           <span className="text-xs text-muted-foreground">{spec.description}</span>
         ) : null}
       </figcaption>
-      <div aria-hidden className="h-64 w-full">
+      <div
+        role="group"
+        aria-label={`${spec.title} chart`}
+        aria-describedby={tableId}
+        className="h-64 w-full"
+      >
         {size ? (
           <ChartBody spec={spec} size={size} />
         ) : (
@@ -207,8 +213,8 @@ export function ChartView({ spec, footer, size, className }: ChartViewProps) {
           </ResponsiveContainer>
         )}
       </div>
-      <table className="sr-only">
-        <caption>{spec.title}</caption>
+      <table id={tableId} className="sr-only">
+        <caption>{spec.title}: values shown in the chart</caption>
         <thead>
           <tr>
             <th scope="col">{spec.xAxis?.label ?? spec.categoryKey}</th>

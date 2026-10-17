@@ -24,6 +24,9 @@ describe("ChartView", () => {
       expect(container.querySelector(`.recharts-${type}`)).not.toBeNull();
       const table = within(figure).getByRole("table");
       expect(within(table).getAllByRole("row")).toHaveLength(spec.data.length + 1);
+      const chart = within(figure).getByRole("group", { name: `${spec.title} chart` });
+      expect(chart).toHaveAttribute("aria-describedby", table.id);
+      expect(container.querySelector("svg")?.closest("[aria-hidden='true']")).toBeNull();
       expect(within(figure).getByText(`Source: ${spec.source?.aggregation}`)).toBeInTheDocument();
     },
   );
