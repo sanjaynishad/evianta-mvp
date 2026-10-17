@@ -1,7 +1,27 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getUsageViewPath, normalizeUsageViewPath, parseAiProvider } from "./index.js";
 import { normalizeApiBaseUrl } from "./public.js";
+
+describe("Firestore database configuration", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it.each([
+    [undefined, "(default)"],
+    ["", "(default)"],
+    ["   ", "(default)"],
+    [" default ", "default"],
+  ])("maps %s to %s", async (value, expected) => {
+    vi.stubEnv("FIRESTORE_DATABASE_ID", value);
+    vi.resetModules();
+    const { firestoreDatabaseId } = await import("./index.js");
+
+    expect(firestoreDatabaseId).toBe(expected);
+  });
+});
 
 describe("parseAiProvider", () => {
   it("accepts the supported providers", () => {

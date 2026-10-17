@@ -14,7 +14,9 @@ export const geminiApiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API
 
 export const googleCloudProject = process.env.GOOGLE_CLOUD_PROJECT ?? "";
 
-export const googleCloudLocation = process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1";
+export const googleCloudLocation = process.env.GOOGLE_CLOUD_LOCATION ?? "asia-south2";
+
+export const firestoreDatabaseId = process.env.FIRESTORE_DATABASE_ID?.trim() || "(default)";
 
 export const port = Number(process.env.PORT ?? 8080);
 

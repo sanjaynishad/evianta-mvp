@@ -45,7 +45,7 @@ AI token prices live in [pricing.ts](packages/ai/src/pricing.ts). Costs are calc
 
 Orchestration holds a store-backed per-case lease, renewed every 20 seconds and expiring after 60 seconds if the worker stops. Planning and task-attempt charges are journaled before their work is marked complete. Runs reconcile unapplied charges into case totals atomically and idempotently, including on resume. `retryFailedAsync` can finish accounting for completed work without calling the agents again.
 
-The store reads `GCS_BUCKET` for uploaded file bytes. `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.
+The store reads `GCS_BUCKET` for uploaded file bytes and `FIRESTORE_DATABASE_ID` for the database ID (defaults to `(default)`; a database named `default` is different). `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.
 
 The web app talks to `apps/api` at `NEXT_PUBLIC_EVIANTA_API_URL`. When it is unset, the web app runs on built-in fixtures (labeled in the UI) so every page works without the API. The web server also reads `EVIANTA_USAGE_VIEW_PATH` at request time and serves the usage view at `/<path>` (noindex, 404 for any other path).
 
@@ -108,16 +108,11 @@ When `EVIANTA_USAGE_VIEW_PATH` is set, `GET /<path>/cases?limit=&cursor=` lists 
 
 ### Cloud Run
 
-Build from the repository root: `docker build -f apps/api/Dockerfile -t evianta-api .`. A run keeps going after `POST /run` returns and the stream shares in-process state with it, so deploy with a long request timeout, CPU outside requests, and a single instance:
+The [deployment workflow](.github/workflows/deploy-cloud-run.yml) builds and deploys both the API and web app only when manually triggered from a selected branch. All branches deploy to the same production services and data, not isolated preview environments. Pushes and CI completion do not trigger deployment. Check CI before starting a deployment; the workflow does not wait for it. The web image uses Next.js standalone output, with static assets copied into `apps/web/.next/static` alongside the traced server. Static export is not used because case routes and the usage view require a server. The workflow builds the web app with the deployed API URL and configures API CORS with the deployed web origin.
 
-```bash
-gcloud run deploy evianta-api --image <image> --timeout=3600 --no-cpu-throttling \
-  --min-instances=1 --max-instances=1 \
-  --set-env-vars=EVIANTA_AI_PROVIDER=vertexai,GOOGLE_CLOUD_PROJECT=<project>,GCS_BUCKET=<bucket>,EVIANTA_WEB_ORIGIN=<web origin> \
-  --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,EVIANTA_USAGE_VIEW_PATH=usage-view-path:latest
-```
+Both services are private by default. Direct browser access requires `CLOUD_RUN_ALLOW_UNAUTHENTICATED=true`; the frontend does not send Cloud Run identity tokens. Public access requires an explicit opt-in because the API has no authentication or rate limiting. The workflow uses Vertex AI and keyless Workload Identity Federation; no service account JSON key or Gemini API key is required.
 
-`GEMINI_API_KEY` is only needed with `googleai`; Vertex AI uses the service account. Because events are persisted, a client that reconnects after a restart still replays the whole run.
+A run keeps going after `POST /cases/:id/run` returns and the stream shares in-process state with it, so the workflow uses a one-hour request timeout, CPU outside requests, and one minimum and maximum instance. This incurs idle compute charges. Instances can still restart, and revisions can overlap during deployment. Deploy only when no runs or extractions are active. Persisted events can be replayed after a restart, but in-flight work is not automatically recovered.
 
 ## Data analysis (use case A)
 
