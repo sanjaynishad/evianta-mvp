@@ -42,7 +42,7 @@ Copy `.env.example` to `.env` and set values. `EVIANTA_AI_PROVIDER` selects `goo
 
 AI token prices live in [pricing.ts](packages/ai/src/pricing.ts). Costs are calculated per attempt, including failed attempts, then summed across retries. High-tier attempts with more than 200,000 input tokens use $2.50 per million input tokens and $15 per million output tokens, including thinking tokens. `estimateCost` accepts usage for a single attempt, not combined retry usage. Grounding request fees are not included.
 
-Orchestration holds a store-backed per-case lease, renewed every 20 seconds and expiring after 60 seconds if the worker stops. Every case status, task, finding, evidence, and deliverable write of a run is fenced by that lease inside the same store transaction, so a worker that lost its lease cannot commit stale output. A task's attempt is saved before its agent runs. Planning and task-attempt charges are journaled before their work is marked complete. Runs reconcile unapplied charges into case totals, and task charges into that task's totals, atomically and idempotently, including on resume. `retryFailedAsync` can finish accounting for completed work without calling the agents again.
+Orchestration holds a store-backed per-case lease, renewed every 20 seconds and expiring after 60 seconds if the worker stops. Planning and task-attempt charges are journaled before their work is marked complete. Runs reconcile unapplied charges into case totals atomically and idempotently, including on resume. `retryFailedAsync` can finish accounting for completed work without calling the agents again.
 
 The store reads `GCS_BUCKET` for uploaded file bytes. `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.
 
@@ -115,3 +115,11 @@ gcloud run deploy evianta-api --image <image> --timeout=3600 --no-cpu-throttling
 ```
 
 `GEMINI_API_KEY` is only needed with `googleai`; Vertex AI uses the service account. Because events are persisted, a client that reconnects after a restart still replays the whole run.
+
+## Data analysis (use case A)
+
+The `business-data-analyst` task analyzes the case's spreadsheet in plain TypeScript before any model call: it infers column roles, runs data-quality checks (duplicates, missing values, type mismatches, negative and out-of-range values, mixed date formats), computes totals, averages, monthly changes, a Theil-Sen trend, and segment shares, and flags months whose robust z-score against the trend exceeds 3.5. One mid-tier call receives only these aggregates and five sample rows, and writes the narrative with `{{metric-id}}` placeholders that are replaced with the computed values; any other figure it states is flagged as an open question. The task produces a report deliverable and a dashboard deliverable whose chart sections hold `ChartSpec` JSON from `@evianta/core`. Every finding cites the cell ranges it was computed from.
+
+Mixed date formats are only detectable when ingestion keeps the column as text; columns that ingestion normalizes to ISO dates are treated as consistent.
+
+Column display names are limited to 64 characters in prompts and reports, with distinct suffixes for truncated names. Original headers remain available for role inference, currency detection, and source mapping. Narrative amounts with leading or trailing currency markers must match the data's denomination.

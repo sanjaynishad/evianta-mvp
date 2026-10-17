@@ -1,0 +1,209 @@
+function shiftDecimal(value: number, places: number): number {
+  const [mantissa, exponent] = value.toExponential().split("e");
+
+  return Number(`${mantissa}e${Number(exponent) + places}`);
+}
+
+/** Rounds half away from zero on the shortest decimal form of the value, so 10.075 gives 10.08. */
+export function roundTo(value: number, decimals = 2): number {
+  if (!Number.isFinite(value)) {
+    return value;
+  }
+
+  const rounded = Math.round(shiftDecimal(Math.abs(value), decimals));
+
+  return Math.sign(value) * shiftDecimal(rounded, -decimals) + 0;
+}
+
+/** Rounds a decimal quotient half away from zero without binary floating-point division noise. */
+export function roundQuotientTo(value: number, divisor: number, decimals = 2): number {
+  if (!Number.isFinite(value) || !Number.isSafeInteger(divisor) || divisor === 0) {
+    return value / divisor;
+  }
+
+  const [mantissa = "0", exponent = "0"] = Math.abs(value).toExponential().split("e");
+  const fractionDigits = mantissa.split(".")[1]?.length ?? 0;
+  const power = Number(exponent) - fractionDigits + decimals;
+  let numerator = BigInt(mantissa.replace(".", ""));
+  let denominator = BigInt(Math.abs(divisor));
+
+  if (power >= 0) {
+    numerator *= 10n ** BigInt(power);
+  } else {
+    denominator *= 10n ** BigInt(-power);
+  }
+
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  const rounded = quotient + (remainder * 2n >= denominator ? 1n : 0n);
+  const result = Number(rounded) / 10 ** decimals;
+
+  return Math.sign(value) * Math.sign(divisor) * result + 0;
+}
+
+/** Largest value, or the fallback for an empty list; iterative so large inputs cannot overflow the stack. */
+export function maxOf(values: Iterable<number>, fallback = Number.NEGATIVE_INFINITY): number {
+  let largest = fallback;
+
+  for (const value of values) {
+    if (value > largest) {
+      largest = value;
+    }
+  }
+
+  return largest;
+}
+
+export function sum(values: readonly number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+/** Inputs with more decimal places than this are summed in binary floating point. */
+export const MAX_EXACT_DECIMAL_PLACES = 12;
+
+function decimalPlaces(value: number): number {
+  if (Number.isInteger(value)) {
+    return 0;
+  }
+
+  const [mantissa = "", exponent = "0"] = value.toExponential().split("e");
+  const fraction = mantissa.split(".")[1] ?? "";
+
+  return Math.max(0, fraction.length - Number(exponent));
+}
+
+/**
+ * Sums decimal inputs exactly by scaling them to integers, so 1.13 + 1.14 gives 2.27 rather than
+ * 2.2699999999999996 and derived averages round as a person would expect.
+ */
+export function decimalSum(values: readonly number[]): number {
+  let places = 0;
+
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      return sum(values);
+    }
+
+    places = Math.max(places, decimalPlaces(value));
+  }
+
+  if (places > MAX_EXACT_DECIMAL_PLACES) {
+    return sum(values);
+  }
+
+  const factor = 10 ** places;
+  let total = 0;
+
+  for (const value of values) {
+    // Rounding the scaled value is exact while it stays a safe integer; otherwise use BigInt.
+    const scaled = Math.round(value * factor);
+
+    total += scaled;
+
+    if (!Number.isSafeInteger(scaled) || !Number.isSafeInteger(total)) {
+      return bigDecimalSum(values, places);
+    }
+  }
+
+  return shiftDecimal(total, -places);
+}
+
+function bigDecimalSum(values: readonly number[], places: number): number {
+  const total = values.reduce(
+    (accumulated, value) => accumulated + BigInt(Math.round(shiftDecimal(value, places))),
+    BigInt(0),
+  );
+
+  return shiftDecimal(Number(total), -places);
+}
+
+export function median(values: readonly number[]): number {
+  if (values.length === 0) {
+    return Number.NaN;
+  }
+
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+
+  return sorted.length % 2 === 1
+    ? (sorted[middle] as number)
+    : ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2;
+}
+
+export interface LinearFit {
+  slope: number;
+  intercept: number;
+}
+
+/** Theil-Sen estimator over x = 0..n-1: the median pairwise slope, robust to a few outliers. */
+export function theilSenFit(values: readonly number[]): LinearFit {
+  if (values.length < 2) {
+    return { slope: 0, intercept: values[0] ?? 0 };
+  }
+
+  const slopes: number[] = [];
+
+  for (let left = 0; left < values.length; left += 1) {
+    for (let right = left + 1; right < values.length; right += 1) {
+      slopes.push(((values[right] as number) - (values[left] as number)) / (right - left));
+    }
+  }
+
+  const slope = median(slopes);
+  const intercept = median(values.map((value, index) => value - slope * index));
+
+  return { slope, intercept };
+}
+
+/** Converts a mean absolute deviation to a standard-deviation scale for normal data. */
+export const MEAN_ABSOLUTE_DEVIATION_SCALE = 1.253314;
+
+/** Converts a median absolute deviation to a standard-deviation scale (Iglewicz and Hoaglin). */
+export const MEDIAN_ABSOLUTE_DEVIATION_SCALE = 0.6745;
+
+export type RobustScoreMethod = "median-absolute-deviation" | "mean-absolute-deviation";
+
+export interface RobustScores {
+  scores: number[];
+  method: RobustScoreMethod;
+}
+
+/**
+ * Modified z-scores. Falls back to the mean absolute deviation when more than half of the values
+ * are identical (median absolute deviation of zero); returns undefined when all values are equal.
+ */
+export function robustZScores(values: readonly number[]): RobustScores | undefined {
+  const center = median(values);
+  const deviations = values.map((value) => Math.abs(value - center));
+  const medianDeviation = median(deviations);
+
+  if (medianDeviation > 0) {
+    return {
+      scores: values.map(
+        (value) => (MEDIAN_ABSOLUTE_DEVIATION_SCALE * (value - center)) / medianDeviation,
+      ),
+      method: "median-absolute-deviation",
+    };
+  }
+
+  const meanDeviation = sum(deviations) / deviations.length;
+
+  if (!(meanDeviation > 0)) {
+    return undefined;
+  }
+
+  return {
+    scores: values.map(
+      (value) => (value - center) / (MEAN_ABSOLUTE_DEVIATION_SCALE * meanDeviation),
+    ),
+    method: "mean-absolute-deviation",
+  };
+}
+
+export function percentChange(from: number, to: number): number | undefined {
+  if (from === 0) {
+    return undefined;
+  }
+
+  return ((to - from) / Math.abs(from)) * 100;
+}
