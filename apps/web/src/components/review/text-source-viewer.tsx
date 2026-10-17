@@ -81,7 +81,9 @@ export function TextSourceViewer({
         onZoomChange={setZoom}
       />
       <p className="text-xs text-muted-foreground">
-        Extracted text, shown because the original cannot be displayed here.
+        {extraction?.method === "parse"
+          ? "Text read from the original file."
+          : "Extracted text, shown because the original cannot be displayed here."}
       </p>
       <pre
         ref={scrollRef}

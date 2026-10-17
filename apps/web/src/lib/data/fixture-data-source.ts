@@ -72,7 +72,7 @@ function rekeyState(state: CaseState, caseId: string): CaseState {
 
 function guessMethod(file: File): ExtractionMethod {
   const name = file.name.toLowerCase();
-  if (/\.(csv|tsv|xlsx?|jsonl?|ndjson)$/.test(name)) {
+  if (/\.(csv|tsv|xlsx?|jsonl?|ndjson|txt|md|markdown)$/.test(name)) {
     return "parse";
   }
 
@@ -81,6 +81,10 @@ function guessMethod(file: File): ExtractionMethod {
   }
 
   return "pdf-text";
+}
+
+function isPlainTextFile(file: File): boolean {
+  return /\.(txt|md|markdown)$/.test(file.name.toLowerCase());
 }
 
 function sumTaskUsage(tasks: Task[]): { input: number; output: number; cost: number } {
@@ -372,7 +376,11 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         size: file.size,
         uploadedAt: now().toISOString(),
         status: "ready",
-        extraction: extractionSummary(method, method === "parse" ? 1 : 0.9),
+        extraction: extractionSummary(
+          method,
+          method === "parse" ? 1 : 0.9,
+          isPlainTextFile(file) ? { kind: "text", pageCount: 1, tableCount: 0 } : {},
+        ),
       };
       uploadsInFlight.set(caseId, (uploadsInFlight.get(caseId) ?? 0) + 1);
       try {

@@ -240,6 +240,58 @@ describe("request validation", () => {
     ]);
   });
 
+  it("accepts plain text and Markdown uploads and reads them as text pages", async () => {
+    const { app, store } = createTestHarness();
+    const caseRecord = await store.cases.createCaseAsync({
+      title: "Text uploads",
+      useCase: "msme-payment",
+      visitorId: VISITOR_A,
+    });
+    const url = `/cases/${caseRecord.id}/documents`;
+
+    const upload = await request(app)
+      .post(url)
+      .attach("files", Buffer.from("Reminder sent on 12 Jun 2026.\fSecond reminder on 18 Jul."), {
+        filename: "reminders.txt",
+        contentType: "text/plain",
+      })
+      .attach("files", Buffer.from("# Dues\n\n| Invoice | Amount |\n|---|---|\n| KF-1 | 500 |\n"), {
+        filename: "dues.md",
+        contentType: "application/octet-stream",
+      })
+      .expect(201);
+
+    expect(upload.body.documents).toEqual([
+      expect.objectContaining({ name: "reminders.txt", mimeType: "text/plain" }),
+      expect.objectContaining({ name: "dues.md", mimeType: "text/markdown" }),
+    ]);
+
+    await app.idleAsync();
+
+    const state = await request(app).get(`/cases/${caseRecord.id}`).expect(200);
+
+    expect(state.body.documents).toEqual([
+      expect.objectContaining({
+        status: "ready",
+        extraction: expect.objectContaining({
+          kind: "text",
+          method: "parse",
+          pageCount: 2,
+          tableCount: 0,
+        }),
+      }),
+      expect.objectContaining({
+        status: "ready",
+        extraction: expect.objectContaining({
+          kind: "text",
+          method: "parse",
+          pageCount: 1,
+          tableCount: 1,
+        }),
+      }),
+    ]);
+  });
+
   it("returns 404 without details for unknown cases and routes", async () => {
     const { app } = createTestHarness();
 

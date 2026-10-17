@@ -214,6 +214,111 @@ describe("extractDocumentAsync: deterministic paths", () => {
     expect(outcome.extraction.warnings[0]).toMatch(/^Line 3: /);
   });
 
+  it("reads plain text into pages without calling the model", async () => {
+    const ai = createMockAi();
+    const paragraph = `${"Payment reminder sent to the buyer. ".repeat(60)}\n\n`;
+    const outcome = await extractDocumentAsync(
+      Buffer.from(`\uFEFFFirst page\r\nline two\f${paragraph.repeat(3)}`),
+      documentMetadata({ name: "notes.txt", mimeType: "text/plain" }),
+      { ai },
+    );
+
+    expect(ai.calls).toEqual([]);
+    expect(outcome.usage).toEqual({ input: 0, output: 0, total: 0 });
+    expect(outcome.extraction).toMatchObject({
+      kind: "text",
+      method: "parse",
+      confidence: 1,
+      tables: [],
+      warnings: [],
+    });
+    expect(outcome.extraction.pages[0]).toEqual({
+      index: 1,
+      text: "First page\nline two",
+      method: "parse",
+      confidence: 1,
+    });
+    expect(outcome.extraction.pages.length).toBeGreaterThan(2);
+    expect(outcome.extraction.pages.every((page) => page.text.length <= 4000)).toBe(true);
+    expect(
+      outcome.extraction.pages
+        .slice(1)
+        .map((page) => page.text)
+        .join(""),
+    ).toBe(paragraph.repeat(3));
+  });
+
+  it("reads Markdown pages and pipe tables", async () => {
+    const markdown = [
+      "# Invoices",
+      "",
+      "| Invoice | Date | Amount |",
+      "| --- | :---: | ---: |",
+      "| INV-1 | 2024-01-05 | 1,200.50 |",
+      "| INV-2 | 2024-02-10 | 300 |",
+      "",
+    ].join("\n");
+    const outcome = await extractDocumentAsync(
+      Buffer.from(markdown),
+      documentMetadata({ name: "notes.md", mimeType: "text/markdown" }),
+      { ai: createMockAi() },
+    );
+
+    expect(outcome.extraction).toMatchObject({ kind: "text", method: "parse" });
+    expect(outcome.extraction.pages).toHaveLength(1);
+    expect(outcome.extraction.pages[0]?.text).toBe(markdown);
+    expect(outcome.extraction.tables).toEqual([
+      {
+        name: "Invoices",
+        pageIndex: 1,
+        range: "A1:C3",
+        columns: [
+          { name: "Invoice", type: "string" },
+          { name: "Date", type: "date" },
+          { name: "Amount", type: "number" },
+        ],
+        rows: [
+          ["INV-1", "2024-01-05", 1200.5],
+          ["INV-2", "2024-02-10", 300],
+        ],
+      },
+    ]);
+  });
+
+  it("warns when text is not UTF-8 or is empty", async () => {
+    const latin1 = await extractDocumentAsync(
+      Buffer.from("Jos\u00e9 paid", "latin1"),
+      documentMetadata({ name: "notes.txt", mimeType: "text/plain" }),
+      { ai: createMockAi() },
+    );
+    const blank = await extractDocumentAsync(
+      Buffer.from("  \n\n"),
+      documentMetadata({ name: "blank.md", mimeType: "" }),
+      { ai: createMockAi() },
+    );
+
+    expect(latin1.extraction.pages[0]?.text).toBe("Jos\u00e9 paid");
+    expect(latin1.extraction.warnings).toEqual([
+      "The file is not valid UTF-8; it was decoded as Windows-1252.",
+    ]);
+    expect(blank.extraction.pages).toHaveLength(1);
+    expect(blank.extraction.warnings).toEqual(["The file has no text."]);
+  });
+
+  it("pages long JSON that falls back to text", async () => {
+    const outcome = await extractDocumentAsync(
+      Buffer.from(JSON.stringify({ notes: "x".repeat(9000) })),
+      documentMetadata({ name: "notes.json", mimeType: "application/json" }),
+      { ai: createMockAi() },
+    );
+
+    expect(outcome.extraction.kind).toBe("text");
+    expect(outcome.extraction.pages.length).toBeGreaterThan(1);
+    expect(outcome.extraction.pages.map((page) => page.index)).toEqual(
+      outcome.extraction.pages.map((_page, offset) => offset + 1),
+    );
+  });
+
   it("parses every xlsx sheet with typed columns and cell references", async () => {
     const ai = createMockAi();
     const workbook = createWorkbook([
@@ -697,8 +802,8 @@ describe("extractDocumentAsync: errors", () => {
 
     await expect(
       extractDocumentAsync(
-        Buffer.from("plain notes"),
-        documentMetadata({ name: "notes.txt", mimeType: "text/plain" }),
+        Buffer.from("<p>plain notes</p>"),
+        documentMetadata({ name: "notes.html", mimeType: "text/html" }),
         { ai },
       ),
     ).rejects.toBeInstanceOf(UnsupportedDocumentTypeError);

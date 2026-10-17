@@ -2,7 +2,8 @@ import type { DocumentMetadata } from "@evianta/core";
 
 import { UnsupportedDocumentTypeError } from "./errors.js";
 
-export type DocumentFormat = "csv" | "tsv" | "json" | "jsonl" | "xlsx" | "xls" | "pdf" | "image";
+export type DocumentFormat =
+  "csv" | "tsv" | "json" | "jsonl" | "text" | "markdown" | "xlsx" | "xls" | "pdf" | "image";
 
 export interface DetectedFormat {
   format: DocumentFormat;
@@ -15,6 +16,8 @@ export const SUPPORTED_MIME_TYPES = [
   "text/tab-separated-values",
   "application/json",
   "application/x-ndjson",
+  "text/plain",
+  "text/markdown",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
   "application/pdf",
@@ -42,6 +45,8 @@ const JSON_LINES_MIME_TYPES = new Set([
   "application/jsonlines",
   "application/x-jsonlines",
 ]);
+
+const MARKDOWN_MIME_TYPES = new Set(["text/markdown", "text/x-markdown"]);
 
 function isJsonMime(mimeType: string): boolean {
   return mimeType === "application/json" || mimeType === "text/json" || /\+json$/.test(mimeType);
@@ -221,6 +226,14 @@ export function detectDocumentFormat(
       metadata.name,
       "The file content does not match the declared type.",
     );
+  }
+
+  if (MARKDOWN_MIME_TYPES.has(declared) || extension === "md" || extension === "markdown") {
+    return { format: "markdown", mimeType: "text/markdown" };
+  }
+
+  if (declared === "text/plain" || extension === "txt") {
+    return { format: "text", mimeType: "text/plain" };
   }
 
   throw unsupported;
