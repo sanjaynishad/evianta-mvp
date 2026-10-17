@@ -31,3 +31,14 @@ export class StoreConflictError extends Error {
     this.name = "StoreConflictError";
   }
 }
+
+/** A fenced write was rejected because its owner no longer holds the case run lease. */
+export class StoreLeaseLostError extends Error {
+  constructor(
+    readonly caseId: string,
+    readonly leaseOwner: string,
+  ) {
+    super(`The run lease for case "${caseId}" is no longer held by this run`);
+    this.name = "StoreLeaseLostError";
+  }
+}
