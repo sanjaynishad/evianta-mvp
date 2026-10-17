@@ -72,6 +72,39 @@ describe("detectDocumentFormat", () => {
     ).toThrow(UnsupportedDocumentTypeError);
   });
 
+  it("detects plain text and email after the delimited and JSON formats", () => {
+    const content = Buffer.from("Meeting notes\nAll good.\n");
+    const text = { format: "text", mimeType: "text/plain" };
+    const email = { format: "text", mimeType: "message/rfc822" };
+
+    expect(detectDocumentFormat(content, { name: "notes.txt", mimeType: "" })).toEqual(text);
+    expect(
+      detectDocumentFormat(content, { name: "notes", mimeType: "text/plain; charset=utf-8" }),
+    ).toEqual(text);
+    expect(
+      detectDocumentFormat(content, { name: "notes.txt", mimeType: "application/octet-stream" }),
+    ).toEqual(text);
+    expect(detectDocumentFormat(content, { name: "mail.eml", mimeType: "" })).toEqual(email);
+    expect(detectDocumentFormat(content, { name: "mail.eml", mimeType: "text/plain" })).toEqual(
+      email,
+    );
+    expect(detectDocumentFormat(content, { name: "mail", mimeType: "message/rfc822" })).toEqual(
+      email,
+    );
+    expect(detectDocumentFormat(content, { name: "a.csv", mimeType: "text/plain" }).format).toBe(
+      "csv",
+    );
+    expect(detectDocumentFormat(content, { name: "a.json", mimeType: "text/plain" }).format).toBe(
+      "json",
+    );
+    expect(() =>
+      detectDocumentFormat(Buffer.from([0x68, 0, 0x69]), {
+        name: "notes.txt",
+        mimeType: "text/plain",
+      }),
+    ).toThrow(UnsupportedDocumentTypeError);
+  });
+
   it("does not treat an embedded %PDF- string as a PDF header", () => {
     const signed = Buffer.from("Label,Value\nSignature,%PDF-1.7\n");
     const png = Buffer.concat([createPng(), Buffer.from("tEXt%PDF-1.7")]);
@@ -124,7 +157,7 @@ describe("detectDocumentFormat", () => {
           mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         },
       ],
-      [Buffer.from("hello"), { name: "notes.txt", mimeType: "text/plain" }],
+      [Buffer.from("hello"), { name: "notes.md", mimeType: "text/markdown" }],
       [Buffer.from("not an image"), { name: "photo.png", mimeType: "image/png" }],
       [Buffer.from([0, 1, 2, 3]), { name: "data.csv", mimeType: "text/csv" }],
     ] as const) {

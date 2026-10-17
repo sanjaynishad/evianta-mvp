@@ -12,7 +12,7 @@ export class UnsupportedDocumentTypeError extends Error {
       [
         `Unsupported document type "${mimeType || "unknown"}" for "${fileName}".`,
         reason,
-        "Supported inputs are CSV, TSV, XLSX, XLS, JSON, JSON Lines, PDF, PNG, JPEG, and WEBP.",
+        "Supported inputs are CSV, TSV, XLSX, XLS, JSON, JSON Lines, PDF, PNG, JPEG, WEBP, plain text (TXT), and email (EML).",
       ]
         .filter(Boolean)
         .join(" "),

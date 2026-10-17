@@ -7,6 +7,9 @@ import type {
   Case,
   CaseDocument,
   CaseState,
+  ChatMessage,
+  ChatMessageRequest,
+  ChatReplyFrame,
   CreateCaseRequest,
   Deliverable,
   DocumentDetail,
@@ -17,6 +20,15 @@ import type {
   RunFailedEvent,
   RunStartResponse,
   SectionUpdateRequest,
+  SourceAttachResponse,
+  SourceConnection,
+  SourceConnectorDefinition,
+  SourceConnectorId,
+  SourceImportRequest,
+  SourceItem,
+  SourceProposalActionRequest,
+  UpdateCaseRequest,
+  UpdateIntakeRequest,
   UsageCasesResponse,
   UsageSummary,
 } from "@evianta/core";
@@ -55,6 +67,14 @@ export interface UsageCasesQuery {
   limit?: number;
 }
 
+export interface SendMessageOptions {
+  // Receives the stored user message as soon as the server accepts it.
+  onUserMessage?: (message: ChatMessage) => void;
+  // Receives the assistant reply text as it streams in.
+  onDelta?: (text: string) => void;
+  signal?: AbortSignal;
+}
+
 export interface CaseDataSource {
   readonly mode: DataSourceMode;
   listAgentsAsync(options?: { enabledOnly?: boolean }): Promise<AgentDirectoryResponse>;
@@ -90,4 +110,25 @@ export interface CaseDataSource {
   approveCaseAsync(caseId: string, note?: string): Promise<ApproveCaseResponse>;
   listUsageCasesAsync(usageViewPath: string, query?: UsageCasesQuery): Promise<UsageCasesResponse>;
   getUsageSummaryAsync(usageViewPath: string): Promise<UsageSummary>;
+  updateCaseAsync(caseId: string, update: UpdateCaseRequest): Promise<Case>;
+  updateIntakeAsync(caseId: string, update: UpdateIntakeRequest): Promise<Case>;
+  listMessagesAsync(caseId: string): Promise<ChatMessage[]>;
+  sendMessageAsync(
+    caseId: string,
+    request: ChatMessageRequest,
+    options?: SendMessageOptions,
+  ): Promise<ChatReplyFrame>;
+  listSourceConnectorsAsync(): Promise<SourceConnectorDefinition[]>;
+  listSourceConnectionsAsync(): Promise<SourceConnection[]>;
+  connectSourceAsync(connectorId: SourceConnectorId): Promise<SourceConnection>;
+  disconnectSourceAsync(connectionId: string): Promise<void>;
+  listSourceItemsAsync(connectionId: string): Promise<SourceItem[]>;
+  actOnSourceProposalsAsync(
+    caseId: string,
+    request: SourceProposalActionRequest,
+  ): Promise<SourceAttachResponse>;
+  importSourceItemAsync(
+    caseId: string,
+    request: SourceImportRequest,
+  ): Promise<SourceAttachResponse>;
 }

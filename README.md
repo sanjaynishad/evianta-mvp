@@ -27,6 +27,7 @@ packages/
   agents/  coordinator, specialist, and verification agents
   store/   Firestore repositories and Cloud Storage document store
   ingest/  spreadsheet parsing, PDF text extraction, and per-page OCR
+  connectors/  demo data-source connectors (Tally, Busy, Zoho Books, Shopify, Gmail, Outlook, Google Drive)
 ```
 
 ## Common commands
@@ -51,7 +52,7 @@ The web app talks to `apps/api` at `NEXT_PUBLIC_EVIANTA_API_URL`. When it is uns
 
 ## Document ingestion
 
-`@evianta/ingest` accepts CSV, TSV, XLSX, XLS, JSON, JSON Lines (`.jsonl`, `.ndjson`), PDF, PNG, JPEG, and WEBP. Convert TIFF and GIF before uploading, preserving multi-page documents as PDFs. Workbooks, delimited text, and JSON are each limited to 1,000,000 expanded cell slots (workbooks across all sheets, including gaps between populated cells); larger inputs fail with a `DocumentExtractionError`.
+`@evianta/ingest` accepts CSV, TSV, XLSX, XLS, JSON, JSON Lines (`.jsonl`, `.ndjson`), plain text (`.txt`), email (`.eml`), PDF, PNG, JPEG, and WEBP. Convert TIFF and GIF before uploading, preserving multi-page documents as PDFs. Workbooks, delimited text, and JSON are each limited to 1,000,000 expanded cell slots (workbooks across all sheets, including gaps between populated cells); larger inputs fail with a `DocumentExtractionError`.
 
 JSON is read without a model call. A top-level array becomes one table named after the file, and an array of arrays is read like a sheet with a header row. In a top-level object, each array of records becomes its own table named by its path (for example `data.invoices`), and the remaining scalar fields go into a `<file> fields` table. Nested objects are flattened into dotted columns (`customer.name`) up to five levels; nested arrays and deeper values are kept as compact JSON text. JSON Lines files become one table with one row per line, and invalid lines are skipped with a warning. JSON with no arrays of records is stored as pretty-printed text. Row numbers in evidence count the header as row 1, so the first record is row 2.
 
@@ -65,30 +66,40 @@ If OCR reports that the model is not configured or access was denied, no further
 
 There is no auth and no rate limit. The web app sends an anonymous visitor id in `X-Evianta-Visitor`; it scopes `GET /cases` and stamps new cases and copies, but a request that names a case id works for anyone.
 
-| Method and path                                                             | Purpose                                                                                                          |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz`                                                              | Liveness                                                                                                         |
-| `GET /agents?enabled=true`                                                  | Agent directory: `{ roles, agents }`                                                                             |
-| `GET /agents/:role`                                                         | One agent profile                                                                                                |
-| `POST /cases`                                                               | Create `{ title, description?, useCase }` for the visitor (201)                                                  |
-| `GET /cases`                                                                | The visitor's cases, newest first                                                                                |
-| `GET /samples`                                                              | Read-only sample cases                                                                                           |
-| `POST /cases/:id/copy`                                                      | Copy a sample for the visitor (201)                                                                              |
-| `GET /cases/:id`                                                            | Case, tasks, active findings, cited evidence, deliverables, documents with extraction state, cost, and run state |
-| `POST /cases/:id/documents`                                                 | Multipart upload in the `files` field (201); extraction starts in the background                                 |
-| `GET /cases/:id/documents/:documentId`                                      | Document state and its full extraction                                                                           |
-| `GET /cases/:id/documents/:documentId/file`                                 | The uploaded bytes                                                                                               |
-| `POST /cases/:id/run`                                                       | Start a run (202 `{ caseId, runId, mode, streamUrl }`, 409 when one is active)                                   |
-| `POST /cases/:id/retry`                                                     | Re-run failed and blocked tasks only (202, 409 `nothing-to-retry`)                                               |
-| `GET /cases/:id/stream`                                                     | Server-sent run events                                                                                           |
-| `GET /cases/:id/deliverables/:deliverableId`                                | One deliverable                                                                                                  |
-| `GET /cases/:id/deliverables/:deliverableId/export?format=docx\|xlsx\|json` | Export with reviewer edits and an evidence appendix                                                              |
-| `PATCH /cases/:id/deliverables/:deliverableId/sections/:sectionId`          | `{ editedContent?, reviewStatus?, reviewComment? }`; `null` clears an edit or comment                            |
-| `POST /cases/:id/open-questions/:questionId/resolve` and `/dismiss`         | `{ note? }`                                                                                                      |
-| `POST /cases/:id/approve`                                                   | `{ note? }`; records the approval with the still-open question ids                                               |
-| `POST /cases/:id/ask`                                                       | `{ question }`; streamed grounded answer                                                                         |
+| Method and path                                                             | Purpose                                                                                                                         |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`                                                              | Liveness                                                                                                                        |
+| `GET /agents?enabled=true`                                                  | Agent directory: `{ roles, agents }`                                                                                            |
+| `GET /agents/:role`                                                         | One agent profile                                                                                                               |
+| `POST /cases`                                                               | Create `{ title, description?, useCase?, intakeMode? }` for the visitor (201); `intakeMode` is `chat` or `form`                 |
+| `PATCH /cases/:id`                                                          | `{ title?, description?, useCase? }` while the case is not yet planned                                                          |
+| `PATCH /cases/:id/intake`                                                   | One intake change: entry mode, enabled data sources, a skipped checklist item, a document assignment, or a clarification answer |
+| `GET /cases/:id/messages`                                                   | Chat transcript, oldest first                                                                                                   |
+| `POST /cases/:id/messages`                                                  | `{ text, documentIds? }`; streamed assistant reply                                                                              |
+| `GET /sources/catalog`                                                      | Data-source connectors and what each can provide                                                                                |
+| `GET /sources/connections`, `POST /sources/connections`                     | The visitor's connections; connect a demo account (idempotent per connector)                                                    |
+| `DELETE /sources/connections/:connectionId`                                 | Disconnect                                                                                                                      |
+| `GET /sources/connections/:connectionId/items`                              | Items a connection can import                                                                                                   |
+| `POST /cases/:id/sources/proposals`                                         | `{ action: attach \| dismiss, proposalIds }`; attached items become case documents                                              |
+| `POST /cases/:id/sources/import`                                            | Import a browsed item as a case document                                                                                        |
+| `GET /cases`                                                                | The visitor's cases, newest first                                                                                               |
+| `GET /samples`                                                              | Read-only sample cases                                                                                                          |
+| `POST /cases/:id/copy`                                                      | Copy a sample for the visitor (201)                                                                                             |
+| `GET /cases/:id`                                                            | Case, tasks, active findings, cited evidence, deliverables, documents with extraction state, cost, and run state                |
+| `POST /cases/:id/documents`                                                 | Multipart upload in the `files` field (201); extraction starts in the background                                                |
+| `GET /cases/:id/documents/:documentId`                                      | Document state and its full extraction                                                                                          |
+| `GET /cases/:id/documents/:documentId/file`                                 | The uploaded bytes                                                                                                              |
+| `POST /cases/:id/run`                                                       | Start a run (202 `{ caseId, runId, mode, streamUrl }`, 409 when one is active)                                                  |
+| `POST /cases/:id/retry`                                                     | Re-run failed and blocked tasks only (202, 409 `nothing-to-retry`)                                                              |
+| `GET /cases/:id/stream`                                                     | Server-sent run events                                                                                                          |
+| `GET /cases/:id/deliverables/:deliverableId`                                | One deliverable                                                                                                                 |
+| `GET /cases/:id/deliverables/:deliverableId/export?format=docx\|xlsx\|json` | Export with reviewer edits and an evidence appendix                                                                             |
+| `PATCH /cases/:id/deliverables/:deliverableId/sections/:sectionId`          | `{ editedContent?, reviewStatus?, reviewComment? }`; `null` clears an edit or comment                                           |
+| `POST /cases/:id/open-questions/:questionId/resolve` and `/dismiss`         | `{ note? }`                                                                                                                     |
+| `POST /cases/:id/approve`                                                   | `{ note? }`; records the approval with the still-open question ids                                                              |
+| `POST /cases/:id/ask`                                                       | `{ question }`; streamed grounded answer                                                                                        |
 
-Uploads accept CSV, TSV, XLSX, XLS, JSON, JSON Lines, PDF, PNG, JPEG, and WEBP up to 25 MB each and 10 per request; the content is checked, not just the declared type. Uploads are rejected with 409 while a run is active and once the case has been planned, because later runs reuse completed tasks and would ignore new documents. Documents report `status` (`pending`, `processing`, `ready`, `partial`, or `failed`), a client-safe `error` with an `errorCode` (`unsupported-type`, `ocr-unavailable`, `ocr-failed`, `ocr-partial`, `extraction-failed`, or `read-failed`; provider and parser details are only logged) and, once read, the extraction method, confidence, warnings, and pages needing review. Documents without a stored extraction are extracted again when a run starts. If one still cannot be read for a reason a later attempt may fix (for example OCR being unavailable), the run ends with `run-failed` before it starts; a file that cannot be read at all does not block runs. OCR and Ask usage is added to the case totals.
+Uploads accept CSV, TSV, XLSX, XLS, JSON, JSON Lines, TXT, EML, PDF, PNG, JPEG, and WEBP up to 25 MB each and 10 per request; the content is checked, not just the declared type. Uploads are rejected with 409 while a run is active and once the case has been planned, because later runs reuse completed tasks and would ignore new documents. Documents report `status` (`pending`, `processing`, `ready`, `partial`, or `failed`), a client-safe `error` with an `errorCode` (`unsupported-type`, `ocr-unavailable`, `ocr-failed`, `ocr-partial`, `extraction-failed`, or `read-failed`; provider and parser details are only logged) and, once read, the extraction method, confidence, warnings, and pages needing review. Documents without a stored extraction are extracted again when a run starts. If one still cannot be read for a reason a later attempt may fix (for example OCR being unavailable), the run ends with `run-failed` before it starts; a file that cannot be read at all does not block runs. OCR and Ask usage is added to the case totals.
 
 Errors are JSON `{ error, message }` with a stable `error` code: `invalid-request` (400, with `issues`), `invalid-json`, `visitor-required`, `not-found` (404), `run-in-progress`, `nothing-to-retry`, `upload-in-progress`, `approval-in-progress`, and `case-already-planned` (409), `use-case-missing` and `not-a-sample` (422), `unsupported-media-type` (415), `file-too-large` (413), and `internal-error` (500, never with details). Mutating a sample case returns 409 `{ error: "sample-read-only", reason: "sample-read-only", copyUrl }`.
 
@@ -104,9 +115,17 @@ Section content edits, including restoring the original content, clear case appr
 
 Run cost updates and terminal events read reconciled case totals, including Ask charges recorded during the run. Run-only usage and cost remain separate. Unexpected run preflight failures use a generic message in SSE and `run.lastRunError`; internal diagnostics are logged, while document-unavailable errors retain their retry guidance.
 
+### Chat stream
+
+`POST /cases/:id/messages` answers with `text/event-stream`: a `user-message` frame with the stored user message, `reply-delta` frames with `{ text }` chunks, then one `reply` frame with `{ message, case }`. A failure sends a single `error` frame. While the case is gathering inputs, a cheap-tier intake agent identifies the kind of work and asks for the checklist items, details, and data-source items it still needs; a rules layer owns the checklist and replies when the model is unavailable. During a run the reply is a short status note, and after delivery questions go to grounded Ask. An off-topic request gets a polite decline and the supported kinds of work. `POST /cases/:id/run` returns 422 `use-case-missing` until the kind of work is set, then records the submit in the transcript.
+
+### Data sources
+
+Connectors live in `@evianta/connectors` and all run in demo mode: connecting simulates consent, and imports return deterministic synthetic files. Connections are scoped by visitor. When a case turns sources on, the intake proposes items whose datasets satisfy missing checklist items; attaching or importing stores them through the same path as uploads, with `provenance` on the document. Responses call these files evidence; the origin appears only as an `Imported from` detail.
+
 ### Usage view
 
-When `EVIANTA_USAGE_VIEW_PATH` is set, `GET /<path>/cases?limit=&cursor=` lists every case (newest first) with metadata, document and run counts, tokens, and cost, and `GET /<path>/summary` returns totals overall and per use case. Responses carry `X-Robots-Tag: noindex` and contain no document contents or links. The path is obscurity, not authentication; when it is unset or wrong, the response is a plain 404.
+When `EVIANTA_USAGE_VIEW_PATH` is set, `GET /<path>/cases?limit=&cursor=` lists every case (newest first) with metadata, document and run counts, tokens, and cost, and `GET /<path>/summary` returns totals overall, per use case, and per entry mode (chat or guided setup). Responses carry `X-Robots-Tag: noindex` and contain no document contents or links. The path is obscurity, not authentication; when it is unset or wrong, the response is a plain 404.
 
 ### Cloud Run
 

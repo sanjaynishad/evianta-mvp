@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { boundingBoxSchema } from "./evidence.js";
+import { documentProvenanceSchema } from "./sources.js";
 
 export const documentMetadataSchema = z.object({
   id: z.string(),
@@ -10,6 +11,8 @@ export const documentMetadataSchema = z.object({
   size: z.number().int().nonnegative(),
   gcsPath: z.string().min(1),
   uploadedAt: z.string(),
+  // Present when the document was imported from a connected data source.
+  provenance: documentProvenanceSchema.optional(),
 });
 
 export type DocumentMetadata = z.infer<typeof documentMetadataSchema>;

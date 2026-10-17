@@ -102,6 +102,7 @@ export function toUsageRow(state: CaseState): UsageCaseRow {
     id: state.case.id,
     title: state.case.title,
     useCase: state.case.useCase,
+    intakeMode: state.case.intake?.mode,
     status: state.case.status,
     visitorId: state.case.visitorId,
     isSample: state.case.isSample,

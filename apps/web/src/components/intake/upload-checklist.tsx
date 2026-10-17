@@ -1,7 +1,8 @@
 "use client";
 
 import { useId, useRef, useState, type DragEvent } from "react";
-import { CircleCheck, CircleDashed, Paperclip, Upload, X } from "lucide-react";
+import { CircleCheck, CircleDashed, Database, Paperclip, Upload, X } from "lucide-react";
+import { sourceConnectorsForChecklistItem } from "@evianta/core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatNumber } from "@/lib/format";
@@ -14,9 +15,19 @@ export interface IntakeFile {
   itemId?: string;
 }
 
+// A document already stored on the draft case, for example one attached from a data source.
+export interface AttachedDocument {
+  id: string;
+  name: string;
+  itemId?: string;
+  origin?: string;
+}
+
 export interface UploadChecklistProps {
   checklist: ChecklistItem[];
   files: IntakeFile[];
+  attachedDocuments?: AttachedDocument[];
+  onGetFromSource?: (itemId: string) => void;
   onAddFiles: (files: File[], itemId?: string) => void;
   onRemoveFile: (id: string) => void;
   // Ignores drops while the case is being submitted; buttons are disabled by the enclosing form.
@@ -57,6 +68,8 @@ export function UploadChecklist({
   files,
   onAddFiles,
   onRemoveFile,
+  attachedDocuments = [],
+  onGetFromSource,
   disabled = false,
 }: UploadChecklistProps) {
   const generalInputRef = useRef<HTMLInputElement>(null);
@@ -64,8 +77,11 @@ export function UploadChecklist({
   const [dragging, setDragging] = useState(false);
   const dropHintId = useId();
   const otherFiles = files.filter((entry) => !entry.itemId);
-  const attachedCount = checklist.filter((item) =>
-    files.some((entry) => entry.itemId === item.id),
+  const otherDocuments = attachedDocuments.filter((document) => !document.itemId);
+  const attachedCount = checklist.filter(
+    (item) =>
+      files.some((entry) => entry.itemId === item.id) ||
+      attachedDocuments.some((document) => document.itemId === item.id),
   ).length;
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -88,7 +104,10 @@ export function UploadChecklist({
       <ul aria-label="Document checklist" className="flex flex-col divide-y rounded-lg border">
         {checklist.map((item) => {
           const itemFiles = files.filter((entry) => entry.itemId === item.id);
-          const done = itemFiles.length > 0;
+          const itemDocuments = attachedDocuments.filter((document) => document.itemId === item.id);
+          const done = itemFiles.length > 0 || itemDocuments.length > 0;
+          const canGetFromSource =
+            onGetFromSource !== undefined && sourceConnectorsForChecklistItem(item.id).length > 0;
           return (
             <li
               key={item.id}
@@ -151,9 +170,32 @@ export function UploadChecklist({
                   <Upload aria-hidden />
                   Add
                 </Button>
+                {canGetFromSource ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Get ${item.label} from a data source`}
+                    onClick={() => onGetFromSource?.(item.id)}
+                  >
+                    <Database aria-hidden />
+                    <span className="hidden sm:inline">Data source</span>
+                  </Button>
+                ) : null}
               </div>
-              {itemFiles.length > 0 ? (
+              {itemFiles.length > 0 || itemDocuments.length > 0 ? (
                 <ul className="ml-7 flex flex-col gap-1">
+                  {itemDocuments.map((document) => (
+                    <li key={document.id} className="flex items-center gap-2 text-sm">
+                      <Paperclip aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="min-w-0 flex-1 truncate">{document.name}</span>
+                      {document.origin ? (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {document.origin}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
                   {itemFiles.map((entry) => (
                     <FileRow key={entry.id} entry={entry} onRemove={onRemoveFile} />
                   ))}
@@ -208,10 +250,16 @@ export function UploadChecklist({
         </Button>
       </div>
 
-      {otherFiles.length > 0 ? (
+      {otherFiles.length > 0 || otherDocuments.length > 0 ? (
         <div className="flex flex-col gap-2">
           <p className="text-sm font-medium">Other documents</p>
           <ul className="flex flex-col gap-1">
+            {otherDocuments.map((document) => (
+              <li key={document.id} className="flex items-center gap-2 text-sm">
+                <Paperclip aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">{document.name}</span>
+              </li>
+            ))}
             {otherFiles.map((entry) => (
               <FileRow key={entry.id} entry={entry} onRemove={onRemoveFile} />
             ))}

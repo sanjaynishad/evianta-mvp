@@ -1,5 +1,6 @@
 import {
   apiErrorCodes,
+  createCaseIntake,
   isTerminalRunEvent,
   type AskResult,
   type Case,
@@ -30,6 +31,7 @@ import { buildRunEvents, collectDependents, toFailedCaseState } from "@/fixtures
 import { ApiError, SampleReadOnlyError } from "@/lib/api/errors";
 import { applyQuestionUpdate, applySectionUpdate } from "@/lib/review";
 import { getVisitorId } from "@/lib/visitor";
+import { createFixtureChat } from "./fixture-chat";
 import type { CaseDataSource, RunStreamHandlers, RunStreamOptions } from "./types";
 
 export interface FixtureDataSourceOptions {
@@ -212,7 +214,15 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
     }
 
     pendingRuns.delete(caseId);
-    states.set(caseId, pending.finalState);
+    // Intake and details may change while the run is replaying; keep the latest intake.
+    const current = states.get(caseId)?.case;
+    states.set(caseId, {
+      ...pending.finalState,
+      case: {
+        ...pending.finalState.case,
+        intake: current?.intake ?? pending.finalState.case.intake,
+      },
+    });
     recordedEvents.set(caseId, [...(recordedEvents.get(caseId) ?? []), ...pending.events]);
   }
 
@@ -246,8 +256,22 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
     return clone(findQuestionFinding(next, questionId));
   }
 
-  return {
+  const chat = createFixtureChat({
+    now,
+    visitorId,
+    createId,
+    replayIntervalMs,
+    getState: requireState,
+    getEditableState: requireEditable,
+    setState: (caseId, state) => states.set(caseId, state),
+    isRunActive: (caseId) => pendingRuns.has(caseId),
+    askAsync: (caseId, question, askOptions) => dataSource.askAsync(caseId, question, askOptions),
+  });
+  const { recordRunMessage, ...chatMethods } = chat;
+
+  const dataSource: CaseDataSource = {
     mode: "fixtures",
+    ...chatMethods,
 
     async listAgentsAsync() {
       return wait({ roles: [], agents: [] });
@@ -285,6 +309,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         status: "draft",
         visitorId: visitorId(),
         isSample: false,
+        intake: createCaseIntake(request.intakeMode ?? "form"),
         createdAt,
         updatedAt: createdAt,
       };
@@ -399,7 +424,13 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         return startResponse(caseId, pendingRuns.get(caseId)?.runId ?? "", "run");
       }
 
-      const useCase = state.case.useCase ?? "data-analysis";
+      const useCase = state.case.useCase;
+      if (!useCase) {
+        throw new ApiError("Choose the kind of work before starting.", 422, {
+          code: apiErrorCodes.useCaseMissing,
+        });
+      }
+
       const template = rekeyState(getSampleStateForUseCase(useCase), caseId);
       const planned: CaseState = {
         ...template,
@@ -480,6 +511,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         deliverables: [],
         run: { ...state.run, active: true, lastEventSeq: lastSeq },
       });
+      recordRunMessage(caseId, runId, "run");
       return wait(startResponse(caseId, runId, "run"));
     },
 
@@ -556,6 +588,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         ...touch(state, { status: "in-progress" }),
         run: { ...state.run, active: true, lastEventSeq: lastSeq },
       });
+      recordRunMessage(caseId, runId, "retry");
       return wait(startResponse(caseId, runId, "retry"));
     },
 
@@ -778,7 +811,22 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
           totalsFor(all.filter((state) => state.case.useCase === useCase)),
         ]),
       );
-      return wait({ totals: totalsFor(all), byUseCase });
+      const byIntakeMode = Object.fromEntries(
+        (["chat", "form"] as const).map((mode) => {
+          const inMode = all.filter((state) => state.case.intake?.mode === mode);
+          return [
+            mode,
+            {
+              cases: inMode.length,
+              submitted: inMode.filter((state) => state.tasks.length > 0).length,
+              switchedIn: inMode.filter((state) => state.case.intake?.switchedFrom).length,
+            },
+          ];
+        }),
+      );
+      return wait({ totals: totalsFor(all), byUseCase, byIntakeMode });
     },
   };
+
+  return dataSource;
 }

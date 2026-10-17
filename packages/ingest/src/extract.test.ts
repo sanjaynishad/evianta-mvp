@@ -698,7 +698,7 @@ describe("extractDocumentAsync: errors", () => {
     await expect(
       extractDocumentAsync(
         Buffer.from("plain notes"),
-        documentMetadata({ name: "notes.txt", mimeType: "text/plain" }),
+        documentMetadata({ name: "notes.md", mimeType: "text/markdown" }),
         { ai },
       ),
     ).rejects.toBeInstanceOf(UnsupportedDocumentTypeError);

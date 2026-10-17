@@ -2,18 +2,25 @@ import { randomUUID } from "node:crypto";
 
 import {
   agentRoleSchema,
+  caseIntakeSchema,
   caseSchema,
+  chatMessageSchema,
   deliverableSchema,
   findingSchema,
   runEventSchema,
+  sourceConnectionSchema,
   taskSchema,
   type AgentProfile,
   type Case,
+  type CaseIntakeInput,
   type CaseStatus,
+  type ChatMessage,
+  type ChatMessageInput,
   type Deliverable,
   type Finding,
   type NewRunEvent,
   type RunEvent,
+  type SourceConnection,
   type Task,
 } from "@evianta/core";
 import { z } from "zod";
@@ -21,6 +28,7 @@ import { z } from "zod";
 import { StoreNotFoundError } from "./errors.js";
 import type {
   ApprovalInput,
+  CaseDetailsUpdate,
   CaseUsageIncrement,
   CreateCaseInput,
   ListAllCasesOptions,
@@ -66,6 +74,7 @@ export function buildNewCase(input: CreateCaseInput): Case {
     status: input.status,
     visitorId: input.visitorId,
     isSample: input.isSample ?? false,
+    intake: input.intake,
     createdAt: now,
     updatedAt: now,
   });
@@ -73,6 +82,32 @@ export function buildNewCase(input: CreateCaseInput): Case {
 
 export function applyCaseStatus(current: Case, status: CaseStatus): Case {
   return caseSchema.parse({ ...current, status, updatedAt: nowIso() });
+}
+
+export function applyCaseDetails(current: Case, details: CaseDetailsUpdate): Case {
+  const next: Record<string, unknown> = { ...current, updatedAt: nowIso() };
+
+  if (details.title !== undefined) {
+    next.title = details.title;
+  }
+
+  if (details.description !== undefined) {
+    next.description = details.description;
+  }
+
+  if (details.useCase !== undefined) {
+    next.useCase = details.useCase;
+  }
+
+  return caseSchema.parse(next);
+}
+
+export function applyCaseIntake(current: Case, intake: CaseIntakeInput): Case {
+  return caseSchema.parse({
+    ...current,
+    intake: caseIntakeSchema.parse(intake),
+    updatedAt: nowIso(),
+  });
 }
 
 export function applyCaseUsageIncrement(current: Case, increment: CaseUsageIncrement): Case {
@@ -125,6 +160,7 @@ export function buildCaseCopy(source: Case, visitorId: string): Case {
     visitorId,
     isSample: false,
     sourceCaseId: source.id,
+    intake: source.intake,
     createdAt: now,
     updatedAt: now,
   });
@@ -331,4 +367,40 @@ export function buildRunEvent(caseId: string, seq: number, input: NewRunEvent): 
 
 export function compareProfilesByRole(left: AgentProfile, right: AgentProfile): number {
   return agentRoleSchema.options.indexOf(left.role) - agentRoleSchema.options.indexOf(right.role);
+}
+
+export function buildChatMessage(caseId: string, input: ChatMessageInput): ChatMessage {
+  const message = chatMessageSchema.parse(input);
+
+  if (message.caseId !== caseId) {
+    throw new Error(`Chat message "${message.id}" does not belong to case "${caseId}".`);
+  }
+
+  return message;
+}
+
+/** Orders by `createdAt` only; callers keep append order for equal timestamps. */
+export function compareMessagesByCreatedAt(
+  left: Pick<ChatMessage, "createdAt">,
+  right: Pick<ChatMessage, "createdAt">,
+): number {
+  return left.createdAt < right.createdAt ? -1 : left.createdAt > right.createdAt ? 1 : 0;
+}
+
+export function compareConnectionsOldestFirst(
+  left: SourceConnection,
+  right: SourceConnection,
+): number {
+  if (left.connectedAt !== right.connectedAt) {
+    return left.connectedAt < right.connectedAt ? -1 : 1;
+  }
+
+  return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+}
+
+export function applyConnectionImport(
+  current: SourceConnection,
+  lastImportAt: string,
+): SourceConnection {
+  return sourceConnectionSchema.parse({ ...current, lastImportAt });
 }

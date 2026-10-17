@@ -88,8 +88,16 @@ export function toDocumentView(
   extraction: ExtractedDocument | undefined,
   ingestion: IngestionService,
 ): DocumentView {
-  const { id, caseId, name, mimeType, size, uploadedAt } = metadata;
-  const rest = { id, caseId, name, mimeType, size, uploadedAt };
+  const { id, caseId, name, mimeType, size, uploadedAt, provenance } = metadata;
+  const rest = {
+    id,
+    caseId,
+    name,
+    mimeType,
+    size,
+    uploadedAt,
+    ...(provenance ? { provenance } : {}),
+  };
   const state = ingestion.stateOf(metadata.caseId, metadata.id);
 
   if (state?.status === "processing") {

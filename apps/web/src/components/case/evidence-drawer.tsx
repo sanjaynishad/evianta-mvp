@@ -11,6 +11,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { formatEvidenceLocator, getEvidenceLabel, type EvidenceEntry } from "@/lib/evidence";
+import { importedFromLabel } from "@/lib/sources";
 
 export interface EvidenceDrawerProps {
   entry: EvidenceEntry | undefined;
@@ -59,6 +60,11 @@ export function EvidenceDrawer({ entry, findingTitles, onOpenChange }: EvidenceD
                   (entry.document?.name ?? evidence.sourceRef)
                 )}
               </DetailRow>
+              {entry.document?.provenance ? (
+                <DetailRow term="Imported from">
+                  {importedFromLabel(entry.document.provenance)}
+                </DetailRow>
+              ) : null}
               {locator ? (
                 <DetailRow term="Location">
                   <span className="figures">{locator}</span>

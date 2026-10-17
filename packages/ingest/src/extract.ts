@@ -20,7 +20,7 @@ import {
   type VisionModelTier,
 } from "@evianta/ai";
 
-import { detectDocumentFormat } from "./detect.js";
+import { detectDocumentFormat, EMAIL_MIME } from "./detect.js";
 import {
   DocumentExtractionError,
   OcrConfigurationError,
@@ -43,6 +43,7 @@ import {
   type TabularParseResult,
 } from "./spreadsheet.js";
 import type { DateOrder } from "./tabular.js";
+import { parseEmail, parsePlainText, type TextParseResult } from "./text.js";
 
 export const LOW_CONFIDENCE_THRESHOLD = 0.75;
 export const DEFAULT_OCR_TIER: VisionModelTier = "cheap";
@@ -517,6 +518,10 @@ function jsonOutcome(
     return tabularOutcome(metadata, { tables: parsed.tables, warnings });
   }
 
+  return textOutcome(metadata, { text: parsed.text, warnings });
+}
+
+function textOutcome(metadata: DocumentMetadata, parsed: TextParseResult): ExtractionOutcome {
   return {
     extraction: extractedDocumentSchema.parse({
       documentId: metadata.id,
@@ -525,7 +530,7 @@ function jsonOutcome(
       confidence: 1,
       pages: [{ index: 1, text: parsed.text, method: "parse", confidence: 1 }],
       tables: [],
-      warnings,
+      warnings: parsed.warnings,
     }),
     usage: emptyUsage(),
     cost: 0,
@@ -590,6 +595,17 @@ export async function extractDocumentAsync(
       }
 
       return jsonOutcome(metadata, parsed, decoded.warning);
+    }
+
+    case "text": {
+      const decoded = decodeText(buffer);
+      const parsed =
+        detected.mimeType === EMAIL_MIME ? parseEmail(decoded.text) : parsePlainText(decoded.text);
+
+      return textOutcome(metadata, {
+        text: parsed.text,
+        warnings: decoded.warning ? [decoded.warning, ...parsed.warnings] : parsed.warnings,
+      });
     }
 
     case "xlsx":

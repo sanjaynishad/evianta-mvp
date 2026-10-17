@@ -1,6 +1,7 @@
 import type { Orchestrator, RunEventBus } from "@evianta/agents";
 import type { AiClient } from "@evianta/ai";
-import type { Case } from "@evianta/core";
+import type { SourceConnector } from "@evianta/connectors";
+import type { Case, SourceConnectorId } from "@evianta/core";
 import type { DocumentStore, Store } from "@evianta/store";
 
 import { notFoundError, sampleReadOnlyError } from "./errors.js";
@@ -90,6 +91,10 @@ export function createCaseReviewGuard(): CaseReviewGuard {
   };
 }
 
+export interface SourceConnectorRegistry {
+  get(connectorId: SourceConnectorId): SourceConnector;
+}
+
 export interface ApiContext {
   store: Store;
   documentStore: DocumentStore;
@@ -98,6 +103,7 @@ export interface ApiContext {
   events: RunEventBus;
   ingestion: IngestionService;
   runs: RunLauncher;
+  sources: SourceConnectorRegistry;
   uploads: CaseActivityTracker;
   approvals: CaseReviewGuard;
   logger: ApiLogger;

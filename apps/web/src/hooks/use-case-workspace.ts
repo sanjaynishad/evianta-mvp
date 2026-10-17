@@ -88,7 +88,8 @@ export interface CaseWorkspaceController {
   runAsync: () => Promise<void>;
   retryAsync: () => Promise<void>;
   replay: () => void;
-  uploadAsync: (files: File[]) => Promise<void>;
+  // Resolves with the documents that uploaded; failures stay listed in `uploads`.
+  uploadAsync: (files: File[]) => Promise<CaseDocument[]>;
   dismissUpload: (id: string) => void;
 }
 
@@ -334,8 +335,9 @@ export function useCaseWorkspace(
     setStreamRequest({ id: nextRequestId(), runId, replay: true });
   }
 
-  async function uploadAsync(files: File[]) {
+  async function uploadAsync(files: File[]): Promise<CaseDocument[]> {
     const { supported, unsupported } = partitionUploadFiles(files);
+    const uploaded: CaseDocument[] = [];
     const pending = supported.map((file) => ({
       id: `upload-${nextRequestId()}`,
       file,
@@ -360,6 +362,7 @@ export function useCaseWorkspace(
       pending.map(async ({ id, file }) => {
         try {
           const document: CaseDocument = await dataSource.uploadDocumentAsync(caseId, file);
+          uploaded.push(document);
           setUploads((current) => current.filter((upload) => upload.id !== id));
           mutate((current) => ({
             ...current,
@@ -397,6 +400,8 @@ export function useCaseWorkspace(
     } finally {
       uploadsInFlight.current.delete(settled);
     }
+
+    return uploaded;
   }
 
   let uploadLockedReason: string | undefined;

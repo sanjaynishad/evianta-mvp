@@ -1,4 +1,10 @@
-import { FilePlus2, FolderKanban, Palette, type LucideIcon } from "lucide-react";
+import {
+  ClipboardList,
+  FolderKanban,
+  MessageSquarePlus,
+  Palette,
+  type LucideIcon,
+} from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -7,8 +13,9 @@ export interface NavItem {
 }
 
 export const primaryNavItems: NavItem[] = [
-  { href: "/", label: "Cases", icon: FolderKanban },
-  { href: "/cases/new", label: "New case", icon: FilePlus2 },
+  { href: "/", label: "New chat", icon: MessageSquarePlus },
+  { href: "/cases/new", label: "Guided setup", icon: ClipboardList },
+  { href: "/cases", label: "Cases", icon: FolderKanban },
 ];
 
 export const secondaryNavItems: NavItem[] = [
@@ -17,7 +24,12 @@ export const secondaryNavItems: NavItem[] = [
 
 export function isNavItemActive(pathname: string, href: string): boolean {
   if (href === "/") {
-    return pathname === "/";
+    return pathname === "/" || pathname.startsWith("/chat/");
+  }
+
+  // Guided setup lives under /cases but is its own entry.
+  if (href === "/cases" && (pathname === "/cases/new" || pathname.startsWith("/cases/new/"))) {
+    return false;
   }
 
   return pathname === href || pathname.startsWith(`${href}/`);

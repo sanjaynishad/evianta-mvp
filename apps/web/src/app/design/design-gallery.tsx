@@ -18,7 +18,13 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { createCaseIntake, sourceConnectorCatalog, type CaseState } from "@evianta/core";
 import { EviantaLogomark, EviantaWordmark } from "@/components/brand/logomark";
+import { AttachmentTray, Composer } from "@/components/chat/composer";
+import { IntakeRequestCard } from "@/components/chat/intake-request-card";
+import { RunCard } from "@/components/chat/run-card";
+import { UseCaseChoiceCard } from "@/components/chat/use-case-choice-card";
+import { SourceMonogram } from "@/components/sources/source-monogram";
 import { ChatBubble } from "@/components/patterns/chat-bubble";
 import { ConfidenceBadge, type ConfidenceLevel } from "@/components/patterns/confidence-badge";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
@@ -78,6 +84,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useAutoAnimateList } from "@/hooks/use-auto-animate-list";
 import { useMotionSafe } from "@/hooks/use-motion-safe";
+import type { RunProgress } from "@/lib/run-progress";
 import { motionDurationMs, motionEasing } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { GalleryRow, GallerySection } from "./gallery-section";
@@ -594,6 +601,156 @@ function Chat() {
   );
 }
 
+const galleryIntakeState: CaseState = {
+  case: {
+    id: "gallery-case",
+    title: "Notice under section 143(1)(a)",
+    useCase: "tax-notice",
+    status: "draft",
+    isSample: false,
+    intake: { ...createCaseIntake("chat"), skippedItemIds: ["computation"] },
+    createdAt: "2026-10-15T14:00:00+05:30",
+    updatedAt: "2026-10-15T14:00:00+05:30",
+  },
+  tasks: [],
+  findings: [],
+  evidence: [],
+  deliverables: [],
+  documents: [
+    {
+      id: "gallery-notice",
+      caseId: "gallery-case",
+      name: "intimation-143-1a.pdf",
+      mimeType: "application/pdf",
+      size: 48_000,
+      uploadedAt: "2026-10-15T14:01:00+05:30",
+      status: "ready",
+    },
+    {
+      id: "gallery-ledger",
+      caseId: "gallery-case",
+      name: "busy-ledger-tds-receivable.csv",
+      mimeType: "text/csv",
+      size: 4_000,
+      uploadedAt: "2026-10-15T14:02:00+05:30",
+      status: "ready",
+      provenance: { connectorId: "busy", connectionId: "gallery", itemId: "ledger" },
+    },
+  ],
+  run: { active: false, lastEventSeq: 0 },
+};
+
+const galleryRunProgress: RunProgress = {
+  mode: "run",
+  status: "running",
+  tasks: [
+    {
+      id: "g1",
+      title: "Read the notice",
+      assignedRole: "case-analysis",
+      status: "completed",
+      dependsOn: [],
+      attempts: 1,
+      findingIds: ["f1"],
+    },
+    {
+      id: "g2",
+      title: "Reconcile 26AS with the ledger",
+      assignedRole: "reconciliation",
+      status: "in-progress",
+      dependsOn: ["g1"],
+      attempts: 1,
+      findingIds: [],
+    },
+    {
+      id: "g3",
+      title: "Research the provisions",
+      assignedRole: "tax-research",
+      status: "pending",
+      dependsOn: ["g1"],
+      attempts: 0,
+      findingIds: [],
+    },
+    {
+      id: "g4",
+      title: "Review the work",
+      assignedRole: "independent-review",
+      status: "pending",
+      dependsOn: ["g2", "g3"],
+      attempts: 0,
+      findingIds: [],
+    },
+  ],
+  findings: [{ id: "f1", taskId: "g1", summary: "Adjustment of Rs. 9,000 proposed" }],
+  totalTokens: 4200,
+  totalCost: 0.0031,
+  lastSeq: 4,
+  announcement: "",
+};
+
+function AgentChat() {
+  const [draft, setDraft] = useState("Help me reply to my 143(1) intimation");
+  const noop = () => {};
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-6">
+      <GalleryRow label="Composer with Sources and Files">
+        <Composer
+          variant="hero"
+          value={draft}
+          onValueChange={setDraft}
+          onSubmit={noop}
+          onAddFiles={noop}
+          attachments={[
+            { id: "a1", name: "notice.pdf", status: "ready" },
+            { id: "a2", name: "Form26AS.pdf", status: "reading" },
+            { id: "a3", name: "ledger.csv", status: "ready", origin: "From Tally" },
+          ]}
+          enabledConnectionIds={[]}
+          onEnabledConnectionIdsChange={noop}
+        />
+      </GalleryRow>
+      <GalleryRow label="Attachment states">
+        <AttachmentTray
+          attachments={[
+            { id: "s1", name: "queued.pdf", status: "queued" },
+            { id: "s2", name: "uploading.pdf", status: "uploading" },
+            { id: "s3", name: "scan.jpg", status: "needs-review" },
+            { id: "s4", name: "broken.pdf", status: "failed" },
+          ]}
+        />
+      </GalleryRow>
+      <GalleryRow label="Data source lettermarks">
+        {sourceConnectorCatalog.map((connector) => (
+          <span key={connector.id} className="flex items-center gap-1.5 text-sm">
+            <SourceMonogram connectorId={connector.id} />
+            {connector.name}
+          </span>
+        ))}
+      </GalleryRow>
+      <GalleryRow label="Kind of work">
+        <UseCaseChoiceCard supported suggested="tax-notice" onChoose={noop} />
+      </GalleryRow>
+      <GalleryRow label="Intake checklist">
+        <IntakeRequestCard
+          state={galleryIntakeState}
+          readOnly={false}
+          onUploadForItem={noop}
+          onGetFromSource={noop}
+          onToggleSkip={noop}
+          onAnswerClarification={noop}
+          onProposals={noop}
+          onSubmit={noop}
+          submitting={false}
+        />
+      </GalleryRow>
+      <GalleryRow label="Agents at work">
+        <RunCard progress={galleryRunProgress} onRetry={noop} />
+      </GalleryRow>
+    </div>
+  );
+}
+
 function Overlays() {
   return (
     <div className="flex flex-col gap-4">
@@ -911,6 +1068,13 @@ export function DesignGallery() {
       </GallerySection>
       <GallerySection id="chat" title="Chat">
         <Chat />
+      </GallerySection>
+      <GallerySection
+        id="agent-chat"
+        title="Agent chat"
+        description="Data sources on the way in, evidence on the way out."
+      >
+        <AgentChat />
       </GallerySection>
       <GallerySection id="overlays" title="Overlays, tabs, and panes">
         <Overlays />

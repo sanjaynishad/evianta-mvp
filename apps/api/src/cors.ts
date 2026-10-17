@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
 
-const ALLOWED_METHODS = "GET, POST, PATCH, OPTIONS";
+const ALLOWED_METHODS = "GET, POST, PATCH, DELETE, OPTIONS";
 const ALLOWED_HEADERS = "Content-Type, Last-Event-ID, X-Evianta-Visitor";
 const EXPOSED_HEADERS = "Content-Disposition, Location";
 

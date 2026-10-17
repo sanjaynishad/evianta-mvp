@@ -2,7 +2,8 @@ import type { DocumentMetadata } from "@evianta/core";
 
 import { UnsupportedDocumentTypeError } from "./errors.js";
 
-export type DocumentFormat = "csv" | "tsv" | "json" | "jsonl" | "xlsx" | "xls" | "pdf" | "image";
+export type DocumentFormat =
+  "csv" | "tsv" | "json" | "jsonl" | "xlsx" | "xls" | "pdf" | "image" | "text";
 
 export interface DetectedFormat {
   format: DocumentFormat;
@@ -21,10 +22,14 @@ export const SUPPORTED_MIME_TYPES = [
   "image/png",
   "image/jpeg",
   "image/webp",
+  "text/plain",
+  "message/rfc822",
 ] as const;
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const XLS_MIME = "application/vnd.ms-excel";
+export const PLAIN_TEXT_MIME = "text/plain";
+export const EMAIL_MIME = "message/rfc822";
 
 const CSV_MIME_TYPES = new Set([
   "text/csv",
@@ -213,6 +218,14 @@ export function detectDocumentFormat(
   // Browsers on Windows often report .csv uploads as application/vnd.ms-excel.
   if (extension === "csv") {
     return csv;
+  }
+
+  if (declared === EMAIL_MIME || extension === "eml") {
+    return { format: "text", mimeType: EMAIL_MIME };
+  }
+
+  if (declared === PLAIN_TEXT_MIME || extension === "txt") {
+    return { format: "text", mimeType: PLAIN_TEXT_MIME };
   }
 
   if (declared.startsWith("image/") || declared === "application/pdf") {

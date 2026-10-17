@@ -1,5 +1,5 @@
 import { roundCost } from "@evianta/ai";
-import type { Case, UseCase } from "@evianta/core";
+import type { Case, IntakeMode, IntakeModeTotals, UseCase } from "@evianta/core";
 import type { Store } from "@evianta/store";
 import { Router } from "express";
 import { z } from "zod";
@@ -10,6 +10,7 @@ export interface UsageCaseRow {
   id: string;
   title: string;
   useCase?: UseCase;
+  intakeMode?: IntakeMode;
   status: Case["status"];
   visitorId?: string;
   isSample: boolean;
@@ -39,6 +40,8 @@ export interface UsageSummary {
   totals: UsageTotals;
   /** Keyed by use case, plus "unspecified" when a case has none. */
   byUseCase: Record<string, UsageTotals>;
+  /** Keyed by entry mode, plus "unspecified" for cases from before entry modes existed. */
+  byIntakeMode: Record<string, IntakeModeTotals>;
 }
 
 const pageQuerySchema = z.object({
@@ -79,6 +82,20 @@ function addCase(totals: ReturnType<typeof emptyTotals>, item: Case): void {
   }
 }
 
+function addIntakeMode(byIntakeMode: Map<string, IntakeModeTotals>, item: Case): void {
+  if (item.isSample) {
+    return;
+  }
+
+  const key = item.intake?.mode ?? "unspecified";
+  const bucket = byIntakeMode.get(key) ?? { cases: 0, submitted: 0, switchedIn: 0 };
+
+  bucket.cases += 1;
+  bucket.submitted += (item.usage?.runCount ?? 0) > 0 || item.intake?.stage === "submitted" ? 1 : 0;
+  bucket.switchedIn += item.intake?.switchedFrom ? 1 : 0;
+  byIntakeMode.set(key, bucket);
+}
+
 function finalize({ visitorIds, ...totals }: ReturnType<typeof emptyTotals>): UsageTotals {
   return { ...totals, visitors: visitorIds.size };
 }
@@ -92,6 +109,7 @@ async function toRowAsync(store: Store, item: Case): Promise<UsageCaseRow> {
     id: item.id,
     title: item.title,
     ...(item.useCase ? { useCase: item.useCase } : {}),
+    ...(item.intake ? { intakeMode: item.intake.mode } : {}),
     status: item.status,
     ...(item.visitorId ? { visitorId: item.visitorId } : {}),
     isSample: item.isSample,
@@ -146,6 +164,10 @@ export function createUsageViewRouter(store: Store): Router {
         ["tax-notice", emptyTotals()],
         ["msme-payment", emptyTotals()],
       ]);
+      const byIntakeMode = new Map<string, IntakeModeTotals>([
+        ["chat", { cases: 0, submitted: 0, switchedIn: 0 }],
+        ["form", { cases: 0, submitted: 0, switchedIn: 0 }],
+      ]);
       let cursor: string | undefined;
 
       do {
@@ -165,6 +187,7 @@ export function createUsageViewRouter(store: Store): Router {
 
           addCase(overall, item);
           addCase(bucket, item);
+          addIntakeMode(byIntakeMode, item);
         }
 
         cursor = page.nextCursor;
@@ -175,6 +198,7 @@ export function createUsageViewRouter(store: Store): Router {
         byUseCase: Object.fromEntries(
           [...byUseCase].map(([key, totals]) => [key, finalize(totals)]),
         ),
+        byIntakeMode: Object.fromEntries(byIntakeMode),
       } as UsageSummary;
 
       res.json(summary);
