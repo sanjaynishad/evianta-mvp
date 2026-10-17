@@ -3,7 +3,7 @@ import JSZip from "jszip";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { parseTable, toCellValue } from "./exports.js";
+import { exportXlsxAsync, parseTable, toCellValue, worksheetName } from "./exports.js";
 import { createTestHarness, VISITOR_A } from "./testing/harness.js";
 
 function binary(test: request.Test): request.Test {
@@ -216,5 +216,59 @@ describe("deliverable exports", () => {
     expect(toCellValue("123 456")).toBe("123 456");
     expect(toCellValue("2024-01-15")).toBe("2024-01-15");
     expect(toCellValue("1234567890123456789")).toBe("1234567890123456789");
+  });
+
+  it("names worksheets that Excel accepts", () => {
+    const used = new Set<string>();
+
+    expect(worksheetName("History", used)).toBe("History table");
+    expect(worksheetName("'Revenue'", used)).toBe("Revenue");
+    expect(worksheetName("'Revenue'", used)).toBe("Revenue 2");
+    expect(worksheetName("  ''  ", used)).toBe("Table");
+    expect(worksheetName("Q1: costs/fees [draft]?", used)).toBe("Q1  costs fees  draft");
+    expect(worksheetName("x".repeat(40), used)).toHaveLength(28);
+  });
+
+  it("exports table sections titled History or wrapped in apostrophes", async () => {
+    const table = "| Month | Revenue |\n| --- | --- |\n| Jan | 10 |";
+    const file = await exportXlsxAsync({
+      caseRecord: {
+        id: "case-1",
+        title: "Sales",
+        status: "completed",
+        isSample: false,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      },
+      deliverable: {
+        id: "deliverable-primary",
+        caseId: "case-1",
+        title: "Analysis report",
+        format: "report",
+        sections: ["History", "'Revenue'"].map((title, index) => ({
+          id: `t1-section-${index + 1}`,
+          title,
+          kind: "table" as const,
+          content: table,
+          producedByRole: "business-data-analyst" as const,
+          findingIds: [],
+          evidenceIds: [],
+          reviewStatus: "pending" as const,
+        })),
+      },
+      findings: [],
+      evidence: [],
+      generatedAt: new Date("2026-10-01T00:00:00.000Z"),
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(file.body);
+
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "Sections",
+      "History table",
+      "Revenue",
+      "Evidence",
+    ]);
   });
 });

@@ -6,7 +6,7 @@ import { ingestDocumentAsync } from "@evianta/ingest";
 import type { DocumentStore, Store } from "@evianta/store";
 import express, { type Express } from "express";
 
-import { createUploadTracker, type ApiConfig, type ApiContext } from "./context.js";
+import { createCaseActivityTracker, type ApiConfig, type ApiContext } from "./context.js";
 import { createCorsMiddleware } from "./cors.js";
 import { createErrorHandler, notFoundHandler } from "./errors.js";
 import { createIngestionService, type IngestFunction } from "./ingestion.js";
@@ -82,7 +82,8 @@ export function createApp(dependencies: AppDependencies): EviantaApp {
     events,
     ingestion,
     runs,
-    uploads: createUploadTracker(),
+    uploads: createCaseActivityTracker(),
+    approvals: createCaseActivityTracker(),
     logger,
     config,
     newId,

@@ -18,13 +18,17 @@ export interface ApiConfig {
   maxFilesPerUpload: number;
 }
 
-export interface UploadTracker {
-  /** Marks an upload in progress for the case; call the returned function when it ends. */
+/**
+ * Counts in-flight operations per case. Operations that must not overlap a run (uploads and
+ * approvals) begin before their checks, and run admission rejects a case while any is active.
+ */
+export interface CaseActivityTracker {
+  /** Marks an operation in progress for the case; call the returned function when it ends. */
   begin(caseId: string): () => void;
-  isUploading(caseId: string): boolean;
+  isActive(caseId: string): boolean;
 }
 
-export function createUploadTracker(): UploadTracker {
+export function createCaseActivityTracker(): CaseActivityTracker {
   const counts = new Map<string, number>();
 
   return {
@@ -49,7 +53,7 @@ export function createUploadTracker(): UploadTracker {
         }
       };
     },
-    isUploading(caseId) {
+    isActive(caseId) {
       return counts.has(caseId);
     },
   };
@@ -63,7 +67,8 @@ export interface ApiContext {
   events: RunEventBus;
   ingestion: IngestionService;
   runs: RunLauncher;
-  uploads: UploadTracker;
+  uploads: CaseActivityTracker;
+  approvals: CaseActivityTracker;
   logger: ApiLogger;
   config: ApiConfig;
   newId: () => string;

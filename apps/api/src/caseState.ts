@@ -11,9 +11,10 @@ import type {
   TokenUsage,
 } from "@evianta/core";
 import { pagesNeedingReview } from "@evianta/ingest";
-import type { Store } from "@evianta/store";
+import { StoreNotFoundError, type Store } from "@evianta/store";
 
 import type { DocumentErrorCode, IngestionService } from "./ingestion.js";
+import { messageOf, silentApiLogger, type ApiLogger } from "./logger.js";
 import type { RunLauncher } from "./runs.js";
 
 export type DocumentStatus = "pending" | "processing" | "ready" | "partial" | "failed";
@@ -167,19 +168,32 @@ export async function loadCaseStateAsync(
   ingestion: IngestionService,
   runs: RunLauncher,
   caseId: string,
+  logger: ApiLogger = silentApiLogger,
 ): Promise<CaseStateView | undefined> {
-  const active = runs.isActive(caseId);
   const events = await store.events.listEventsAsync(caseId);
   const lastEvent = events.at(-1);
   const lastRunStart = lastEvent
     ? events.find((event) => event.type === "run-started" && event.runId === lastEvent.runId)
     : undefined;
+
+  // Applies charges journaled before the cursor's cost events, so the totals are not older than
+  // them; each charge is applied once, alongside the run's own reconciliation.
+  try {
+    await store.runs.reconcileUsageAsync(caseId);
+  } catch (error) {
+    if (!(error instanceof StoreNotFoundError)) {
+      logger.warn("Could not reconcile case usage.", { caseId, error: messageOf(error) });
+    }
+  }
+
   const [caseRecord, record, deliverables, documents] = await Promise.all([
     store.cases.getCaseAsync(caseId),
     loadActiveRecordAsync(store, caseId),
     store.deliverables.getDeliverablesForCaseAsync(caseId),
     loadDocumentViewsAsync(store, ingestion, caseId),
   ]);
+  // Sampled after the reads: a cursor that includes the terminal event never pairs with active.
+  const active = runs.isActive(caseId);
 
   if (!caseRecord) {
     return undefined;

@@ -151,7 +151,7 @@ export function createCaseRoutes(ctx: ApiContext): Router {
     "/cases/:caseId",
     asyncRoute(async (req, res) => {
       const { caseId } = caseParamsSchema.parse(req.params);
-      const state = await loadCaseStateAsync(store, ctx.ingestion, ctx.runs, caseId);
+      const state = await loadCaseStateAsync(store, ctx.ingestion, ctx.runs, caseId, ctx.logger);
 
       if (!state) {
         throw notFoundError("case");
@@ -222,11 +222,12 @@ export function createCaseRoutes(ctx: ApiContext): Router {
           );
         }
       } finally {
-        endUpload();
-      }
+        // Documents stored before a later file failed still get extracted.
+        for (const document of documents) {
+          ctx.ingestion.enqueue(document);
+        }
 
-      for (const document of documents) {
-        ctx.ingestion.enqueue(document);
+        endUpload();
       }
 
       res.status(201).json({

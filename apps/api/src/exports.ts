@@ -436,17 +436,23 @@ export async function exportDocxAsync(input: ExportInput): Promise<ExportFile> {
   };
 }
 
-function sheetName(title: string, used: Set<string>): string {
+const RESERVED_SHEET_NAME = "history";
+
+// Excel rejects []:*?/\, names over 31 characters, names starting or ending with an apostrophe,
+// and the reserved name "History".
+export function worksheetName(title: string, used: Set<string>): string {
+  const cleaned = title
+    .replace(/[[\]:*?/\\]/g, " ")
+    .replace(/^[\s']+|[\s']+$/g, "")
+    .slice(0, 28)
+    .replace(/[\s']+$/, "");
   const base =
-    title
-      .replace(/[[\]:*?/\\]/g, " ")
-      .trim()
-      .slice(0, 28) || "Table";
+    cleaned.toLowerCase() === RESERVED_SHEET_NAME ? `${cleaned} table` : cleaned || "Table";
   let name = base;
   let counter = 2;
 
   while (used.has(name.toLowerCase())) {
-    name = `${base.slice(0, 27 - String(counter).length)} ${counter}`;
+    name = `${base.slice(0, 27 - String(counter).length).replace(/[\s']+$/, "")} ${counter}`;
     counter++;
   }
 
@@ -533,7 +539,7 @@ export async function exportXlsxAsync(input: ExportInput): Promise<ExportFile> {
       continue;
     }
 
-    const sheet = workbook.addWorksheet(sheetName(section.title, used));
+    const sheet = workbook.addWorksheet(worksheetName(section.title, used));
 
     sheet.addRow(table.header).font = { bold: true };
 

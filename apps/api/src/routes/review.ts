@@ -63,24 +63,34 @@ export function createReviewRoutes(ctx: ApiContext): Router {
       await getMutableCaseAsync(ctx, caseId);
 
       const { note } = noteBodySchema.parse(req.body ?? {});
+      // Held through the approval write; run admission rejects the case while it is active.
+      const endApproval = ctx.approvals.begin(caseId);
 
-      if (ctx.runs.isActive(caseId)) {
-        throw new ApiError(409, "run-in-progress", "Wait for the run to finish before approving.");
+      try {
+        if (ctx.runs.isActive(caseId)) {
+          throw new ApiError(
+            409,
+            "run-in-progress",
+            "Wait for the run to finish before approving.",
+          );
+        }
+
+        const { findings } = await loadActiveRecordAsync(store, caseId);
+        const unresolvedQuestions = findings
+          .flatMap((finding) => finding.openQuestions)
+          .filter((question) => question.status === "open")
+          .sort((left, right) => SEVERITY_ORDER[left.severity] - SEVERITY_ORDER[right.severity]);
+        const unresolvedQuestionIds = unresolvedQuestions.map((question) => question.id);
+        const approved = await store.cases.recordApprovalAsync(caseId, {
+          unresolvedQuestionIds,
+          approvedAt: ctx.now().toISOString(),
+          ...(note ? { note } : {}),
+        });
+
+        res.json({ case: approved, unresolvedQuestions });
+      } finally {
+        endApproval();
       }
-
-      const { findings } = await loadActiveRecordAsync(store, caseId);
-      const unresolvedQuestions = findings
-        .flatMap((finding) => finding.openQuestions)
-        .filter((question) => question.status === "open")
-        .sort((left, right) => SEVERITY_ORDER[left.severity] - SEVERITY_ORDER[right.severity]);
-      const unresolvedQuestionIds = unresolvedQuestions.map((question) => question.id);
-      const approved = await store.cases.recordApprovalAsync(caseId, {
-        unresolvedQuestionIds,
-        approvedAt: ctx.now().toISOString(),
-        ...(note ? { note } : {}),
-      });
-
-      res.json({ case: approved, unresolvedQuestions });
     }),
   );
 
