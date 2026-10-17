@@ -81,6 +81,21 @@ describe("findUnverifiedNumbers", () => {
     ).toEqual(["-92,000", "₹2024", "Rs. 50", "92,000%", ".5%", "-50%"]);
   });
 
+  it("requires explicit positive signs to match positive metrics", () => {
+    expect(findUnverifiedNumbers("Growth was +53.33%.", allowed)).toEqual(["+53.33%"]);
+    expect(findUnverifiedNumbers("Growth fell 53.33%.", allowed)).toEqual([]);
+    expect(findUnverifiedNumbers("Growth was +50%.", allowed)).toEqual([]);
+  });
+
+  it("validates full scientific-notation values instead of partial numbers", () => {
+    expect(findUnverifiedNumbers("Total 95e3; growth 9.5e4; change 1e-1.", allowed)).toEqual([
+      "95e3",
+      "9.5e4",
+      "1e-1",
+    ]);
+    expect(findUnverifiedNumbers("Total 9.2e4.", [{ value: 92000, unit: "currency" }])).toEqual([]);
+  });
+
   it("flags amounts written in a denomination other than the data's", () => {
     const text = "Sales were $92,000, £92,000, €92,000, USD 92,000, or ₹92,000.";
 

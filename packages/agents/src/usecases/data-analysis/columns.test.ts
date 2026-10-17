@@ -90,4 +90,20 @@ describe("column roles", () => {
     ]);
     expect(selectRoles(columns).amount?.name).toBe("Invoice Amount");
   });
+
+  it("prioritizes category qualifiers after measure words in numeric headers", () => {
+    const data = table(
+      ["Sales Region", "Amount", "Product Sales"],
+      [
+        [101, 100, 10],
+        [102, 200, 20],
+      ],
+    );
+    const { columns } = profileColumns(data, [0, 1]);
+    const roles = selectRoles(columns);
+
+    expect(columns.map((column) => column.role)).toEqual(["category", "amount", "amount"]);
+    expect(roles.amount?.name).toBe("Amount");
+    expect(roles.categories.map((column) => column.name)).toEqual(["Sales Region"]);
+  });
 });

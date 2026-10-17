@@ -468,7 +468,11 @@ describe("insight evidence", () => {
 });
 
 describe("section links", () => {
-  async function outputFor(csv: string, summary: string) {
+  async function outputFor(
+    csv: string,
+    summary: string,
+    insights: DataAnalystOutputInput["insights"] = [],
+  ) {
     const buffer = new TextEncoder().encode(csv);
     const extraction = await extractFixtureAsync(
       buffer,
@@ -480,10 +484,14 @@ describe("section links", () => {
       table: extraction.tables[0] as ExtractedTable,
     });
 
-    return buildDataAnalystTaskOutput(analysis, dataAnalystOutputSchema.parse({ summary }), {
-      usage: { input: 10, output: 5, total: 15 },
-      cost: 0,
-    });
+    return buildDataAnalystTaskOutput(
+      analysis,
+      dataAnalystOutputSchema.parse({ summary, insights }),
+      {
+        usage: { input: 10, output: 5, total: 15 },
+        cost: 0,
+      },
+    );
   }
 
   it("links the summary to segment findings so shares keep their category evidence", async () => {
@@ -500,6 +508,50 @@ describe("section links", () => {
       "A2:A4",
       "B2:B4",
     ]);
+  });
+
+  it("uses complete column evidence when monthly rows exceed the evidence limit", async () => {
+    const output = await outputFor(
+      [
+        "Date,Amount",
+        "2024-01-01,1",
+        "2024-02-01,10",
+        "2024-01-02,1",
+        "2024-03-01,10",
+        "2024-01-03,1",
+        "2024-04-01,10",
+        "2024-01-04,1",
+        "2024-05-01,10",
+        "2024-01-05,1",
+        "2024-06-01,10",
+        "2024-01-06,1",
+      ].join("\n"),
+      "January total {{period-2024-01-total}}.",
+      [
+        {
+          summary: "The complete January total is {{period-2024-01-total}}.",
+          severity: "medium",
+          metricIds: ["period-2024-01-total"],
+        },
+      ],
+    );
+    const finding = output.findings.find((item) => item.summary.startsWith("The complete January"));
+
+    expect(finding?.evidence.map((item) => item.cellRange)).toEqual(["B2:B12", "A2:A12"]);
+  });
+
+  it("creates an evidence-linked finding for an Unassigned-only category breakdown", async () => {
+    const output = await outputFor("Region,Amount\n,100\n,200\nNorth,pending", "Sales.");
+    const findingIndex = output.findings.findIndex((item) =>
+      item.summary.startsWith("Region Unassigned leads"),
+    );
+    const finding = output.findings[findingIndex];
+    const chart = output.sections?.find(
+      (item) => item.kind === "chart" && item.title.includes("Region"),
+    );
+
+    expect(finding?.evidence.map((item) => item.cellRange)).toEqual(["A2:A4", "B2:B4"]);
+    expect(chart?.findingIndexes).toContain(findingIndex);
   });
 
   it("links the trends section to the overview when there is a single month", async () => {

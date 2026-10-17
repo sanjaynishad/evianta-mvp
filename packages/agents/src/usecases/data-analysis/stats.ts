@@ -15,6 +15,32 @@ export function roundTo(value: number, decimals = 2): number {
   return Math.sign(value) * shiftDecimal(rounded, -decimals) + 0;
 }
 
+/** Rounds a decimal quotient half away from zero without binary floating-point division noise. */
+export function roundQuotientTo(value: number, divisor: number, decimals = 2): number {
+  if (!Number.isFinite(value) || !Number.isSafeInteger(divisor) || divisor === 0) {
+    return value / divisor;
+  }
+
+  const [mantissa = "0", exponent = "0"] = Math.abs(value).toExponential().split("e");
+  const fractionDigits = mantissa.split(".")[1]?.length ?? 0;
+  const power = Number(exponent) - fractionDigits + decimals;
+  let numerator = BigInt(mantissa.replace(".", ""));
+  let denominator = BigInt(Math.abs(divisor));
+
+  if (power >= 0) {
+    numerator *= 10n ** BigInt(power);
+  } else {
+    denominator *= 10n ** BigInt(-power);
+  }
+
+  const quotient = numerator / denominator;
+  const remainder = numerator % denominator;
+  const rounded = quotient + (remainder * 2n >= denominator ? 1n : 0n);
+  const result = Number(rounded) / 10 ** decimals;
+
+  return Math.sign(value) * Math.sign(divisor) * result + 0;
+}
+
 /** Largest value, or the fallback for an empty list; iterative so large inputs cannot overflow the stack. */
 export function maxOf(values: Iterable<number>, fallback = Number.NEGATIVE_INFINITY): number {
   let largest = fallback;

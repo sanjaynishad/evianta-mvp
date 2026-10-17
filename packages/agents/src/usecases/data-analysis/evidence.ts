@@ -31,15 +31,30 @@ export function rowLocations(
   column?: number,
   limit = MAX_LOCATIONS_PER_ITEM,
 ): EvidenceLocation[] {
-  return rowRuns(rows)
-    .slice(0, limit)
-    .map((run) =>
-      tableEvidenceLocation(table, {
-        rowStart: run.start,
-        rowEnd: run.end,
-        ...(column === undefined ? {} : { columnStart: column, columnEnd: column }),
-      }),
-    );
+  const runs = rowRuns(rows);
+
+  if (runs.length > limit) {
+    const first = runs[0];
+    const last = runs[runs.length - 1];
+
+    if (first && last) {
+      return [
+        tableEvidenceLocation(table, {
+          rowStart: first.start,
+          rowEnd: last.end,
+          ...(column === undefined ? {} : { columnStart: column, columnEnd: column }),
+        }),
+      ];
+    }
+  }
+
+  return runs.slice(0, limit).map((run) =>
+    tableEvidenceLocation(table, {
+      rowStart: run.start,
+      rowEnd: run.end,
+      ...(column === undefined ? {} : { columnStart: column, columnEnd: column }),
+    }),
+  );
 }
 
 /** The whole data range of one column. */

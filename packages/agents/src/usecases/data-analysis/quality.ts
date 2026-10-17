@@ -197,7 +197,8 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
     });
   }
 
-  const checked: Array<{ column: ColumnProfile; role: keyof DatasetRoles | "category" }> = [];
+  const checked: Array<{ column: ColumnProfile; role: keyof DatasetRoles | "category" | "other" }> =
+    [];
 
   for (const role of ["identifier", "date", "amount", "quantity", "unitPrice"] as const) {
     const column = roles[role];
@@ -209,6 +210,14 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
 
   for (const column of roles.categories) {
     checked.push({ column, role: "category" });
+  }
+
+  const checkedIndexes = new Set(checked.map(({ column }) => column.index));
+
+  for (const column of profiling.columns) {
+    if (!checkedIndexes.has(column.index)) {
+      checked.push({ column, role: "other" });
+    }
   }
 
   checked.sort((left, right) => left.column.index - right.column.index);
@@ -229,7 +238,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
             ? `Rows without ${column.name} were grouped as Unassigned.`
             : role === "quantity" || role === "unitPrice"
               ? `Rows without ${column.name} were left out of ${column.name} metrics.`
-              : "The rows were kept in the analysis.";
+              : `${column.name} was not used in the analysis.`;
 
     add({
       kind: "missing-values",

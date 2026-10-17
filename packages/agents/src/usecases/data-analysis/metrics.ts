@@ -1,6 +1,6 @@
 import type { ParsedDate } from "./cells.js";
 import { shortLabel, slugify } from "./ids.js";
-import { decimalSum, percentChange, roundTo, sum, theilSenFit } from "./stats.js";
+import { decimalSum, percentChange, roundQuotientTo, roundTo, sum, theilSenFit } from "./stats.js";
 
 export interface SalesRecord {
   /** Index into `table.rows`. */
@@ -216,7 +216,7 @@ export function computeSalesMetrics(
       "average-amount",
       {
         label: `Average ${columns.amount} per row`,
-        value: roundTo(exactTotal / withAmount.length),
+        value: roundQuotientTo(exactTotal, withAmount.length),
         unit: "currency",
         basis: `Total ${columns.amount} divided by ${withAmount.length} rows`,
       },
@@ -323,7 +323,7 @@ export function computeSalesMetrics(
             "average-monthly-change-pct",
             {
               label: "Average month-over-month change",
-              value: roundTo(sum(changes) / changes.length),
+              value: roundQuotientTo(sum(changes), changes.length),
               unit: "percent",
               basis: `Mean of ${changes.length} month-over-month changes`,
             },

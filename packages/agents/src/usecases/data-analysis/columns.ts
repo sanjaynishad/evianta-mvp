@@ -141,6 +141,13 @@ function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): Colu
       return "quantity";
     }
 
+    const amountPosition = name.search(AMOUNT_NAME);
+    const categoryPosition = name.search(CATEGORY_NAME);
+
+    if (amountPosition >= 0 && categoryPosition > amountPosition) {
+      return "category";
+    }
+
     if (AMOUNT_NAME.test(name)) {
       return "amount";
     }

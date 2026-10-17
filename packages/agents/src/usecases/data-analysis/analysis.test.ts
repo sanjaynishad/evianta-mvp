@@ -130,6 +130,25 @@ describe("analyzeTable", () => {
     expect(metricValue(analysis, "period-count")).toBe(6);
   });
 
+  it("rounds averages from exact decimal totals", async () => {
+    const table = await csvTableAsync(
+      ["Amount", "0.01", "0.02", "0.03", "0.04", "0.05", "0.06"].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "amounts.csv", table });
+
+    expect(metricValue(analysis, "total-amount")).toBe(0.21);
+    expect(metricValue(analysis, "average-amount")).toBe(0.04);
+  });
+
+  it("selects the monetary amount instead of a numeric sales-region code", async () => {
+    const table = await csvTableAsync("Sales Region,Amount\n101,100\n102,200");
+    const analysis = analyzeTable({ documentId: "doc", documentName: "regions.csv", table });
+
+    expect(analysis.roles.amount.name).toBe("Amount");
+    expect(analysis.roles.categories.map((column) => column.name)).toEqual(["Sales Region"]);
+    expect(metricValue(analysis, "total-amount")).toBe(300);
+  });
+
   it("ranks segments with shares and groups blanks as Unassigned", async () => {
     const analysis = analyzeTable({
       documentId: "doc-csv",
@@ -195,6 +214,20 @@ describe("analyzeTable", () => {
       "yyyy-mm-dd (26), dd/mm/yyyy (1), mm/dd/yyyy (1)",
     );
     expect(metricValue(analysis, "dq-duplicate-rows-rows")).toBe(1);
+  });
+
+  it("reports missing values in unused source columns", async () => {
+    const table = await csvTableAsync(
+      ["Order ID,Region,Amount", "A-1,,100", "A-2,,200"].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "orders.csv", table });
+    const missingRegion = issue(analysis, "dq-missing-values-region");
+
+    expect(missingRegion).toMatchObject({
+      rows: [0, 1],
+      locations: [{ cellRange: "B2:B3" }],
+      treatment: "Region was not used in the analysis.",
+    });
   });
 
   it("flags the April spike against the robust trend and nothing else", async () => {

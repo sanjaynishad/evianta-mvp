@@ -5,9 +5,9 @@ import { roundTo } from "./stats.js";
 
 const PLACEHOLDER = /\{\{\s*([^{}\s]+)\s*\}\}/g;
 // A number not glued to a word, identifier, or date, with its sign, currency mark, and percent sign,
-// for example "-40.5%", "₹92,000", "Rs. 1,200", or ".5%".
+// for example "-40.5%", "+40.5%", "₹92,000", "Rs. 1,200", or ".5%".
 const LITERAL_NUMBER =
-  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)(-\s?)?(₹|rs\.?|inr|usd|eur|gbp|\$|€|£)?\s?(-)?(\d(?:[\d,]*\d)?(?:\.\d+)?|\.\d+)(%)?(?:\s*(₹|rs\.?|inr|usd|eur|gbp|\$|€|£))?(?![\p{L}\p{N}_])/giu;
+  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)([+-]\s?)?(₹|rs\.?|inr|usd|eur|gbp|\$|€|£)?\s?([+-])?((?:\d(?:[\d,]*\d)?(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)(%)?(?:\s*(₹|rs\.?|inr|usd|eur|gbp|\$|€|£))?(?![\p{L}\p{N}_])/giu;
 const DATE_LIKE = /\b\d{4}-\d{2}(?:-\d{2})?\b|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g;
 const MAX_FREE_INTEGER = 12;
 const MIN_YEAR = 1900;
@@ -68,11 +68,14 @@ interface LiteralNumber {
   conflictingCurrency: boolean;
   integerLike: boolean;
   grouped: boolean;
+  explicitSign: boolean;
+  scientificNotation: boolean;
 }
 
 function parseLiteral(match: RegExpMatchArray): LiteralNumber | undefined {
-  const [token, leadingSign, currency, innerSign, digits, percent, trailingCurrency] = match;
-  const value = Number((digits ?? "").replace(/,/g, ""));
+  const [token, leadingSign, currency, innerSign, numeric, percent, trailingCurrency] = match;
+  const digits = numeric ?? "";
+  const value = Number(digits.replace(/,/g, ""));
   const leadingCode = currency ? currencyMarker(currency) : undefined;
   const trailingCode = trailingCurrency ? currencyMarker(trailingCurrency) : undefined;
   const currencyCode = leadingCode ?? trailingCode;
@@ -84,18 +87,25 @@ function parseLiteral(match: RegExpMatchArray): LiteralNumber | undefined {
   return {
     token: token.trim(),
     value,
-    negative: Boolean(leadingSign) !== Boolean(innerSign),
+    negative: Boolean(leadingSign?.trim().startsWith("-")) !== (innerSign === "-"),
     kind: currency || trailingCurrency ? "currency" : percent ? "percent" : "plain",
     ...(currencyCode ? { currencyCode } : {}),
     conflictingCurrency: Boolean(leadingCode && trailingCode && leadingCode !== trailingCode),
-    integerLike: !(digits ?? "").includes("."),
-    grouped: (digits ?? "").includes(","),
+    integerLike: !digits.includes("."),
+    grouped: digits.includes(","),
+    explicitSign: Boolean(leadingSign || innerSign),
+    scientificNotation: /e/i.test(digits),
   };
 }
 
 /** Small counts and years may be written freely, but never as amounts, percentages, or negatives. */
 function isFreeNumber(literal: LiteralNumber): boolean {
-  if (literal.kind !== "plain" || literal.negative || !literal.integerLike) {
+  if (
+    literal.kind !== "plain" ||
+    literal.negative ||
+    !literal.integerLike ||
+    literal.scientificNotation
+  ) {
     return false;
   }
 
@@ -116,7 +126,7 @@ function matchesAllowed(literal: LiteralNumber, candidate: AllowedValue): boolea
   }
 
   const stated = literal.negative ? -literal.value : literal.value;
-  const expected = literal.negative ? candidate.value : Math.abs(candidate.value);
+  const expected = literal.explicitSign ? candidate.value : Math.abs(candidate.value);
 
   return Math.abs(expected - stated) < 1e-9;
 }

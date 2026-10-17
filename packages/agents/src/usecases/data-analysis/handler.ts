@@ -266,9 +266,11 @@ function metricEvidenceIndex(analysis: DataAnalysis): Map<string, EvidenceRefere
       )
     : undefined;
   const rowsOf = (rows: readonly number[], description: string) =>
-    rowLocations(table, rows, undefined, MAX_LOCATIONS_PER_ITEM).map((location) =>
-      toReference(analysis, location, `${description} (${describeLocation(location)})`),
-    );
+    rowRuns(rows).length > MAX_LOCATIONS_PER_ITEM
+      ? columns
+      : rowLocations(table, rows, undefined, MAX_LOCATIONS_PER_ITEM).map((location) =>
+          toReference(analysis, location, `${description} (${describeLocation(location)})`),
+        );
 
   for (const metric of analysis.metrics) {
     index.set(metric.id, [amountColumn]);
@@ -475,13 +477,14 @@ function deterministicFindings(
   const segments = new Map<number, number>();
 
   for (const breakdown of analysis.segments) {
-    const { top, bottom } = breakdown;
+    const unassigned = breakdown.segments.find((segment) => segment.unassigned);
+    const top = breakdown.top ?? unassigned;
 
     if (!top) {
       continue;
     }
 
-    const unassigned = breakdown.segments.find((segment) => segment.unassigned);
+    const { bottom } = breakdown;
     const parts = [
       `${breakdown.column} ${top.label} leads with ${display(analysis, top.totalMetricId)}${top.shareMetricId ? ` (${display(analysis, top.shareMetricId)} of the total)` : ""}`,
       ...(bottom

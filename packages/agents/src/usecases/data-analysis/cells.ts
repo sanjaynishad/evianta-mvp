@@ -48,7 +48,7 @@ export function parseNumericCell(cell: TableCell | undefined): number | undefine
     return undefined;
   }
 
-  let text = cell.trim();
+  let text = cell.trim().replace(/\s+/g, " ");
   let negative = false;
   const parenthesized = /^\((.+)\)$/.exec(text);
 

@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { detectPeriodAnomalies, screenPeriodAnomalies } from "./anomalies.js";
 import { isMissingCell, parseNumericCell, resolveDateColumn } from "./cells.js";
-import { decimalSum, maxOf, robustZScores, roundTo, theilSenFit } from "./stats.js";
+import {
+  decimalSum,
+  maxOf,
+  robustZScores,
+  roundQuotientTo,
+  roundTo,
+  theilSenFit,
+} from "./stats.js";
 
 function series(values: readonly number[]) {
   return values.map((total, index) => ({
@@ -122,6 +129,12 @@ describe("robust statistics", () => {
     expect(roundTo((-10.07 - 10.08) / 2)).toBe(-10.08);
     expect(roundTo(1e-7, 2)).toBe(0);
     expect(roundTo(123456789.125)).toBe(123456789.13);
+  });
+
+  it("rounds decimal quotients without binary division noise", () => {
+    expect(roundQuotientTo(0.21, 6)).toBe(0.04);
+    expect(roundQuotientTo(-0.21, 6)).toBe(-0.04);
+    expect(roundQuotientTo(1.005, 1)).toBe(1.01);
   });
 });
 
