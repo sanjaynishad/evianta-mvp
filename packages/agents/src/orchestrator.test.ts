@@ -1262,6 +1262,8 @@ describe("orchestrator", () => {
     const handlers = createDefaultTaskHandlers();
     const { store, orchestrator } = createHarness({}, { handlers });
     const caseRecord = await createCaseAsync(store);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+    let reconciliations = 0;
 
     handlers.register({
       role: "case-analysis",
@@ -1277,6 +1279,19 @@ describe("orchestrator", () => {
         return { findings: [], usage: { input: 50, output: 0, total: 50 }, cost: 0.005 };
       },
     });
+    vi.spyOn(store.runs, "reconcileUsageAsync").mockImplementation(async (caseId) => {
+      reconciliations += 1;
+
+      if (reconciliations === 3) {
+        await store.runs.recordChargeAsync(caseId, "previous-run", "late-final", {
+          inputTokens: 25,
+          outputTokens: 0,
+          costEstimate: 0.0025,
+        });
+      }
+
+      return reconcileUsageAsync(caseId);
+    });
     await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
     await store.tasks.updateTaskAsync(caseRecord.id, "a", { status: "in-progress", attempts: 1 });
 
@@ -1286,6 +1301,7 @@ describe("orchestrator", () => {
     const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
 
     expect(retry.status).toBe("completed");
+    expect(reconciliations).toBe(3);
     expect(task?.tokenUsage).toEqual({ input: 150, output: 0, total: 150 });
     expect(task?.costEstimate).toBeCloseTo(0.015, 10);
     expect(completed).toMatchObject({ tokenUsage: { input: 150, output: 0, total: 150 } });
@@ -1298,12 +1314,12 @@ describe("orchestrator", () => {
     const costUpdated = events.filter((event) => event.type === "cost-updated").at(-1);
     const terminal = events.at(-1);
 
-    expect(caseAfter?.usage).toMatchObject({ inputTokens: 150, outputTokens: 0 });
-    expect(caseAfter?.usage?.costEstimate).toBeCloseTo(0.015, 10);
+    expect(caseAfter?.usage).toMatchObject({ inputTokens: 175, outputTokens: 0 });
+    expect(caseAfter?.usage?.costEstimate).toBeCloseTo(0.0175, 10);
     expect(retry.usage).toEqual({ input: 50, output: 0, total: 50 });
     expect(retry.costEstimate).toBeCloseTo(0.005, 10);
-    expect(retry.caseUsage).toEqual({ input: 150, output: 0, total: 150 });
-    expect(retry.caseCostEstimate).toBeCloseTo(0.015, 10);
+    expect(retry.caseUsage).toEqual({ input: 175, output: 0, total: 175 });
+    expect(retry.caseCostEstimate).toBeCloseTo(0.0175, 10);
     expect(completed?.type === "task-completed" ? completed.runningCostEstimate : 0).toBeCloseTo(
       0.015,
       10,
@@ -1315,11 +1331,12 @@ describe("orchestrator", () => {
     );
     expect(terminal).toMatchObject({
       type: "run-completed",
-      totalTokenUsage: { input: 150, output: 0, total: 150 },
+      totalTokenUsage: { input: 175, output: 0, total: 175 },
     });
     expect(terminal?.type === "run-completed" ? terminal.totalCostEstimate : 0).toBeCloseTo(
-      0.015,
+      0.0175,
       10,
     );
+    expect(await store.runs.reconcileUsageAsync(caseRecord.id)).toBe(0);
   });
 });

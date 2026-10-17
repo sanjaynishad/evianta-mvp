@@ -952,9 +952,6 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       logger.warn("Run failed.", { caseId, runId, error: runError });
     }
 
-    await refreshCaseTotalsAsync();
-    const totals = caseTotals();
-    const finishedAt = now().toISOString();
     const recordingErrors: string[] = [];
     const recordAsync = async (step: string, workAsync: () => Promise<unknown>) => {
       try {
@@ -977,6 +974,9 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
     await ensureLeaseAsync();
     await recordAsync("case usage", () => store.runs.reconcileUsageAsync(caseId));
+    await refreshCaseTotalsAsync();
+    const totals = caseTotals();
+    const finishedAt = now().toISOString();
     await recordAsync("case status", () =>
       store.cases.updateCaseStatusAsync(caseId, finalError() ? "failed" : "completed", fence),
     );
