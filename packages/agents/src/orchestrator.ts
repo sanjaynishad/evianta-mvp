@@ -641,6 +641,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
           ),
           upstreamSections,
           documents: sliceDocuments(documentSources, { query, tokenBudget: documentTokenBudget }),
+          documentSliceOptions: { query, tokenBudget: documentTokenBudget },
           documentMetadata: documentSources.map((source) => source.metadata),
           async loadExtractionAsync(documentId) {
             return extractionsById.has(documentId)

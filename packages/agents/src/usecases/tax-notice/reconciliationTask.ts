@@ -33,12 +33,18 @@ import {
   resolveTaskAgent,
   type CaseRecords,
 } from "./context.js";
-import { SOURCE_LABELS, taxRecordDocumentIds, type TaxRecordSource } from "./records.js";
+import {
+  SOURCE_LABELS,
+  TAX_RECORD_SOURCES,
+  taxRecordDocumentIds,
+  type TaxRecordSource,
+} from "./records.js";
 import {
   describeLineStatus,
   discrepancies,
   hasReconciliationData,
   lineDifferenceComponents,
+  mismatchedMeasures,
   PERIOD_NOT_STATED,
   primaryTaxDifference,
   sourceLabel,
@@ -159,7 +165,7 @@ export function reconciliationContext(reconciliation: TaxReconciliation): Record
   };
 }
 
-function discrepancySummary(line: ReconciliationLine): string {
+function discrepancySummary(line: ReconciliationLine, tolerance: number): string {
   const who = line.tan ? `${line.deductorName} (${line.tan})` : line.deductorName;
 
   if (line.status === "missing") {
@@ -174,11 +180,22 @@ function discrepancySummary(line: ReconciliationLine): string {
     return `[${line.ref}] ${who}, ${line.period}: cannot be reconciled, ${describeLineStatus(line).toLowerCase()}`;
   }
 
-  const parts = (["return", "ledger", "tax-credit"] as const)
-    .filter((source) => line.values[source]?.tax !== undefined)
-    .map((source) => `${SOURCE_LABELS[source]} ${formatRupees(line.values[source]?.tax ?? 0)}`);
+  const measures = mismatchedMeasures(line.values, tolerance);
+  const labels = measures.map((measure) => (measure === "tax" ? "TDS" : "Income"));
+  const title = labels
+    .map((label, index) => (index === 0 ? label : label.toLowerCase()))
+    .join(" and ");
+  const parts = measures.map((measure, index) => {
+    const values = TAX_RECORD_SOURCES.flatMap((source) => {
+      const value = line.values[source]?.[measure];
 
-  return `[${line.ref}] TDS mismatch for ${who}, ${line.period}: ${parts.join(" vs ")}`;
+      return value === undefined ? [] : [`${SOURCE_LABELS[source]} ${formatRupees(value)}`];
+    }).join(" vs ");
+
+    return measures.length > 1 ? `${labels[index]}: ${values}` : values;
+  });
+
+  return `[${line.ref}] ${title} mismatch for ${who}, ${line.period}: ${parts.join("; ")}`;
 }
 
 function explanationDetail(explanation: DifferenceExplanation | undefined): string {
@@ -219,7 +236,7 @@ export function discrepancyFinding(
   }
 
   return {
-    summary: discrepancySummary(line),
+    summary: discrepancySummary(line, tolerance),
     detail: explanationDetail(explanation),
     severity: taxImpact || line.status === "incomplete" ? "high" : "medium",
     confidence: "high",
@@ -469,7 +486,7 @@ function notesMarkdown(
   for (const line of lines) {
     parts.push(
       "",
-      `**${discrepancySummary(line)}**`,
+      `**${discrepancySummary(line, reconciliation.tolerance)}**`,
       explanationDetail(explanations.get(line.ref)),
     );
   }

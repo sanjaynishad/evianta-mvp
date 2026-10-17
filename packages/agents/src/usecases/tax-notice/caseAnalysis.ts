@@ -37,6 +37,7 @@ import {
   type ReviewPage,
 } from "./context.js";
 import { readTaxRecords, taxRecordDocumentIds } from "./records.js";
+import { sliceDocuments, type DocumentSlice } from "../../slices.js";
 
 export const noticeSourceSchema = z.object({
   documentId: z.string(),
@@ -136,7 +137,7 @@ export function createCaseAnalysisAgent(): CaseAnalysisAgent {
 }
 
 interface CaseAnalysisPrepared {
-  recordDocumentIds: Set<string>;
+  documents: DocumentSlice[];
   lowConfidencePages: ReviewPage[];
 }
 
@@ -569,7 +570,14 @@ export function createCaseAnalysisTaskHandler(
         const recordDocumentIds = taxRecordDocumentIds(readTaxRecords(documents));
 
         return {
-          recordDocumentIds,
+          documents: sliceDocuments(
+            documents.map((document) =>
+              document.extraction && recordDocumentIds.has(document.metadata.id)
+                ? { ...document, extraction: { ...document.extraction, tables: [] } }
+                : document,
+            ),
+            ctx.documentSliceOptions,
+          ),
           lowConfidencePages: pagesToVerify(
             documents.filter((document) => !recordDocumentIds.has(document.metadata.id)),
           ),
@@ -585,10 +593,7 @@ export function createCaseAnalysisTaskHandler(
 
         return {
           ...input,
-          documents: input.documents.filter(
-            (slice) =>
-              !(slice.kind === "table" && prepared.recordDocumentIds.has(slice.documentId)),
-          ),
+          documents: prepared.documents,
         };
       },
       toTaskOutput(result, _ctx, prepared) {

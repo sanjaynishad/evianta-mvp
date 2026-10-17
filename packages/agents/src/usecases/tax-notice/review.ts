@@ -353,7 +353,26 @@ export function scheduleEditsCheck(
           (header, index) => VALUE_COLUMN.test(header) && numbersIn(row[index] ?? "").length > 0,
         );
       const seenKeys = new Set<string>();
+      const seenValueHeaders = new Set<string>();
       let duplicated = false;
+
+      for (const header of actualTable.headers) {
+        if (!VALUE_COLUMN.test(header)) {
+          continue;
+        }
+
+        const normalized = header.toLowerCase();
+
+        if (seenValueHeaders.has(normalized)) {
+          duplicated = true;
+          issue(
+            `duplicate-column:${normalized}`,
+            `"${section.title}" has more than one value column "${header}", so its amounts cannot be checked against the source records.`,
+          );
+        }
+
+        seenValueHeaders.add(normalized);
+      }
 
       for (const row of actualTable.rows) {
         const key = row[0] ?? "";

@@ -1,14 +1,78 @@
 import { describe, expect, it } from "vitest";
 
+import { specialistInputSchema } from "../../agents/specialist.js";
 import {
   caseAnalysisStep,
   createTaxNoticeHarnessAsync,
   DOCUMENT_IDS,
 } from "../../testing/taxNotice.js";
+import { estimateTokens } from "../../text.js";
 import { TAX_DATE_KEYS, TAX_NOTICE_GUARDRAIL } from "./constants.js";
 import { canonicalDateKey } from "./caseAnalysis.js";
 
 describe("case-analysis handler", () => {
+  it.each([1000, 3200, 6000])(
+    "allocates the %i-token budget after removing record tables and keeps mixed-document pages",
+    async (documentTokenBudget) => {
+      const { store, orchestrator, mock, caseRecord } = await createTaxNoticeHarnessAsync({
+        tasks: [{ id: "analyze", role: "case-analysis", title: "Analyze prioritydeadline" }],
+        orchestrator: { documentTokenBudget },
+      });
+      const documents = await store.documents.getDocumentsForCaseAsync(caseRecord.id);
+
+      for (const document of documents) {
+        const extraction = await store.documents.getExtractionAsync(caseRecord.id, document.id);
+
+        if (!extraction) {
+          throw new Error(`Missing extraction for ${document.id}`);
+        }
+
+        const isNotice = document.id === DOCUMENT_IDS.notice;
+
+        await store.documents.saveExtractionAsync(caseRecord.id, {
+          ...extraction,
+          pages: isNotice
+            ? Array.from({ length: 6 }, (_, index) => ({
+                index: index + 1,
+                text: `NOTICE-PAGE-${index + 1} ${index === 5 ? "prioritydeadline " : ""}`.padEnd(
+                  2000,
+                  "n",
+                ),
+                method: "parse",
+                confidence: 1,
+              }))
+            : document.id === DOCUMENT_IDS.ledger
+              ? [{ index: 1, text: "LEDGER-PAGE-NOTES", method: "parse", confidence: 1 }]
+              : [],
+          tables: extraction.tables.map((table) => ({
+            ...table,
+            rows: Array.from({ length: 1000 }, () => table.rows[0] ?? []),
+          })),
+        });
+      }
+
+      expect((await orchestrator.runCaseAsync(caseRecord.id)).status).toBe("completed");
+
+      const call = mock.calls.find((item) => item.key === "case-analysis");
+      const input = specialistInputSchema.parse(JSON.parse(call?.prompt ?? "{}"));
+
+      expect(input.documents.every((slice) => slice.kind === "page")).toBe(true);
+
+      if (documentTokenBudget >= 3200) {
+        expect(input.documents).toHaveLength(7);
+        expect(input.documents.every((slice) => !slice.truncated)).toBe(true);
+      } else {
+        expect(input.documents.length).toBeLessThan(7);
+      }
+
+      expect(input.documents.map((slice) => slice.text).join("\n")).toContain("NOTICE-PAGE-6");
+      expect(input.documents.map((slice) => slice.text).join("\n")).toContain("LEDGER-PAGE-NOTES");
+      expect(
+        input.documents.reduce((total, slice) => total + estimateTokens(slice.text), 0),
+      ).toBeLessThanOrEqual(documentTokenBudget);
+    },
+  );
+
   it("extracts the notice with page references and flags the low-confidence OCR page", async () => {
     const { orchestrator, mock, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
       tasks: [{ id: "analyze", role: "case-analysis" }],

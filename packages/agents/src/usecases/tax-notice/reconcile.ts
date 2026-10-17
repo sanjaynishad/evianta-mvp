@@ -314,6 +314,21 @@ function difference(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+export function mismatchedMeasures(
+  values: Partial<Record<TaxRecordSource, SourceValues>>,
+  tolerance: number,
+): TaxMeasure[] {
+  return MEASURES.filter(
+    (measure) =>
+      !agree(
+        Object.values(values).flatMap((entry) =>
+          entry?.[measure] === undefined ? [] : [entry[measure]],
+        ),
+        tolerance,
+      ),
+  );
+}
+
 function statusOf(
   values: Partial<Record<TaxRecordSource, SourceValues>>,
   missingIn: readonly TaxRecordSource[],
@@ -330,14 +345,7 @@ function statusOf(
     return "missing";
   }
 
-  const agrees = MEASURES.every((measure) =>
-    agree(
-      present.flatMap((entry) => (entry[measure] === undefined ? [] : [entry[measure]])),
-      tolerance,
-    ),
-  );
-
-  return agrees ? "matched" : "mismatched";
+  return mismatchedMeasures(values, tolerance).length === 0 ? "matched" : "mismatched";
 }
 
 function totalsFor(rows: readonly TaxRecordRow[]): SourceTotals {

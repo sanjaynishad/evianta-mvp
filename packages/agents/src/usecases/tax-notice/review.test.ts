@@ -164,6 +164,24 @@ describe("tax-notice review checks", () => {
       rows: [["x | y", "1"]],
     });
     expect(check(regenerated.content.replace("1,41,000", "141000"))).toEqual([]);
+    for (const duplicateValue of ["12,000", "12,400"]) {
+      const duplicateColumns = [
+        "| Item | Amount (Rs) | Amount (Rs) | Basis |",
+        "| --- | --- | --- | --- |",
+        "| TDS per Return | 1,41,000 | 1,41,000 | Schedule A |",
+        "| TDS per 26AS/AIS | 1,28,600 | 1,28,600 | Schedule A |",
+        `| Difference | 12,400 | ${duplicateValue} | Schedule A totals |`,
+      ].join("\n");
+
+      expect(check(duplicateColumns)).toEqual([
+        expect.objectContaining({
+          check: "schedule-edit",
+          severity: "high",
+          message: expect.stringContaining('more than one value column "Amount (Rs)"'),
+        }),
+      ]);
+    }
+
     expect(check(regenerated.content.replace("| 12,400 |", "| 12,000 |"))).toEqual([
       expect.objectContaining({
         check: "schedule-edit",

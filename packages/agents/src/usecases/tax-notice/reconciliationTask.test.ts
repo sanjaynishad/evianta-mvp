@@ -4,8 +4,69 @@ import { createSpecialistAgent } from "../../agents/specialist.js";
 import { createAgentRegistry } from "../../registry.js";
 import { createTaxNoticeHarnessAsync, DOCUMENT_IDS, LEDGER_CSV } from "../../testing/taxNotice.js";
 import { reconciliationLineFigureKey, TAX_FIGURE_KEYS } from "./constants.js";
+import { discrepancyFinding } from "./reconciliationTask.js";
+import type { ReconciliationLine } from "./reconcile.js";
 
 describe("reconciliation handler", () => {
+  it.each([
+    {
+      amount: 12000,
+      tax: 1000,
+      tolerance: 1,
+      label: "Income",
+      details: "Return Rs 10,000 vs Ledger Rs 12,000",
+    },
+    {
+      amount: 10001,
+      tax: 1200,
+      tolerance: 1,
+      label: "TDS",
+      details: "Return Rs 1,000 vs Ledger Rs 1,200",
+    },
+    {
+      amount: 12000,
+      tax: 1001,
+      tolerance: 1,
+      label: "Income",
+      details: "Return Rs 10,000 vs Ledger Rs 12,000",
+    },
+    {
+      amount: 12000,
+      tax: 1002,
+      tolerance: 2,
+      label: "Income",
+      details: "Return Rs 10,000 vs Ledger Rs 12,000",
+    },
+    {
+      amount: 12000,
+      tax: 1200,
+      tolerance: 1,
+      label: "TDS and income",
+      details:
+        "TDS: Return Rs 1,000 vs Ledger Rs 1,200; Income: Return Rs 10,000 vs Ledger Rs 12,000",
+    },
+  ])(
+    "reports $label differences with amount=$amount and tax=$tax",
+    ({ amount, tax, tolerance, label, details }) => {
+      const line: ReconciliationLine = {
+        ref: "R-01",
+        deductorKey: "party",
+        deductorName: "Party",
+        period: "FY 2023-24",
+        status: "mismatched",
+        missingIn: [],
+        values: {
+          return: { amount: 10000, tax: 1000, rows: [], unreadable: [] },
+          ledger: { amount, tax, rows: [], unreadable: [] },
+        },
+      };
+
+      expect(discrepancyFinding(line, tolerance).summary).toBe(
+        `[R-01] ${label} mismatch for Party, FY 2023-24: ${details}`,
+      );
+    },
+  );
+
   it("reconciles deterministically and asks the model only to explain the differences", async () => {
     const { orchestrator, mock, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
       tasks: [{ id: "rec", role: "reconciliation" }],
@@ -24,7 +85,7 @@ describe("reconciliation handler", () => {
     expect(call?.prompt).not.toContain("PF-04");
     expect(mismatch).toMatchObject({
       summary:
-        "[R-03] TDS mismatch for Sunrise Consulting Pvt Ltd (DELS20002B), FY 2023-24: Return Rs 50,000 vs Ledger Rs 50,000 vs 26AS/AIS Rs 37,600",
+        "[R-03] TDS and income mismatch for Sunrise Consulting Pvt Ltd (DELS20002B), FY 2023-24: TDS: Return Rs 50,000 vs Ledger Rs 50,000 vs 26AS/AIS Rs 37,600; Income: Return Rs 5,00,000 vs Ledger Rs 5,00,000 vs 26AS/AIS Rs 3,76,000",
       severity: "high",
       confidence: "high",
       figures: [
@@ -100,6 +161,7 @@ describe("reconciliation handler", () => {
       ).size,
     );
     expect(notes?.findingIds).toEqual([mismatch?.id, totals?.id]);
+    expect(notes?.content).toContain(`**${mismatch?.summary}**`);
     expect(notes?.content).toContain("Sunrise Consulting differs by one quarter");
     expect(evidence.length).toBeGreaterThan(10);
   });
@@ -170,7 +232,7 @@ describe("reconciliation handler", () => {
     const questions = findings.flatMap((finding) => finding.openQuestions);
 
     expect(findings[0]?.summary).toBe(
-      "[R-03] TDS mismatch for Sunrise Consulting Pvt Ltd (DELS20002B), FY 2023-24: Return Rs 50,000 vs 26AS/AIS Rs 37,600",
+      "[R-03] TDS and income mismatch for Sunrise Consulting Pvt Ltd (DELS20002B), FY 2023-24: TDS: Return Rs 50,000 vs 26AS/AIS Rs 37,600; Income: Return Rs 5,00,000 vs 26AS/AIS Rs 3,76,000",
     );
     expect(questions).toEqual(
       expect.arrayContaining([
