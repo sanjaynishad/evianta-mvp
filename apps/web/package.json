@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@evianta/core": "workspace:*",
+    "@evianta/env": "workspace:*",
     "@formkit/auto-animate": "^0.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -25,6 +26,7 @@
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-resizable-panels": "^4.14.5",
+    "recharts": "^3.10.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^2.6.1"
   },

@@ -20,9 +20,16 @@ export const port = Number(process.env.PORT ?? 8080);
 
 export const gcsBucket = process.env.GCS_BUCKET?.trim() ?? "";
 
-export const usageViewPath = (process.env.EVIANTA_USAGE_VIEW_PATH ?? "")
-  .trim()
-  .replace(/^\/+|\/+$/g, "");
+export function normalizeUsageViewPath(value: string | undefined): string {
+  return (value ?? "").trim().replace(/^\/+|\/+$/g, "");
+}
+
+export const usageViewPath = normalizeUsageViewPath(process.env.EVIANTA_USAGE_VIEW_PATH);
+
+// Read per call so a prebuilt web server image can be configured at deploy time.
+export function getUsageViewPath(): string {
+  return normalizeUsageViewPath(process.env.EVIANTA_USAGE_VIEW_PATH);
+}
 
 export const firestoreEmulatorHost = process.env.FIRESTORE_EMULATOR_HOST?.trim() ?? "";
 

@@ -42,6 +42,12 @@ describe("chartSpecSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts every supported chart type", () => {
+    for (const type of ["bar", "line", "area"] as const) {
+      expect(chartSpecSchema.parse({ ...monthlySales, type }).type).toBe(type);
+    }
+  });
+
   it("rejects an unknown chart type", () => {
     expect(chartSpecSchema.safeParse({ ...monthlySales, type: "radar" }).success).toBe(false);
   });

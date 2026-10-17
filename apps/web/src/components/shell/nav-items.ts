@@ -1,4 +1,4 @@
-import { FolderKanban, Palette, type LucideIcon } from "lucide-react";
+import { FilePlus2, FolderKanban, Palette, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -6,7 +6,10 @@ export interface NavItem {
   icon: LucideIcon;
 }
 
-export const primaryNavItems: NavItem[] = [{ href: "/", label: "Cases", icon: FolderKanban }];
+export const primaryNavItems: NavItem[] = [
+  { href: "/", label: "Cases", icon: FolderKanban },
+  { href: "/cases/new", label: "New case", icon: FilePlus2 },
+];
 
 export const secondaryNavItems: NavItem[] = [
   { href: "/design", label: "Design system", icon: Palette },
