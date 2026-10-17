@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { failedCaseId, failedCaseState, failedRunEvents, fixtureFailure } from "@/fixtures";
 import { failedRunMessage } from "@/fixtures/run-events";
+import { toast } from "@/components/ui/sonner";
 import { casePlannedUploadMessage } from "@/hooks/use-case-workspace";
 import {
   createTestDataSource,
@@ -35,7 +36,10 @@ describe("CaseWorkspace", () => {
       await screen.findByRole("heading", { level: 1, name: /ITR intimation 143\(1\)\(a\)/ }),
     ).toBeInTheDocument();
     expect(screen.getByRole("note")).toHaveTextContent("Fixture mode");
-    expect(screen.getByRole("region", { name: "Read-only sample" })).toBeInTheDocument();
+    const banner = screen.getByRole("region", { name: "Read-only sample" });
+    expect(banner).toHaveTextContent(
+      "Try this case to run it and edit the results in your own copy. Start a new case to use your own documents.",
+    );
     expect(screen.queryByRole("button", { name: /Run case/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /12,400 gap is TDS/ })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Draft response" })).toBeInTheDocument();
@@ -72,6 +76,7 @@ describe("CaseWorkspace", () => {
   });
 
   it("copies a sample with Try this case", async () => {
+    const success = vi.spyOn(toast, "success");
     renderWithDataSource(<CaseWorkspace caseId="sample-msme-payment" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Try this case" }));
@@ -79,6 +84,11 @@ describe("CaseWorkspace", () => {
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith(expect.stringMatching(/^\/cases\/case-/)),
     );
+    expect(success).toHaveBeenCalledWith("Copied to your cases", {
+      description:
+        "You can run this copy and edit its results. Start a new case to use your own documents.",
+    });
+    success.mockRestore();
   });
 
   it(

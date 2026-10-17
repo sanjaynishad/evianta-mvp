@@ -18,7 +18,8 @@ export function useTryCase() {
       try {
         const copy = await dataSource.copyCaseAsync(caseId);
         toast.success("Copied to your cases", {
-          description: "You can upload, run, and edit this copy.",
+          description:
+            "You can run this copy and edit its results. Start a new case to use your own documents.",
         });
         router.push(`/cases/${encodeURIComponent(copy.id)}`);
       } catch (error) {
