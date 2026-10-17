@@ -1,3 +1,4 @@
+import { currencyMarker, type CurrencyCode } from "./cells.js";
 import { formatMetricValue, type Currency } from "./format.js";
 import type { Metric, MetricUnit } from "./metrics.js";
 import { roundTo } from "./stats.js";
@@ -6,7 +7,7 @@ const PLACEHOLDER = /\{\{\s*([^{}\s]+)\s*\}\}/g;
 // A number not glued to a word, identifier, or date, with its sign, currency mark, and percent sign,
 // for example "-40.5%", "₹92,000", "Rs. 1,200", or ".5%".
 const LITERAL_NUMBER =
-  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)(-\s?)?(₹|rs\.?|inr|\$|€|£)?\s?(-)?(\d(?:[\d,]*\d)?(?:\.\d+)?|\.\d+)(%)?(?![\p{L}\p{N}_])/giu;
+  /(?<![\p{L}\p{N}_./:])(?<![\p{L}\p{N}]-)(-\s?)?(₹|rs\.?|inr|usd|eur|gbp|\$|€|£)?\s?(-)?(\d(?:[\d,]*\d)?(?:\.\d+)?|\.\d+)(%)?(?![\p{L}\p{N}_])/giu;
 const DATE_LIKE = /\b\d{4}-\d{2}(?:-\d{2})?\b|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/g;
 const MAX_FREE_INTEGER = 12;
 const MIN_YEAR = 1900;
@@ -62,6 +63,8 @@ interface LiteralNumber {
   value: number;
   negative: boolean;
   kind: "currency" | "percent" | "plain";
+  /** The denomination a currency literal names, such as USD for "$"; undefined if unrecognized. */
+  currencyCode?: CurrencyCode;
   integerLike: boolean;
   grouped: boolean;
 }
@@ -69,6 +72,7 @@ interface LiteralNumber {
 function parseLiteral(match: RegExpMatchArray): LiteralNumber | undefined {
   const [token, leadingSign, currency, innerSign, digits, percent] = match;
   const value = Number((digits ?? "").replace(/,/g, ""));
+  const currencyCode = currency ? currencyMarker(currency) : undefined;
 
   if (!Number.isFinite(value)) {
     return undefined;
@@ -79,6 +83,7 @@ function parseLiteral(match: RegExpMatchArray): LiteralNumber | undefined {
     value,
     negative: Boolean(leadingSign) !== Boolean(innerSign),
     kind: currency ? "currency" : percent ? "percent" : "plain",
+    ...(currencyCode ? { currencyCode } : {}),
     integerLike: !(digits ?? "").includes("."),
     grouped: (digits ?? "").includes(","),
   };
@@ -116,7 +121,11 @@ function matchesAllowed(literal: LiteralNumber, candidate: AllowedValue): boolea
  * Literal numbers in the text that match no computed metric of the same kind and sign. Unsigned
  * numbers may restate a negative metric ("fell 5%"); an explicit minus sign must match a negative one.
  */
-export function findUnverifiedNumbers(text: string, allowed: readonly AllowedValue[]): string[] {
+export function findUnverifiedNumbers(
+  text: string,
+  allowed: readonly AllowedValue[],
+  options: { currencyCode?: CurrencyCode } = {},
+): string[] {
   const withoutDates = text.replace(DATE_LIKE, " ");
   const unverified: string[] = [];
 
@@ -127,7 +136,11 @@ export function findUnverifiedNumbers(text: string, allowed: readonly AllowedVal
       continue;
     }
 
-    if (!allowed.some((candidate) => matchesAllowed(literal, candidate))) {
+    // An amount in another denomination is never the computed figure, whatever its digits.
+    const wrongCurrency =
+      literal.kind === "currency" && literal.currencyCode !== options.currencyCode;
+
+    if (wrongCurrency || !allowed.some((candidate) => matchesAllowed(literal, candidate))) {
       unverified.push(literal.token);
     }
   }
@@ -143,13 +156,22 @@ export function renderNarrative(
   text: string,
   field: string,
   metricsById: ReadonlyMap<string, Metric>,
-  options: { currency?: Currency; allowed?: readonly AllowedValue[] } = {},
+  options: {
+    currency?: Currency;
+    /** The data's denomination; currency literals in any other one are flagged. */
+    currencyCode?: CurrencyCode;
+    allowed?: readonly AllowedValue[];
+  } = {},
 ): RenderedNarrative {
   const issues: NarrativeIssue[] = [];
   const metricIds: string[] = [];
   const allowed = options.allowed ?? allowedNarrativeValues(metricsById.values());
 
-  for (const token of findUnverifiedNumbers(text.replace(PLACEHOLDER, " "), allowed)) {
+  const currencyCode = options.currencyCode ?? options.currency;
+
+  for (const token of findUnverifiedNumbers(text.replace(PLACEHOLDER, " "), allowed, {
+    ...(currencyCode ? { currencyCode } : {}),
+  })) {
     issues.push({
       kind: "unverified-number",
       field,

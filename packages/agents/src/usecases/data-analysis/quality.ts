@@ -8,7 +8,12 @@ import {
   type CurrencyCode,
   type ParsedDate,
 } from "./cells.js";
-import type { ColumnProfile, ColumnProfiling, DatasetRoles } from "./columns.js";
+import {
+  duplicateRowIndexes,
+  type ColumnProfile,
+  type ColumnProfiling,
+  type DatasetRoles,
+} from "./columns.js";
 import { rowLocations } from "./evidence.js";
 import { createIdAllocator, slugify } from "./ids.js";
 import { median } from "./stats.js";
@@ -178,18 +183,7 @@ export function runDataQualityChecks(input: DataQualityInput): DataQualityIssue[
     });
   };
 
-  const seen = new Map<string, number>();
-  const duplicates: number[] = [];
-
-  for (const row of rows) {
-    const key = JSON.stringify((table.rows[row] ?? []).map((cell) => cellText(cell)));
-
-    if (seen.has(key)) {
-      duplicates.push(row);
-    } else {
-      seen.set(key, row);
-    }
-  }
+  const duplicates = duplicateRowIndexes(table, rows);
 
   if (duplicates.length > 0) {
     add({

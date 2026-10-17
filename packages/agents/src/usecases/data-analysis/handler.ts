@@ -587,6 +587,7 @@ export function buildDataAnalystTaskOutput(
   const render = (text: string, field: string) => {
     const rendered = renderNarrative(text, field, analysis.metricsById, {
       ...(analysis.currency ? { currency: analysis.currency } : {}),
+      ...(analysis.currencyCode ? { currencyCode: analysis.currencyCode } : {}),
       allowed,
     });
 

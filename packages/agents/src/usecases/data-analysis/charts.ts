@@ -3,7 +3,7 @@ import { chartSpecSchema, type ChartSpec, type ChartValueFormat } from "@evianta
 import type { DataAnalysis } from "./analysis.js";
 import { describeLocation } from "./evidence.js";
 import { createIdAllocator, slugify } from "./ids.js";
-import { roundTo } from "./stats.js";
+import { decimalSum, roundTo } from "./stats.js";
 
 export const MAX_SEGMENT_CHARTS = 3;
 export const MAX_PIE_SLICES = 6;
@@ -123,9 +123,17 @@ export function buildDashboardCharts(analysis: DataAnalysis): DashboardChart[] {
     const data = shown.map((segment) => ({ segment: segment.label, total: segment.total }));
 
     if (rest.length > 0) {
+      const shownLabels = new Set(shown.map((segment) => segment.label));
+      let remainderLabel = OTHER_SEGMENT;
+
+      // A real category may itself be called "Other"; the remainder slice must not share its label.
+      for (let suffix = 2; shownLabels.has(remainderLabel); suffix += 1) {
+        remainderLabel = `${OTHER_SEGMENT} (${suffix})`;
+      }
+
       data.push({
-        segment: OTHER_SEGMENT,
-        total: roundTo(rest.reduce((sum, segment) => sum + segment.total, 0)),
+        segment: remainderLabel,
+        total: roundTo(decimalSum(rest.map((segment) => segment.total))),
       });
     }
 

@@ -1,4 +1,4 @@
-import { robustZScores, roundTo, theilSenFit, type RobustScoreMethod } from "./stats.js";
+import { maxOf, robustZScores, roundTo, theilSenFit, type RobustScoreMethod } from "./stats.js";
 
 export const ANOMALY_SCORE_THRESHOLD = 3.5;
 export const MIN_PERIODS_FOR_ANOMALIES = 4;
@@ -57,7 +57,11 @@ export function screenPeriodAnomalies(
   const expected = values.map((_value, index) => fit.intercept + fit.slope * index);
   const residuals = values.map((value, index) => value - (expected[index] as number));
   // Residuals below this are floating-point noise from the fit, not real deviations.
-  const noise = Math.max(...values.map((value) => Math.abs(value))) * RESIDUAL_NOISE_FACTOR;
+  const noise =
+    maxOf(
+      values.map((value) => Math.abs(value)),
+      0,
+    ) * RESIDUAL_NOISE_FACTOR;
   const robust = robustZScores(
     residuals.map((residual) => (Math.abs(residual) <= noise ? 0 : residual)),
   );

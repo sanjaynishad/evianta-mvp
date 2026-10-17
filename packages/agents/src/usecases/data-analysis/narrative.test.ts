@@ -55,6 +55,7 @@ describe("findUnverifiedNumbers", () => {
       findUnverifiedNumbers(
         "Total ₹92,000 (92,000) in 2024; share 40.43% (about 40%); fell 53.3% or -53.33% in 2024-05 across 4 regions on 15/03/2024.",
         allowed,
+        { currencyCode: "INR" },
       ),
     ).toEqual([]);
   });
@@ -75,7 +76,25 @@ describe("findUnverifiedNumbers", () => {
       findUnverifiedNumbers(
         "Revenue was -92,000, or ₹2024, or Rs. 50, or 92,000%, while margin was .5% and -50%.",
         allowed,
+        { currencyCode: "INR" },
       ),
     ).toEqual(["-92,000", "₹2024", "Rs. 50", "92,000%", ".5%", "-50%"]);
+  });
+
+  it("flags amounts written in a denomination other than the data's", () => {
+    const text = "Sales were $92,000, £92,000, €92,000, USD 92,000, or ₹92,000.";
+
+    expect(findUnverifiedNumbers(text, allowed, { currencyCode: "INR" })).toEqual([
+      "$92,000",
+      "£92,000",
+      "€92,000",
+      "USD 92,000",
+    ]);
+    expect(findUnverifiedNumbers(text, allowed, { currencyCode: "USD" })).toEqual([
+      "£92,000",
+      "€92,000",
+      "₹92,000",
+    ]);
+    expect(findUnverifiedNumbers("Sales were $92,000.", allowed)).toEqual(["$92,000"]);
   });
 });

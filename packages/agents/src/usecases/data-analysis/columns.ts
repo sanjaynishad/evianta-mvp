@@ -66,6 +66,27 @@ export function blankRowIndexes(table: Pick<ExtractedTable, "rows">): number[] {
   );
 }
 
+/** Rows that exactly repeat an earlier row (all cells equal), in row order. */
+export function duplicateRowIndexes(
+  table: Pick<ExtractedTable, "rows">,
+  rows: readonly number[],
+): number[] {
+  const seen = new Set<string>();
+  const duplicates: number[] = [];
+
+  for (const row of rows) {
+    const key = JSON.stringify((table.rows[row] ?? []).map((cell) => cellText(cell)));
+
+    if (seen.has(key)) {
+      duplicates.push(row);
+    } else {
+      seen.add(key);
+    }
+  }
+
+  return duplicates;
+}
+
 function inferRole(profile: Omit<ColumnProfile, "role">, rowCount: number): ColumnRole {
   const name = normalizedName(profile.name);
 

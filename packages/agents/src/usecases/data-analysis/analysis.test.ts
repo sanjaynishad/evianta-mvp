@@ -16,6 +16,7 @@ import {
   selectAnalysisSource,
   type DataAnalysis,
 } from "./analysis.js";
+import { buildDashboardCharts } from "./charts.js";
 
 async function csvTableAsync(csv = salesCsv()): Promise<ExtractedTable> {
   const buffer = new TextEncoder().encode(csv);
@@ -526,6 +527,52 @@ describe("analyzeTable", () => {
         ),
       ),
     ).toBeLessThan(400);
+  });
+  it("infers roles from unique rows so repeats cannot change the amount column", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "repeats.csv",
+      table: await csvTableAsync("Amount\n100\n200\npending\npending\npending\npending"),
+    });
+
+    expect(analysis.roles.amount.name).toBe("Amount");
+    expect(metricValue(analysis, "total-amount")).toBe(300);
+    expect(analysis.issues.map((item) => [item.kind, item.rows])).toEqual([
+      ["duplicate-rows", [3, 4, 5]],
+      ["type-mismatch", [2, 3, 4, 5]],
+    ]);
+  });
+
+  it("analyzes a very large table without spreading values into function arguments", () => {
+    const rowCount = 200_000;
+    const table: ExtractedTable = {
+      name: "large",
+      columns: [{ name: "Amount", type: "number" }],
+      rows: Array.from({ length: rowCount }, (_unused, index) => [index + 0.25]),
+    };
+    const analysis = analyzeTable({ documentId: "doc", documentName: "large.csv", table });
+
+    expect(metricValue(analysis, "rows-with-amount")).toBe(rowCount);
+    expect(metricValue(analysis, "total-amount")).toBe(
+      ((rowCount - 1) * rowCount) / 2 + rowCount * 0.25,
+    );
+  }, 60_000);
+
+  it("keeps the pie remainder label distinct from a real Other category", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "other.csv",
+      table: await csvTableAsync(
+        ["Region,Amount", "Other,90", "A,80", "B,70", "C,60", "D,50", "E,40", "F,30", "A,1"].join(
+          "\n",
+        ),
+      ),
+    });
+    const pie = buildDashboardCharts(analysis).find((chart) => chart.spec.type === "pie");
+    const labels = (pie?.spec.data ?? []).map((datum) => datum.segment);
+
+    expect(labels).toEqual(["Other", "A", "B", "C", "D", "Other (2)"]);
+    expect(new Set(labels).size).toBe(labels.length);
   });
   it("fails clearly when a table has no amount column", async () => {
     const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");

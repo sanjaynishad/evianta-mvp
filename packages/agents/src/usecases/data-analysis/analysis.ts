@@ -5,12 +5,22 @@ import {
   type AnomalyScreeningStatus,
   type PeriodAnomaly,
 } from "./anomalies.js";
-import { cellText, isMissingCell, parseNumericCell, type ParsedDate } from "./cells.js";
+import {
+  cellText,
+  isMissingCell,
+  parseNumericCell,
+  resolveDateColumn,
+  type CurrencyCode,
+  type DateColumnResolution,
+  type ParsedDate,
+} from "./cells.js";
 import {
   blankRowIndexes,
+  duplicateRowIndexes,
   profileColumns,
   selectRoles,
   type ColumnProfile,
+  type ColumnProfiling,
   type DatasetRoles,
 } from "./columns.js";
 import { columnLocation } from "./evidence.js";
@@ -74,6 +84,8 @@ export interface DataAnalysis {
   columns: ColumnProfile[];
   roles: AnalysisRoles;
   currency?: Currency;
+  /** The amount column's denomination when one is stated or marked, including non-INR ones. */
+  currencyCode?: CurrencyCode;
   /** Data rows in the table, excluding the header. */
   rowCount: number;
   blankRows: number[];
@@ -112,12 +124,37 @@ function sourceLabel(source: TabularSource): string {
     : `${source.table.name} in ${source.documentName}`;
 }
 
-/** Profiles a table without computing metrics; returns undefined when it has no amount column. */
+/** Profiles a table without computing metrics; `roles.amount` is unset when it has no amount column. */
 export function profileTable(table: ExtractedTable) {
   const blankRows = new Set(blankRowIndexes(table));
   const rows = table.rows.map((_row, index) => index).filter((index) => !blankRows.has(index));
-  const profiling = profileColumns(table, rows);
-  const roles = selectRoles(profiling.columns);
+  const repeats = new Set(duplicateRowIndexes(table, rows));
+  // Roles come from unique observations so exact repeats cannot sway inference; the reported
+  // column profiles and the date mapping still cover every row for the quality checks.
+  const unique = profileColumns(
+    table,
+    rows.filter((row) => !repeats.has(row)),
+  );
+  const roles = selectRoles(unique.columns);
+  const all = profileColumns(table, rows);
+  const dateColumns = new Map<number, DateColumnResolution>();
+
+  if (roles.date) {
+    const dateIndex = roles.date.index;
+
+    dateColumns.set(
+      dateIndex,
+      resolveDateColumn(rows.map((row) => table.rows[row]?.[dateIndex] ?? null)),
+    );
+  }
+
+  const profiling: ColumnProfiling = {
+    columns: all.columns.map((column, index) => ({
+      ...column,
+      role: unique.columns[index]?.role ?? column.role,
+    })),
+    dateColumns,
+  };
 
   return { rows, blankRows: [...blankRows], profiling, roles };
 }
@@ -334,6 +371,7 @@ export function analyzeTable(source: TabularSource, options: AnalyzeOptions = {}
     columns: profiling.columns,
     roles: analysisRoles,
     ...(currency ? { currency } : {}),
+    ...(baseCurrency ? { currencyCode: baseCurrency } : {}),
     rowCount: table.rows.length,
     blankRows,
     analyzedRows,

@@ -15,6 +15,19 @@ export function roundTo(value: number, decimals = 2): number {
   return Math.sign(value) * shiftDecimal(rounded, -decimals) + 0;
 }
 
+/** Largest value, or the fallback for an empty list; iterative so large inputs cannot overflow the stack. */
+export function maxOf(values: Iterable<number>, fallback = Number.NEGATIVE_INFINITY): number {
+  let largest = fallback;
+
+  for (const value of values) {
+    if (value > largest) {
+      largest = value;
+    }
+  }
+
+  return largest;
+}
+
 export function sum(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
@@ -23,6 +36,10 @@ export function sum(values: readonly number[]): number {
 export const MAX_EXACT_DECIMAL_PLACES = 12;
 
 function decimalPlaces(value: number): number {
+  if (Number.isInteger(value)) {
+    return 0;
+  }
+
   const [mantissa = "", exponent = "0"] = value.toExponential().split("e");
   const fraction = mantissa.split(".")[1] ?? "";
 
@@ -34,14 +51,39 @@ function decimalPlaces(value: number): number {
  * 2.2699999999999996 and derived averages round as a person would expect.
  */
 export function decimalSum(values: readonly number[]): number {
-  const finite = values.filter((value) => Number.isFinite(value));
-  const places = Math.max(0, ...finite.map(decimalPlaces));
+  let places = 0;
 
-  if (finite.length !== values.length || places > MAX_EXACT_DECIMAL_PLACES) {
+  for (const value of values) {
+    if (!Number.isFinite(value)) {
+      return sum(values);
+    }
+
+    places = Math.max(places, decimalPlaces(value));
+  }
+
+  if (places > MAX_EXACT_DECIMAL_PLACES) {
     return sum(values);
   }
 
-  const total = finite.reduce(
+  const factor = 10 ** places;
+  let total = 0;
+
+  for (const value of values) {
+    // Rounding the scaled value is exact while it stays a safe integer; otherwise use BigInt.
+    const scaled = Math.round(value * factor);
+
+    total += scaled;
+
+    if (!Number.isSafeInteger(scaled) || !Number.isSafeInteger(total)) {
+      return bigDecimalSum(values, places);
+    }
+  }
+
+  return shiftDecimal(total, -places);
+}
+
+function bigDecimalSum(values: readonly number[], places: number): number {
+  const total = values.reduce(
     (accumulated, value) => accumulated + BigInt(Math.round(shiftDecimal(value, places))),
     BigInt(0),
   );
