@@ -7,6 +7,7 @@ import { buildTable, uniqueName, type DateOrder, type RawCell } from "./tabular.
 import { DEFAULT_PAGE_CHARS, pageIndexAt, paginateText, type TextParseResult } from "./text.js";
 
 export const MAX_DOCX_PART_BYTES = 64 * 1024 * 1024;
+export const MAX_DOCX_XML_NODES = 100_000;
 const MAX_ZIP_ENTRIES = 10_000;
 const MAX_XML_DEPTH = 256;
 const MAX_GRID_SPAN = 64;
@@ -162,6 +163,7 @@ const TEXT_ELEMENTS = new Set(["w:t"]);
 function parseXml(xml: string): XmlElement {
   const root: XmlElement = { name: "#root", attributes: {}, children: [], text: "" };
   const stack: XmlElement[] = [root];
+  let nodeCount = 0;
   let index = 0;
 
   const skipPast = (marker: string, from: number) => {
@@ -222,6 +224,11 @@ function parseXml(xml: string): XmlElement {
 
       stack.pop();
     } else {
+      if (nodeCount >= MAX_DOCX_XML_NODES) {
+        throw new RangeError(`The document XML has more than ${MAX_DOCX_XML_NODES} elements.`);
+      }
+
+      nodeCount += 1;
       const selfClosing = tag.endsWith("/");
       const body = selfClosing ? tag.slice(0, -1) : tag;
       const name = /^[^\s/>]+/.exec(body)?.[0];

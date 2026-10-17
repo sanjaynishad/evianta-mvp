@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createDocx, createZip, wordDocumentXml } from "./__fixtures__/fixtures.js";
-import { parseDocx } from "./docx.js";
+import { MAX_DOCX_XML_NODES, parseDocx } from "./docx.js";
 
 const options = { dateOrder: "dmy" as const };
 
@@ -234,6 +234,37 @@ describe("parseDocx", () => {
         },
       ),
     ).toThrow(RangeError);
+  });
+
+  it("accepts a document at the XML node limit", () => {
+    const body = "<w:r/>".repeat(MAX_DOCX_XML_NODES - 3);
+
+    expect(parseDocx(createDocx(body), options).pages).toEqual([""]);
+  });
+
+  it.each(["<w:r/>", "<w:r></w:r>"])(
+    "rejects shallow XML exceeding the node limit with %s elements",
+    (element) => {
+      const docx = createDocx(element.repeat(MAX_DOCX_XML_NODES - 2));
+
+      expect(() => parseDocx(docx, options)).toThrow(
+        new RangeError(`The document XML has more than ${MAX_DOCX_XML_NODES} elements.`),
+      );
+    },
+  );
+
+  it("rejects package relationships exceeding the XML node limit", () => {
+    const docx = createZip([
+      {
+        name: "_rels/.rels",
+        data: `<Relationships>${"<Relationship/>".repeat(MAX_DOCX_XML_NODES)}</Relationships>`,
+      },
+      { name: "word/document.xml", data: wordDocumentXml(paragraph(run("Main part"))) },
+    ]);
+
+    expect(() => parseDocx(docx, options)).toThrow(
+      new RangeError(`The document XML has more than ${MAX_DOCX_XML_NODES} elements.`),
+    );
   });
 
   it("rejects archives that are not Word documents or are malformed", () => {
