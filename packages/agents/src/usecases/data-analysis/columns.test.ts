@@ -106,4 +106,21 @@ describe("column roles", () => {
     expect(roles.amount?.name).toBe("Amount");
     expect(roles.categories.map((column) => column.name)).toEqual(["Sales Region"]);
   });
+
+  it("omits numeric categories above the cardinality limit without selecting them as amounts", () => {
+    const rows = Array.from({ length: 40_000 }, (_unused, index) => [
+      100_000 + index,
+      200,
+    ]) as ExtractedTable["rows"];
+    const data = table(["Sales Region", "Amount"], rows);
+    const { columns } = profileColumns(
+      data,
+      rows.map((_row, index) => index),
+    );
+    const roles = selectRoles(columns);
+
+    expect(columns[0]?.role).toBe("category");
+    expect(roles.amount?.name).toBe("Amount");
+    expect(roles.categories).toEqual([]);
+  });
 });
