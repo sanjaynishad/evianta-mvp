@@ -1,0 +1,620 @@
+import type { ExtractedTable } from "@evianta/core";
+import { describe, expect, it } from "vitest";
+
+import {
+  CSV_MIME,
+  extractFixtureAsync,
+  fixtureMetadata,
+  SALES_EXPECTED,
+  salesCsv,
+  salesWorkbook,
+  XLSX_MIME,
+} from "../../testing/salesFixture.js";
+import {
+  analyzeTable,
+  DataAnalysisError,
+  selectAnalysisSource,
+  type DataAnalysis,
+} from "./analysis.js";
+import { buildDashboardCharts } from "./charts.js";
+
+async function csvTableAsync(csv = salesCsv()): Promise<ExtractedTable> {
+  const buffer = new TextEncoder().encode(csv);
+  const extraction = await extractFixtureAsync(
+    buffer,
+    fixtureMetadata("doc-csv", "sales.csv", CSV_MIME, buffer.byteLength),
+  );
+
+  return extraction.tables[0] as ExtractedTable;
+}
+
+async function xlsxTableAsync(): Promise<ExtractedTable> {
+  const buffer = salesWorkbook();
+  const extraction = await extractFixtureAsync(
+    buffer,
+    fixtureMetadata("doc-xlsx", "sales.xlsx", XLSX_MIME, buffer.byteLength),
+  );
+
+  return extraction.tables[0] as ExtractedTable;
+}
+
+function metricValue(analysis: DataAnalysis, id: string): number | undefined {
+  return analysis.metricsById.get(id)?.value;
+}
+
+function issue(analysis: DataAnalysis, id: string) {
+  return analysis.issues.find((candidate) => candidate.id === id);
+}
+
+describe("ingested sales fixtures", () => {
+  it("parses the CSV with mixed types kept as text", async () => {
+    const table = await csvTableAsync();
+
+    expect(table.range).toBe("A1:G29");
+    expect(table.rows).toHaveLength(SALES_EXPECTED.dataRows);
+    expect(table.columns.map((column) => column.type)).toEqual([
+      "string",
+      "string",
+      "string",
+      "string",
+      "string",
+      "number",
+      "string",
+    ]);
+  });
+
+  it("parses the Excel variant into the same shape on a named sheet", async () => {
+    const table = await xlsxTableAsync();
+
+    expect(table.sheet).toBe("Sales");
+    expect(table.range).toBe("A1:G29");
+    expect(table.rows).toHaveLength(SALES_EXPECTED.dataRows);
+    expect(table.columns[6]?.type).toBe("string");
+  });
+});
+
+describe("analyzeTable", () => {
+  it("infers column roles", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc-csv",
+      documentName: "sales.csv",
+      table: await csvTableAsync(),
+    });
+
+    expect(analysis.columns.map((column) => column.role)).toEqual([
+      "identifier",
+      "date",
+      "category",
+      "category",
+      "category",
+      "quantity",
+      "amount",
+    ]);
+    expect(analysis.roles.amount.name).toBe("Amount (INR)");
+    expect(analysis.roles.date?.name).toBe("Order Date");
+    expect(analysis.roles.categories.map((column) => column.name)).toEqual([
+      "Region",
+      "Product",
+      "Channel",
+    ]);
+    expect(analysis.currency).toBe("INR");
+  });
+
+  it("computes exact metrics, excluding duplicates and non-numeric amounts", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc-csv",
+      documentName: "sales.csv",
+      table: await csvTableAsync(),
+    });
+
+    expect(analysis.analyzedRows).toHaveLength(SALES_EXPECTED.analyzedRows);
+    expect(metricValue(analysis, "rows-analyzed")).toBe(SALES_EXPECTED.analyzedRows);
+    expect(metricValue(analysis, "rows-with-amount")).toBe(SALES_EXPECTED.rowsWithAmount);
+    expect(metricValue(analysis, "total-amount")).toBe(SALES_EXPECTED.totalAmount);
+    expect(metricValue(analysis, "average-amount")).toBe(SALES_EXPECTED.averageAmount);
+    expect(metricValue(analysis, "total-quantity")).toBe(SALES_EXPECTED.totalQuantity);
+    expect(analysis.periods.map((period) => [period.period, period.total])).toEqual(
+      SALES_EXPECTED.monthlyTotals,
+    );
+    expect(
+      analysis.periods.flatMap((period) =>
+        period.changePct === undefined ? [] : [period.changePct],
+      ),
+    ).toEqual(SALES_EXPECTED.monthlyChangePct);
+    expect(metricValue(analysis, "period-2024-04-change-pct")).toBe(150);
+    expect(metricValue(analysis, "growth-first-to-last-pct")).toBe(
+      SALES_EXPECTED.growthFirstToLastPct,
+    );
+    expect(metricValue(analysis, "average-monthly-change-pct")).toBe(24.58);
+    expect(metricValue(analysis, "trend-slope-per-month")).toBe(SALES_EXPECTED.trendSlopePerMonth);
+    expect(metricValue(analysis, "period-count")).toBe(6);
+  });
+
+  it("rounds averages from exact decimal totals", async () => {
+    const table = await csvTableAsync(
+      ["Amount", "0.01", "0.02", "0.03", "0.04", "0.05", "0.06"].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "amounts.csv", table });
+
+    expect(metricValue(analysis, "total-amount")).toBe(0.21);
+    expect(metricValue(analysis, "average-amount")).toBe(0.04);
+  });
+
+  it("selects the monetary amount instead of a numeric sales-region code", async () => {
+    const table = await csvTableAsync("Sales Region,Amount\n101,100\n102,200");
+    const analysis = analyzeTable({ documentId: "doc", documentName: "regions.csv", table });
+
+    expect(analysis.roles.amount.name).toBe("Amount");
+    expect(analysis.roles.categories.map((column) => column.name)).toEqual(["Sales Region"]);
+    expect(metricValue(analysis, "total-amount")).toBe(300);
+  });
+
+  it("ranks segments with shares and groups blanks as Unassigned", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc-csv",
+      documentName: "sales.csv",
+      table: await csvTableAsync(),
+    });
+    const region = analysis.segments[0];
+
+    expect(region?.column).toBe("Region");
+    expect(
+      region?.segments.map((segment) => [segment.label, segment.total, segment.sharePct]),
+    ).toEqual(SALES_EXPECTED.regionTotals);
+    expect(region?.top?.label).toBe("South");
+    expect(region?.bottom?.label).toBe("East");
+    expect(metricValue(analysis, "segment-region-south-total")).toBe(37200);
+    expect(metricValue(analysis, "segment-region-south-share-pct")).toBe(40.43);
+    expect(metricValue(analysis, "segment-region-unassigned-total")).toBe(2500);
+    expect(analysis.segments[1]?.segments.map((segment) => [segment.label, segment.total])).toEqual(
+      [
+        ["Widget", 41800],
+        ["Gadget", 37200],
+        ["Gizmo", 13000],
+      ],
+    );
+  });
+
+  it("reports each data-quality issue with cell-range evidence", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc-csv",
+      documentName: "sales.csv",
+      table: await csvTableAsync(),
+    });
+
+    expect(analysis.issues.map((item) => item.id)).toEqual([
+      "dq-duplicate-rows",
+      "dq-missing-values-region",
+      "dq-missing-values-amount-inr",
+      "dq-type-mismatch-amount-inr",
+      "dq-negative-values-quantity",
+      "dq-negative-values-amount-inr",
+      "dq-inconsistent-date-formats-order-date",
+    ]);
+    expect(issue(analysis, "dq-duplicate-rows")).toMatchObject({
+      severity: "medium",
+      rows: [25],
+      locations: [{ cellRange: "A27:G27", rowRange: { start: 27, end: 27 } }],
+    });
+    expect(issue(analysis, "dq-missing-values-region")?.locations).toEqual([
+      { cellRange: "C25", rowRange: { start: 25, end: 25 } },
+    ]);
+    expect(issue(analysis, "dq-missing-values-amount-inr")?.locations[0]?.cellRange).toBe("G29");
+    expect(issue(analysis, "dq-type-mismatch-amount-inr")).toMatchObject({
+      examples: ["pending"],
+      locations: [{ cellRange: "G28" }],
+    });
+    expect(issue(analysis, "dq-negative-values-amount-inr")?.locations[0]?.cellRange).toBe("G22");
+    expect(issue(analysis, "dq-negative-values-quantity")?.severity).toBe("low");
+    expect(issue(analysis, "dq-inconsistent-date-formats-order-date")).toMatchObject({
+      rows: [8, 9],
+      locations: [{ cellRange: "B10:B11", rowRange: { start: 10, end: 11 } }],
+    });
+    expect(issue(analysis, "dq-inconsistent-date-formats-order-date")?.message).toContain(
+      "yyyy-mm-dd (26), dd/mm/yyyy (1), mm/dd/yyyy (1)",
+    );
+    expect(metricValue(analysis, "dq-duplicate-rows-rows")).toBe(1);
+  });
+
+  it("reports missing values in unused source columns", async () => {
+    const table = await csvTableAsync(
+      ["Order ID,Region,Amount", "A-1,,100", "A-2,,200"].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "orders.csv", table });
+    const missingRegion = issue(analysis, "dq-missing-values-region");
+
+    expect(missingRegion).toMatchObject({
+      rows: [0, 1],
+      locations: [{ cellRange: "B2:B3" }],
+      treatment: "Region was not used in the analysis.",
+    });
+  });
+
+  it("flags the April spike against the robust trend and nothing else", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc-csv",
+      documentName: "sales.csv",
+      table: await csvTableAsync(),
+    });
+
+    expect(analysis.anomalies).toHaveLength(1);
+    expect(analysis.anomalies[0]).toMatchObject({
+      ...SALES_EXPECTED.anomaly,
+      direction: "spike",
+      id: "anomaly-2024-04",
+    });
+    expect(analysis.anomalies[0]?.score).toBeGreaterThan(3.5);
+    expect(metricValue(analysis, "anomaly-2024-04-expected")).toBe(13000);
+    expect(metricValue(analysis, "anomaly-2024-04-deviation-pct")).toBe(130.77);
+  });
+
+  it("gives the same results for the Excel variant, with sheet-qualified locations", async () => {
+    const csv = analyzeTable({
+      documentId: "doc-csv",
+      documentName: "sales.csv",
+      table: await csvTableAsync(),
+    });
+    const xlsx = analyzeTable({
+      documentId: "doc-xlsx",
+      documentName: "sales.xlsx",
+      table: await xlsxTableAsync(),
+    });
+
+    expect(xlsx.metrics.map(({ id, value }) => [id, value])).toEqual(
+      csv.metrics.map(({ id, value }) => [id, value]),
+    );
+    expect(xlsx.issues.map((item) => [item.id, item.rows])).toEqual(
+      csv.issues.map((item) => [item.id, item.rows]),
+    );
+    expect(issue(xlsx, "dq-type-mismatch-amount-inr")?.locations[0]).toEqual({
+      sheet: "Sales",
+      cellRange: "G28",
+      rowRange: { start: 28, end: 28 },
+    });
+    expect(xlsx.locations.amount).toMatchObject({ sheet: "Sales", cellRange: "G2:G29" });
+  });
+
+  it("flags out-of-range and unreadable dates and keeps them out of the trend", async () => {
+    const table = await csvTableAsync(
+      [
+        "Date,Amount",
+        "2024-01-10,100",
+        "2024-02-10,110",
+        "2024-03-10,120",
+        "1924-03-11,500",
+        "someday,50",
+      ].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "small.csv", table });
+
+    expect(analysis.issues.map((item) => [item.id, item.rows])).toEqual([
+      ["dq-type-mismatch-date", [4]],
+      ["dq-out-of-range-date", [3]],
+    ]);
+    expect(analysis.periods.map((period) => period.period)).toEqual([
+      "2024-01",
+      "2024-02",
+      "2024-03",
+    ]);
+    expect(metricValue(analysis, "total-amount")).toBe(880);
+  });
+
+  it("asks to confirm zero-filled months and the order chosen for ambiguous dates", async () => {
+    const table = await csvTableAsync(
+      ["Date,Amount", "2024-01-10,100", "15/03/2024,120", "03/22/2024,50", "05/04/2024,70"].join(
+        "\n",
+      ),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "gaps.csv", table });
+
+    expect(analysis.periods.map((period) => [period.period, period.total])).toEqual([
+      ["2024-01", 100],
+      ["2024-02", 0],
+      ["2024-03", 170],
+      ["2024-04", 70],
+    ]);
+    expect(analysis.questions.map((question) => question.severity)).toEqual(["medium", "medium"]);
+    expect(analysis.questions[0]?.text).toContain("day/month/year");
+    expect(analysis.questions[1]?.text).toContain("(2024-02) mean no sales");
+  });
+
+  it("gives colliding column names distinct issue ids", async () => {
+    const table = await csvTableAsync(
+      [
+        "Sales Region,Sales-Region,Amount",
+        "North,,10",
+        ",East,20",
+        "South,West,30",
+        "North,East,40",
+      ].join("\n"),
+    );
+    const analysis = analyzeTable({ documentId: "doc", documentName: "regions.csv", table });
+
+    expect(
+      analysis.issues.map((item) => [item.id, item.column, item.locations[0]?.cellRange]),
+    ).toEqual([
+      ["dq-missing-values-sales-region", "Sales Region", "A3"],
+      ["dq-missing-values-sales-region-2", "Sales-Region", "B2"],
+    ]);
+  });
+
+  it("rounds averages on their decimal value", async () => {
+    const positive = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n10.07\n10.08"),
+    });
+    const negative = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n-10.07\n-10.08"),
+    });
+
+    expect(metricValue(positive, "average-amount")).toBe(10.08);
+    expect(metricValue(negative, "average-amount")).toBe(-10.08);
+  });
+  it("leaves amounts in another currency out of the totals and flags them", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "fx.csv",
+      table: await csvTableAsync("Amount\n₹100\n$100\n₹50"),
+    });
+
+    expect(analysis.currency).toBe("INR");
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.map((item) => [item.id, item.rows, item.severity])).toEqual([
+      ["dq-mixed-currencies-amount", [1], "high"],
+    ]);
+  });
+
+  it("recognizes currency codes written against the digits", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "fx.csv",
+      table: await csvTableAsync("Amount\n₹100\nUSD100\n₹50\n100usd"),
+    });
+
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.find((item) => item.kind === "mixed-currencies")?.rows).toEqual([1, 3]);
+  });
+
+  it("does not let exact repeats choose the base currency", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "fx.csv",
+      table: await csvTableAsync("Amount\n₹100\n₹50\n$200\n$200\n$200"),
+    });
+
+    expect(analysis.currency).toBe("INR");
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.map((item) => [item.kind, item.rows])).toEqual([
+      ["duplicate-rows", [3, 4]],
+      ["mixed-currencies", [2, 3, 4]],
+    ]);
+  });
+  it("does not let exact repeats move the date baseline", async () => {
+    const repeated = Array.from({ length: 5 }, () => "1924-03-11,500");
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "repeats.csv",
+      table: await csvTableAsync(
+        ["Date,Amount", "2024-01-10,100", "2024-02-10,110", "2024-03-10,120", ...repeated].join(
+          "\n",
+        ),
+      ),
+    });
+
+    expect(analysis.issues.find((item) => item.kind === "out-of-range")?.rows).toEqual([
+      3, 4, 5, 6, 7,
+    ]);
+    expect(analysis.periods.map((period) => period.period)).toEqual([
+      "2024-01",
+      "2024-02",
+      "2024-03",
+    ]);
+  });
+
+  it("reads exponent and trailing-dot numbers in a mixed column", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "mixed.csv",
+      table: await csvTableAsync("Amount\n100\n200.\n300\n1e3\npending"),
+    });
+
+    expect(metricValue(analysis, "total-amount")).toBe(1600);
+    expect(analysis.issues.map((item) => [item.id, item.rows])).toEqual([
+      ["dq-type-mismatch-amount", [4]],
+    ]);
+  });
+
+  it("averages decimal amounts without binary summation error", async () => {
+    const positive = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n1.13\n1.14"),
+    });
+    const negative = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n-1.13\n-1.14"),
+    });
+
+    expect(metricValue(positive, "total-amount")).toBe(2.27);
+    expect(metricValue(positive, "average-amount")).toBe(1.14);
+    expect(metricValue(negative, "average-amount")).toBe(-1.14);
+  });
+  it("averages the unrounded total", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n1.004\n1.005"),
+    });
+
+    expect(metricValue(analysis, "total-amount")).toBe(2.01);
+    expect(metricValue(analysis, "average-amount")).toBe(1);
+  });
+  it("keeps a named category whose values do not repeat, as in an aggregated table", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "regions.csv",
+      table: await csvTableAsync("Region,Amount\nNorth,10\nSouth,20\nEast,30\nWest,40"),
+    });
+
+    expect(analysis.roles.categories.map((column) => column.name)).toEqual(["Region"]);
+    expect(analysis.segments[0]?.segments.map((segment) => [segment.label, segment.total])).toEqual(
+      [
+        ["West", 40],
+        ["East", 30],
+        ["South", 20],
+        ["North", 10],
+      ],
+    );
+  });
+  it("keeps a huge invalid cell out of issue messages", async () => {
+    const huge = "x".repeat(600);
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "big.csv",
+      table: await csvTableAsync(`Amount\n10\n20\n30\n${huge}`),
+    });
+    const mismatch = analysis.issues.find((item) => item.kind === "type-mismatch");
+
+    expect(mismatch?.examples[0]).toHaveLength(40);
+    expect(mismatch?.message.length).toBeLessThan(200);
+    expect(mismatch?.question.length).toBeLessThan(200);
+  });
+
+  it("reads a parenthesized Rs header as INR", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "rs.csv",
+      table: await csvTableAsync("Amount (Rs.)\n100\n$200\n50"),
+    });
+
+    expect(analysis.currency).toBe("INR");
+    expect(metricValue(analysis, "total-amount")).toBe(150);
+    expect(analysis.issues.find((item) => item.kind === "mixed-currencies")?.rows).toEqual([1]);
+  });
+
+  it("keeps a category whose only other value is blank", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "regions.csv",
+      table: await csvTableAsync("Region,Amount\nNorth,100\n,50"),
+    });
+
+    expect(analysis.segments[0]?.segments.map((segment) => [segment.label, segment.total])).toEqual(
+      [
+        ["North", 100],
+        ["Unassigned", 50],
+      ],
+    );
+    expect(analysis.issues.map((item) => item.id)).toEqual(["dq-missing-values-region"]);
+  });
+
+  it("averages month-over-month changes from unrounded ratios", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "steady.csv",
+      table: await csvTableAsync("Date,Amount\n2024-01-01,800\n2024-02-01,801\n2024-03-01,802"),
+    });
+
+    expect(metricValue(analysis, "average-monthly-change-pct")).toBe(0.12);
+  });
+  it("treats numeric codes under a category header as categories", async () => {
+    const stores = analyzeTable({
+      documentId: "doc",
+      documentName: "stores.csv",
+      table: await csvTableAsync("Store,Amount\n101,10\n102,20\n101,30"),
+    });
+    const unnamed = analyzeTable({
+      documentId: "doc",
+      documentName: "stores.csv",
+      table: await csvTableAsync("Store,Figure\n101,100\n102,200"),
+    });
+
+    expect(stores.segments[0]?.segments.map((segment) => [segment.label, segment.total])).toEqual([
+      ["101", 40],
+      ["102", 20],
+    ]);
+    expect(unnamed.roles.amount.name).toBe("Figure");
+    expect(metricValue(unnamed, "total-amount")).toBe(300);
+  });
+
+  it("bounds long category values in labels and ids", async () => {
+    const long = "A".repeat(300_000);
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "long.csv",
+      table: await csvTableAsync(`Region,Amount\n${long},10\n${long}B,15\nNorth,20`),
+    });
+    const segments = analysis.segments[0]?.segments ?? [];
+
+    expect(segments.map((segment) => segment.total)).toEqual([20, 15, 10]);
+    expect(new Set(segments.map((segment) => segment.label)).size).toBe(3);
+    expect(Math.max(...segments.map((segment) => segment.label.length))).toBeLessThanOrEqual(64);
+    expect(
+      Math.max(
+        ...analysis.metrics.map(
+          (metric) => metric.id.length + metric.label.length + metric.basis.length,
+        ),
+      ),
+    ).toBeLessThan(400);
+  });
+  it("infers roles from unique rows so repeats cannot change the amount column", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "repeats.csv",
+      table: await csvTableAsync("Amount\n100\n200\npending\npending\npending\npending"),
+    });
+
+    expect(analysis.roles.amount.name).toBe("Amount");
+    expect(metricValue(analysis, "total-amount")).toBe(300);
+    expect(analysis.issues.map((item) => [item.kind, item.rows])).toEqual([
+      ["duplicate-rows", [3, 4, 5]],
+      ["type-mismatch", [2, 3, 4, 5]],
+    ]);
+  });
+
+  it("analyzes a very large table without spreading values into function arguments", () => {
+    const rowCount = 200_000;
+    const table: ExtractedTable = {
+      name: "large",
+      columns: [{ name: "Amount", type: "number" }],
+      rows: Array.from({ length: rowCount }, (_unused, index) => [index + 0.25]),
+    };
+    const analysis = analyzeTable({ documentId: "doc", documentName: "large.csv", table });
+
+    expect(metricValue(analysis, "rows-with-amount")).toBe(rowCount);
+    expect(metricValue(analysis, "total-amount")).toBe(
+      ((rowCount - 1) * rowCount) / 2 + rowCount * 0.25,
+    );
+  }, 60_000);
+
+  it("keeps the pie remainder label distinct from a real Other category", async () => {
+    const analysis = analyzeTable({
+      documentId: "doc",
+      documentName: "other.csv",
+      table: await csvTableAsync(
+        ["Region,Amount", "Other,90", "A,80", "B,70", "C,60", "D,50", "E,40", "F,30", "A,1"].join(
+          "\n",
+        ),
+      ),
+    });
+    const pie = buildDashboardCharts(analysis).find((chart) => chart.spec.type === "pie");
+    const labels = (pie?.spec.data ?? []).map((datum) => datum.segment);
+
+    expect(labels).toEqual(["Other", "A", "B", "C", "D", "Other (2)"]);
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+  it("fails clearly when a table has no amount column", async () => {
+    const table = await csvTableAsync("Region,Owner\nNorth,Asha\nSouth,Ravi");
+
+    expect(() => analyzeTable({ documentId: "doc", documentName: "people.csv", table })).toThrow(
+      DataAnalysisError,
+    );
+    expect(selectAnalysisSource([{ documentId: "doc", documentName: "people.csv", table }])).toBe(
+      undefined,
+    );
+  });
+});

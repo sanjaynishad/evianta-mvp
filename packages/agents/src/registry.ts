@@ -11,6 +11,10 @@ import {
   type AgentLookup,
   type TaskHandlerRegistry,
 } from "./handlers.js";
+import {
+  createDataAnalystAgent,
+  createDataAnalystTaskHandler,
+} from "./usecases/data-analysis/index.js";
 import type { DeterministicCheckOptions } from "./verification.js";
 
 export interface AgentRegistry extends AgentLookup {
@@ -23,7 +27,9 @@ export interface AgentRegistry extends AgentLookup {
 export function createDefaultAgents(): AnyAgent[] {
   return [
     createCoordinatorAgent(),
-    ...SPECIALIST_ROLES.map((role) => createSpecialistAgent(role)),
+    ...SPECIALIST_ROLES.map((role) =>
+      role === "business-data-analyst" ? createDataAnalystAgent() : createSpecialistAgent(role),
+    ),
     createReviewerAgent(),
   ];
 }
@@ -65,12 +71,16 @@ export function createAgentRegistry(
   return registry;
 }
 
-/** Generic specialist handlers for every specialist role plus the deterministic-first reviewer. */
+/**
+ * Generic specialist handlers for every specialist role, use-case handlers where they exist (the
+ * data analyst), and the deterministic-first reviewer.
+ */
 export function createDefaultTaskHandlers(
   reviewOptions: DeterministicCheckOptions = {},
 ): TaskHandlerRegistry {
   return createTaskHandlerRegistry([
     ...SPECIALIST_ROLES.map((role) => createSpecialistTaskHandler(role)),
+    createDataAnalystTaskHandler(),
     createReviewTaskHandler(reviewOptions),
   ]);
 }

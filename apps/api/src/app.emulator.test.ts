@@ -1,4 +1,9 @@
-import { createOrchestrator } from "@evianta/agents";
+import {
+  createDefaultTaskHandlers,
+  createOrchestrator,
+  createSpecialistAgent,
+  createSpecialistTaskHandler,
+} from "@evianta/agents";
 import { createMockAi } from "@evianta/ai";
 import { firestoreEmulatorHost, gcsBucket, storageEmulatorHost } from "@evianta/env";
 import { createFirestoreStore, createGcsDocumentStore, getFirestoreClient } from "@evianta/store";
@@ -24,7 +29,11 @@ describe.skipIf(!emulatorsEnabled)("API against the Firestore and Storage emulat
     const store = createFirestoreStore(getFirestoreClient());
     const documentStore = createGcsDocumentStore(gcsBucket || `${projectId}.appspot.com`);
     const ai = createMockAi({});
-    const orchestrator = createOrchestrator({ store, ai });
+    // Pins the generic specialist; the spreadsheet-driven analyst is covered by dataAnalysis.test.ts.
+    const handlers = createDefaultTaskHandlers().register(
+      createSpecialistTaskHandler(createSpecialistAgent("business-data-analyst")),
+    );
+    const orchestrator = createOrchestrator({ store, ai, handlers });
     const app = createApp({
       store,
       documentStore,

@@ -20,6 +20,7 @@
   "dependencies": {
     "@evianta/ai": "workspace:*",
     "@evianta/core": "workspace:*",
+    "@evianta/ingest": "workspace:*",
     "@evianta/store": "workspace:*",
     "zod": "^3.23.8"
   },
@@ -27,6 +28,7 @@
     "@evianta/config": "workspace:*",
     "@types/node": "^22.0.0",
     "typescript": "^5.6.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "vitest": "^2.1.3"
   }
 }
