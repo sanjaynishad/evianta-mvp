@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { validateTaskGraph } from "../../dag.js";
 import { createOrchestrator } from "../../orchestrator.js";
+import { seedTasksAsync } from "../../testing/fixtures.js";
 import {
   createTaxNoticeAi,
+  createTaxNoticeHarnessAsync,
   createTaxNoticeCaseAsync,
   DOCUMENT_IDS,
   seedTaxNoticeDocumentsAsync,
@@ -225,6 +227,54 @@ describe("tax-notice use case end to end", () => {
     expect(reviewPrompt).toContain("draft-figure");
   });
 
+  it("catches a reviewer edit to a schedule that departs from the source records", async () => {
+    const { store, orchestrator, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
+      tasks: [
+        { id: "rec", role: "reconciliation" },
+        { id: "draft", role: "response-preparation", dependsOn: ["rec"] },
+      ],
+    });
+
+    await orchestrator.runCaseAsync(caseRecord.id);
+    await store.deliverables.updateDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+      (current) => {
+        if (!current) {
+          throw new Error("The response pack was not created.");
+        }
+
+        return {
+          ...current,
+          sections: current.sections.map((section) =>
+            section.title.startsWith("Schedule A")
+              ? {
+                  ...section,
+                  editedContent: section.content.replace(
+                    "| 50,000 | 50,000 | 37,600 | 12,400 |",
+                    "| 50,000 | 50,000 | 47,600 | 2,400 |",
+                  ),
+                }
+              : section,
+          ),
+        };
+      },
+    );
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "review", role: "independent-review", dependsOn: ["draft"] },
+    ]);
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const { findings } = await readAsync();
+    const [verification] = findings.filter((finding) => finding.taskId === "review");
+
+    expect(verification?.summary).toMatch(/found \d+ issue/);
+    expect(verification?.detail).toContain(
+      '[schedule-edit] "Schedule A: TDS reconciliation" shows "47,600" for R-03, TDS per 26AS/AIS, but the source records give "37,600".',
+    );
+    expect(verification?.detail).toContain('shows "2,400" for R-03, Difference');
+    expect(verification?.detail).not.toContain("Reconciliation: return, ledger");
+  });
   it("flags a draft that claims a filing", async () => {
     const { findings, tasks } = await runTaxNoticeCaseAsync({ filingClaim: true });
     const draftTask = tasks.find((task) => task.assignedRole === "response-preparation");

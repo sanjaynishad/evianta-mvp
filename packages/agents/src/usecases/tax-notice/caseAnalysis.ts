@@ -48,8 +48,11 @@ export type NoticeSource = z.infer<typeof noticeSourceSchema>;
 
 export const noticeAnalysisSchema = z.object({
   noticeType: z.string().min(1),
+  noticeTypeSource: noticeSourceSchema.optional(),
   referenceNumber: z.string().optional(),
+  referenceNumberSource: noticeSourceSchema.optional(),
   assessmentYear: z.string().optional(),
+  assessmentYearSource: noticeSourceSchema.optional(),
   sectionsCited: z
     .array(
       z.object({
@@ -110,7 +113,7 @@ export type CaseAnalysisAgent = Agent<SpecialistInput, CaseAnalysisOutput>;
 export const CASE_ANALYSIS_SYSTEM_PROMPT = [
   "You are the case analyst preparing an income-tax notice response for a Chartered Accountant to review.",
   "Read the notice pages in documents and fill notice: the notice type, reference number (DIN), assessment year, every section of the Income-tax Act it cites, its dates, the figures it states or demands, each issue it raises, and the information it asks for.",
-  "Every item needs a source with the documentId, the 1-based page, and a short verbatim quote from that page. Never invent a figure, date, or section; leave it out if it is not in the text.",
+  "Every item needs a source with the documentId, the 1-based page, and a short verbatim quote from that page, including noticeTypeSource, referenceNumberSource, and assessmentYearSource. Never invent a figure, date, or section; leave it out if it is not in the text.",
   `Dates are ISO yyyy-mm-dd. Use the key "${TAX_DATE_KEYS.issueDate}" for the date of issue and "${TAX_DATE_KEYS.responseDueDate}" for the response due date.`,
   `Figures are plain numbers in rupees. Use these keys when they apply: "${TAX_FIGURE_KEYS.demandTotal}" (total demand, with its components), "${TAX_FIGURE_KEYS.demandTax}", "${TAX_FIGURE_KEYS.demandInterest}", "${TAX_FIGURE_KEYS.tdsClaimedInReturn}" (TDS claimed in the return), "${TAX_FIGURE_KEYS.tdsPerTaxCredit}" (TDS allowed as per 26AS), "${TAX_FIGURE_KEYS.tdsDifference}" (TDS credit disallowed). Otherwise use "notice-" plus a short slug.`,
   "context.lowConfidencePages lists pages read by OCR or handwriting with low confidence; anything taken from them must be flagged in openQuestions for verification against the original.",
@@ -219,7 +222,17 @@ export function noticeFindings(
   const findings: AgentFindingInput[] = [];
   const openQuestions: OpenQuestionDraft[] = [];
   const dates = notice.dates.map((entry) => ({ ...entry, key: canonicalDateKey(entry) }));
+  const identity = [
+    { label: "Notice type", source: notice.noticeTypeSource },
+    ...(notice.referenceNumber
+      ? [{ label: "Reference number", source: notice.referenceNumberSource }]
+      : []),
+    ...(notice.assessmentYear
+      ? [{ label: "Assessment year", source: notice.assessmentYearSource }]
+      : []),
+  ];
   const overviewSources = [
+    ...identity.map((entry) => entry.source),
     ...dates.map((entry) => entry.source),
     ...notice.sectionsCited.map((entry) => entry.source),
   ];
@@ -246,6 +259,7 @@ export function noticeFindings(
     confidence: confidenceFor(overviewSources, lowConfidencePages),
     evidence: dedupeEvidence(
       [
+        ...identity,
         ...dates,
         ...notice.sectionsCited.map((entry) => ({ ...entry, label: entry.section })),
       ].flatMap((entry) => sourceEvidence(entry.source, entry.label)),
@@ -254,6 +268,15 @@ export function noticeFindings(
       ? { dates: dates.map(({ key, label, date }) => ({ key, label, date })) }
       : {}),
   });
+
+  const unsourced = identity.filter((entry) => !entry.source).map((entry) => entry.label);
+
+  if (unsourced.length > 0) {
+    openQuestions.push({
+      text: `${unsourced.join(", ")} could not be traced to a page of the notice. Confirm ${unsourced.length > 1 ? "them" : "it"} against the original.`,
+      severity: "medium",
+    });
+  }
 
   if (!dates.some((entry) => entry.key === TAX_DATE_KEYS.responseDueDate)) {
     openQuestions.push({

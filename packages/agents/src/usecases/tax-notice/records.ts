@@ -18,17 +18,27 @@ export const SOURCE_LABELS: Readonly<Record<TaxRecordSource, string>> = {
 };
 
 export type TaxColumnKind =
-  "tan" | "deductor" | "section" | "date" | "quarter" | "financialYear" | "tax" | "amount";
+  | "tan"
+  | "deductor"
+  | "section"
+  | "date"
+  | "quarter"
+  | "financialYear"
+  | "assessmentYear"
+  | "tax"
+  | "amount";
 
 export type TaxColumnMap = Partial<Record<TaxColumnKind, number>>;
 
-// Checked in order, so "TAN of deductor" is a TAN column and "Tax deducted" is not an amount.
+// Checked in order, so "TAN of deductor" is a TAN column, "TDS date" is a date, and "Tax
+// deducted" is not an amount. "To date" and "till date" describe cumulative amounts, not dates.
 const COLUMN_PATTERNS: ReadonlyArray<[TaxColumnKind, RegExp]> = [
   ["tan", /\btan\b/i],
+  ["date", /^(?!.*\b(?:to|till|up to)[\s-]date\b).*\bdate\b/i],
   ["tax", /\btds\b|tax deducted|tax credit/i],
-  ["date", /date/i],
   ["quarter", /quarter/i],
   ["financialYear", /financial year|\bfy\b|\bf\.y\.?/i],
+  ["assessmentYear", /assessment year|\ba\.?y\.?(?![a-z])/i],
   ["section", /\bsection\b|\bsec\.?\b/i],
   ["amount", /amount|income|gross|credited|receipt|paid|value/i],
   ["deductor", /deductor|party|payer|employer|customer|\bname\b/i],
@@ -343,6 +353,19 @@ export function normalizeFinancialYear(value: string | undefined): string | unde
   return `${start}-${String((start + 1) % 100).padStart(2, "0")}`;
 }
 
+/** The financial year an assessment year assesses: AY 2023-24 is FY 2022-23. */
+export function financialYearOfAssessmentYear(value: string | undefined): string | undefined {
+  const assessment = normalizeFinancialYear(value);
+
+  if (!assessment) {
+    return undefined;
+  }
+
+  const start = Number(assessment.slice(0, 4)) - 1;
+
+  return `${start}-${String((start + 1) % 100).padStart(2, "0")}`;
+}
+
 export function normalizeQuarter(value: string | undefined): string | undefined {
   const text = value?.toLowerCase() ?? "";
   const numbered = /q\s*([1-4])\b|^([1-4])$/.exec(text.trim());
@@ -444,7 +467,9 @@ function readRow(
   const dated = financialPeriodOfDate(dateText);
   const date = dated ? dateText?.slice(0, 10) : undefined;
   const financialYear =
-    normalizeFinancialYear(textOf(cell("financialYear"))) ?? dated?.financialYear;
+    normalizeFinancialYear(textOf(cell("financialYear"))) ??
+    financialYearOfAssessmentYear(textOf(cell("assessmentYear"))) ??
+    dated?.financialYear;
   const quarter = normalizeQuarter(textOf(cell("quarter"))) ?? dated?.quarter;
   const focusColumn = columns.tax ?? columns.amount;
   const section = textOf(cell("section"));
@@ -577,7 +602,8 @@ export function readTaxRecords(documents: readonly TaxRecordDocument[]): TaxReco
         hasPeriodHeaders:
           candidates.date !== undefined ||
           candidates.quarter !== undefined ||
-          candidates.financialYear !== undefined,
+          candidates.financialYear !== undefined ||
+          candidates.assessmentYear !== undefined,
         warnings,
       });
     }

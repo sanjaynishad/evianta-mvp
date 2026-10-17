@@ -288,8 +288,11 @@ export function caseAnalysisStep(): MockStep {
     output: {
       notice: {
         noticeType: "Intimation under section 143(1)",
+        noticeTypeSource: noticeSource("Intimation under section 143(1) of the Income-tax Act"),
         referenceNumber: "SYN/CPC/2025/000001",
+        referenceNumberSource: noticeSource("DIN: SYN/CPC/2025/000001"),
         assessmentYear: "2024-25",
+        assessmentYearSource: noticeSource("Assessment Year: 2024-25"),
         sectionsCited: [
           {
             section: "143(1)(a)",

@@ -12,8 +12,10 @@ import type { VerificationFinding } from "../../verification.js";
 import { TAX_FIGURE_KEYS } from "./constants.js";
 import {
   draftFiguresCheck,
+  parseMarkdownTable,
   quotedAmounts,
   reconciliationRecomputeCheck,
+  scheduleEditsCheck,
   type ExpectedFigure,
 } from "./review.js";
 
@@ -134,6 +136,49 @@ describe("tax-notice review checks", () => {
     ]);
   });
 
+  it("compares edited schedule amounts with the regenerated source tables", () => {
+    const regenerated = {
+      title: "Schedule B: Computation of the TDS difference",
+      content: [
+        "| Item | Amount (Rs) | Basis |",
+        "| --- | --- | --- |",
+        "| TDS per Return | 1,41,000 | Schedule A |",
+        "| TDS per 26AS/AIS | 1,28,600 | Schedule A |",
+        "| Difference | 12,400 | Schedule A totals |",
+      ].join("\n"),
+    };
+    const edited = (content: string): UpstreamSection => ({
+      ...draftSection(content),
+      title: regenerated.title,
+    });
+    const check = (content: string) => scheduleEditsCheck([edited(content)], [regenerated])([]);
+
+    expect(parseMarkdownTable("| A \\| B | C |\n| --- | --- |\n| x \\| y | 1 |")).toEqual({
+      headers: ["A | B", "C"],
+      rows: [["x | y", "1"]],
+    });
+    expect(check(regenerated.content.replace("1,41,000", "141000"))).toEqual([]);
+    expect(check(regenerated.content.replace("| 12,400 |", "| 12,000 |"))).toEqual([
+      expect.objectContaining({
+        check: "schedule-edit",
+        severity: "high",
+        message: expect.stringContaining(
+          'shows "12,000" for Difference, Amount (Rs), but the source records give "12,400"',
+        ),
+      }),
+    ]);
+    expect(
+      check(
+        `${regenerated.content.replace(/\n\| Difference.*$/, "")}\n| Adjustment | 500 | Manual |`,
+      ).map((issue) => issue.message),
+    ).toEqual([
+      expect.stringContaining('no longer has the row "Difference"'),
+      expect.stringContaining('has a row "Adjustment" with amounts'),
+    ]);
+    expect(check("The schedule was replaced by prose.")[0]?.message).toContain(
+      "no longer contains its table",
+    );
+  });
   it("keeps the generic reviewer for other use cases", async () => {
     const { store, ai, orchestrator } = createHarness({
       "legal-research": specialistStep({ findings: [finding("Route noted")] }),

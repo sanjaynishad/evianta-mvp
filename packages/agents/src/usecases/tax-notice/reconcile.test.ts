@@ -7,6 +7,7 @@ import { LEDGER_CSV, RETURN_COMPUTATION_CSV, TAX_CREDIT_CSV } from "../../testin
 import {
   classifyTaxRecordSource,
   financialPeriodOfDate,
+  financialYearOfAssessmentYear,
   mapTaxColumns,
   normalizeDeductorName,
   normalizeQuarter,
@@ -707,6 +708,53 @@ describe("worksheet names and non-Latin deductors", () => {
     ).toEqual([
       ["अजय", 1000],
       ["विजय", 2000],
+    ]);
+  });
+});
+
+describe("date and assessment-year columns", () => {
+  it("reads TDS date headers as dates but keeps cumulative TDS as an amount", () => {
+    expect(
+      mapTaxColumns(["TAN", "Deductor", "TDS date", "TDS deducted to date"], "ledger"),
+    ).toMatchObject({ date: 2, tax: 3 });
+    expect(
+      mapTaxColumns(["TAN", "Deductor", "Date of TDS deduction", "Tax deducted"], "tax-credit"),
+    ).toMatchObject({ date: 2, tax: 3 });
+  });
+
+  it("converts an assessment year to the financial year it assesses", async () => {
+    expect(financialYearOfAssessmentYear("AY 2024-25")).toBe("2023-24");
+    expect(financialYearOfAssessmentYear("2023-2024")).toBe("2022-23");
+
+    const asAssessmentYear = (year: string) =>
+      RETURN_COMPUTATION_CSV.replace("Financial year", "Assessment year").replace(
+        /,2023-24,/g,
+        `,${year},`,
+      );
+    const current = reconcileTaxRecords(
+      readTaxRecords(
+        await fixtureDocumentsAsync({ returnComputation: asAssessmentYear("2024-25") }),
+      ),
+    );
+    const earlier = reconcileTaxRecords(
+      readTaxRecords(
+        await fixtureDocumentsAsync({ returnComputation: asAssessmentYear("2023-24") }),
+      ),
+    );
+
+    expect(current.assumedPeriods).toEqual([]);
+    expect(current.lines.find((line) => line.tan === "DELS20002B")).toMatchObject({
+      period: "FY 2023-24",
+      returnVsTaxCredit: { tax: 12400 },
+    });
+    expect(earlier.assumedPeriods).toEqual([]);
+    expect(
+      earlier.lines
+        .filter((line) => line.tan === "DELS20002B")
+        .map((line) => [line.period, line.status]),
+    ).toEqual([
+      ["FY 2022-23", "missing"],
+      ["FY 2023-24", "missing"],
     ]);
   });
 });

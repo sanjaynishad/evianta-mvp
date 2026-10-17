@@ -14,7 +14,14 @@ import {
   primaryTaxDifference,
   type TaxReconciliation,
 } from "./reconcile.js";
-import { OPEN_QUESTIONS_SECTION_TITLE, SCHEDULE_TITLE_PREFIX } from "./response.js";
+import { RECONCILIATION_TABLE_SECTION_TITLE } from "./reconciliationTask.js";
+import { reconciliationTableMarkdown } from "./render.js";
+import {
+  buildSchedules,
+  noticeFigures,
+  OPEN_QUESTIONS_SECTION_TITLE,
+  SCHEDULE_TITLE_PREFIX,
+} from "./response.js";
 
 export interface ExpectedFigure {
   key: string;
@@ -249,6 +256,153 @@ export function reconciliationDataCheck(
   };
 }
 
+export interface MarkdownTable {
+  headers: string[];
+  rows: string[][];
+}
+
+/** Reads the first pipe table in markdown; escaped pipes stay inside their cell. */
+export function parseMarkdownTable(content: string): MarkdownTable | undefined {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|"));
+
+  if (lines.length < 2) {
+    return undefined;
+  }
+
+  const cellsOf = (line: string) =>
+    line
+      .replace(/^\|/, "")
+      .replace(/(?<!\\)\|$/, "")
+      .split(/(?<!\\)\|/)
+      .map((cell) => cell.trim().replace(/\\\|/g, "|"));
+  const [headers = [], ...rest] = lines.map(cellsOf);
+
+  return {
+    headers,
+    rows: rest.filter((row) => !row.every((cell) => /^:?-{3,}:?$/.test(cell))),
+  };
+}
+
+function numbersIn(text: string): number[] {
+  return [...text.matchAll(/-?\d+(?:,\d+)*(?:\.\d+)?/g)].map((match) =>
+    Number(match[0].replace(/,/g, "")),
+  );
+}
+
+const VALUE_COLUMN = /tds|difference|amount/i;
+
+export interface ExpectedTableSection {
+  title: string;
+  content: string;
+}
+
+/**
+ * Compares the amounts in the current (possibly reviewer-edited) reconciliation table and
+ * schedules with tables regenerated from the source records. Cells hold bare numbers without a
+ * currency prefix, so rows are matched by their first cell and amount columns by header.
+ */
+export function scheduleEditsCheck(
+  current: readonly UpstreamSection[],
+  regenerated: readonly ExpectedTableSection[],
+  tolerance = DEFAULT_NUMERIC_TOLERANCE,
+): AdditionalCheck {
+  return () => {
+    const issues: VerificationIssue[] = [];
+
+    for (const section of current) {
+      const expectedTable = parseMarkdownTable(
+        regenerated.find((entry) => entry.title === section.title)?.content ?? "",
+      );
+
+      if (!expectedTable) {
+        continue;
+      }
+
+      const issue = (key: string, message: string) =>
+        issues.push({
+          check: "schedule-edit",
+          severity: "high",
+          key: `${section.title}:${key}`,
+          message,
+          findingIds: [],
+          taskIds: [section.taskId],
+        });
+      const actualTable = parseMarkdownTable(section.content);
+
+      if (!actualTable) {
+        issue(
+          "table",
+          `"${section.title}" no longer contains its table of source-derived amounts.`,
+        );
+        continue;
+      }
+
+      const valueColumns = expectedTable.headers.flatMap((header, index) =>
+        VALUE_COLUMN.test(header) ? [index] : [],
+      );
+      const hasAmounts = (row: readonly string[], headers: readonly string[]) =>
+        headers.some(
+          (header, index) => VALUE_COLUMN.test(header) && numbersIn(row[index] ?? "").length > 0,
+        );
+      const actualRows = new Map(actualTable.rows.map((row) => [row[0] ?? "", row]));
+
+      for (const row of expectedTable.rows) {
+        const key = row[0] ?? "";
+        const actual = actualRows.get(key);
+
+        if (!actual) {
+          if (hasAmounts(row, expectedTable.headers)) {
+            issue(
+              key,
+              `"${section.title}" no longer has the row "${key}" from the source records.`,
+            );
+          }
+
+          continue;
+        }
+
+        for (const index of valueColumns) {
+          const header = expectedTable.headers[index] ?? "";
+          const actualIndex = actualTable.headers.indexOf(header);
+          const wanted = numbersIn(row[index] ?? "");
+          const shown = actualIndex === -1 ? [] : numbersIn(actual[actualIndex] ?? "");
+          const same =
+            wanted.length === shown.length &&
+            wanted.every((value, position) =>
+              numbersAgree(value, shown[position] ?? NaN, tolerance),
+            );
+
+          if (!same) {
+            issue(
+              `${key}:${header}`,
+              `"${section.title}" shows "${actualIndex === -1 ? "(column removed)" : (actual[actualIndex] ?? "")}" for ${key}, ${header}, but the source records give "${row[index] ?? ""}".`,
+            );
+          }
+        }
+      }
+
+      for (const row of actualTable.rows) {
+        const key = row[0] ?? "";
+
+        if (
+          !expectedTable.rows.some((expectedRow) => expectedRow[0] === key) &&
+          hasAmounts(row, actualTable.headers)
+        ) {
+          issue(
+            key,
+            `"${section.title}" has a row "${key}" with amounts that are not in the source records.`,
+          );
+        }
+      }
+    }
+
+    return issues;
+  };
+}
+
 export interface TaxNoticeReviewOptions extends ReviewTaskHandlerOptions {
   /** Handles review for other use cases; the generic deterministic-first reviewer by default. */
   fallback?: TaskHandler;
@@ -289,6 +443,15 @@ export function createTaxNoticeReviewTaskHandler(
           !section.title.startsWith(SCHEDULE_TITLE_PREFIX),
       );
       const tolerance = reviewOptions.tolerance ?? DEFAULT_NUMERIC_TOLERANCE;
+      const regeneratedTables: ExpectedTableSection[] = hasReconciliationData(reconciliation)
+        ? [
+            {
+              title: RECONCILIATION_TABLE_SECTION_TITLE,
+              content: reconciliationTableMarkdown(reconciliation),
+            },
+            ...buildSchedules(reconciliation, noticeFigures(ctx)).sections,
+          ]
+        : [];
       const handler = createReviewTaskHandler({
         ...reviewOptions,
         additionalChecks: [
@@ -304,6 +467,13 @@ export function createTaxNoticeReviewTaskHandler(
             ctx.tasks
               .filter((task) => task.assignedRole === "reconciliation")
               .map((task) => task.id),
+          ),
+          scheduleEditsCheck(
+            ctx.upstreamSections.filter((section) =>
+              regeneratedTables.some((table) => table.title === section.title),
+            ),
+            regeneratedTables,
+            tolerance,
           ),
         ],
       });

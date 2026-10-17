@@ -49,6 +49,7 @@ import {
 import { lineEvidence, reconciliationTableMarkdown, rowLocationLabel } from "./render.js";
 
 export const MAX_MATCHED_EVIDENCE = 24;
+export const RECONCILIATION_TABLE_SECTION_TITLE = "Reconciliation: return, ledger, and 26AS/AIS";
 
 export const differenceExplanationSchema = z.object({
   ref: z.string().min(1),
@@ -508,7 +509,7 @@ export function reconciliationTaskOutput(
   const findings = [...deterministic, ...base.findings];
   const sections: TaskSectionDraft[] = [
     {
-      title: "Reconciliation: return, ledger, and 26AS/AIS",
+      title: RECONCILIATION_TABLE_SECTION_TITLE,
       kind: "table",
       content: reconciliationTableMarkdown(reconciliation),
       findingIndexes: tableIndexes,

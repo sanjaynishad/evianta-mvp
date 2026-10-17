@@ -165,7 +165,7 @@ export function computedFigures(
   return figures;
 }
 
-function noticeFigures(ctx: TaskExecutionContext): ComputedFigure[] {
+export function noticeFigures(ctx: TaskExecutionContext): ComputedFigure[] {
   return ctx.upstreamFindings
     .filter((finding) => roleOf(ctx, finding) === "case-analysis")
     .flatMap((finding) =>
@@ -351,12 +351,30 @@ export function draftMarkdown(draft: ResponseDraft, knownIds: ReadonlySet<string
   return parts.join("\n");
 }
 
+/** Takes evidence from each referenced finding in turn, so one finding cannot fill the cap. */
+function interleavedEvidence(findings: readonly Finding[], limit: number) {
+  const picked: Finding["evidence"] = [];
+  const longest = Math.max(0, ...findings.map((finding) => finding.evidence.length));
+
+  for (let position = 0; position < longest && picked.length < limit; position += 1) {
+    for (const finding of findings) {
+      const item = finding.evidence[position];
+
+      if (item && picked.length < limit) {
+        picked.push(item);
+      }
+    }
+  }
+
+  return picked;
+}
+
 function draftPointFinding(part: DraftPart, upstream: readonly Finding[]): AgentFindingInput {
   const referenced = upstream.filter((finding) => part.findingIds.includes(finding.id));
-  const evidence = referenced
-    .flatMap((finding) => finding.evidence)
-    .slice(0, MAX_EVIDENCE_PER_POINT)
-    .map((item) => ({ evidenceId: item.id, description: item.description }));
+  const evidence = interleavedEvidence(referenced, MAX_EVIDENCE_PER_POINT).map((item) => ({
+    evidenceId: item.id,
+    description: item.description,
+  }));
   const references = [
     ...referenced.map((finding) => `${finding.id}: ${finding.summary}`),
     ...part.scheduleRefs,

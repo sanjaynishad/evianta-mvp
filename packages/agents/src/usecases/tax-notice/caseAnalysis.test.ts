@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createTaxNoticeHarnessAsync, DOCUMENT_IDS } from "../../testing/taxNotice.js";
+import {
+  caseAnalysisStep,
+  createTaxNoticeHarnessAsync,
+  DOCUMENT_IDS,
+} from "../../testing/taxNotice.js";
 import { TAX_DATE_KEYS, TAX_NOTICE_GUARDRAIL } from "./constants.js";
 import { canonicalDateKey } from "./caseAnalysis.js";
 
@@ -31,7 +35,12 @@ describe("case-analysis handler", () => {
         { key: TAX_DATE_KEYS.responseDueDate, label: "Response due by", date: "2025-02-14" },
       ],
     });
-    expect(overview?.evidence[0]).toMatchObject({
+    expect(overview?.evidence.map((item) => item.location?.textQuote)).toEqual(
+      expect.arrayContaining(["DIN: SYN/CPC/2025/000001", "Assessment Year: 2024-25"]),
+    );
+    expect(
+      overview?.evidence.find((item) => item.location?.textQuote?.startsWith("Date of issue")),
+    ).toMatchObject({
       documentId: DOCUMENT_IDS.notice,
       sourceRef: "notice-143-1.pdf p.1",
       location: { page: 1, textQuote: "Date of issue: 2025-01-15" },
@@ -73,6 +82,51 @@ describe("case-analysis handler", () => {
     expect(deliverables[0]?.content).toBe(TAX_NOTICE_GUARDRAIL);
   });
 
+  it("traces the notice identity to its pages and flags identity it cannot trace", async () => {
+    const step = caseAnalysisStep() as { output: { notice: Record<string, unknown> } };
+    const { orchestrator, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
+      tasks: [{ id: "analyze", role: "case-analysis" }],
+      script: {
+        "case-analysis": {
+          output: {
+            notice: {
+              ...step.output.notice,
+              assessmentYearSource: {
+                documentId: DOCUMENT_IDS.notice,
+                page: 2,
+                quote: "AY 2024-25",
+              },
+              referenceNumberSource: undefined,
+            },
+          },
+        },
+      },
+    });
+
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const { findings } = await readAsync();
+    const overview = findings.find((finding) => finding.summary.startsWith("Intimation"));
+
+    expect(overview?.confidence).toBe("low");
+    expect(overview?.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          description: "Assessment year",
+          location: { page: 2, textQuote: "AY 2024-25" },
+        }),
+        expect.objectContaining({ description: "Notice type" }),
+      ]),
+    );
+    expect(findings.flatMap((finding) => finding.openQuestions)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "medium",
+          text: "Reference number could not be traced to a page of the notice. Confirm it against the original.",
+        }),
+      ]),
+    );
+  });
   it("raises a high-severity question when no due date is found", async () => {
     const { orchestrator, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
       tasks: [{ id: "analyze", role: "case-analysis" }],
