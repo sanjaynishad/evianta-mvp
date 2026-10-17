@@ -72,6 +72,35 @@ describe("detectDocumentFormat", () => {
     ).toThrow(UnsupportedDocumentTypeError);
   });
 
+  it("detects plain text and Markdown after the structured text formats", () => {
+    const content = Buffer.from("# Notes\nPaid on 5 May.\n");
+    const text = { format: "text", mimeType: "text/plain" };
+    const markdown = { format: "markdown", mimeType: "text/markdown" };
+
+    expect(detectDocumentFormat(content, { name: "notes.txt", mimeType: "" })).toEqual(text);
+    expect(detectDocumentFormat(content, { name: "notes", mimeType: "text/plain" })).toEqual(text);
+    expect(detectDocumentFormat(content, { name: "notes.md", mimeType: "" })).toEqual(markdown);
+    expect(
+      detectDocumentFormat(content, { name: "notes.markdown", mimeType: "text/plain" }),
+    ).toEqual(markdown);
+    expect(detectDocumentFormat(content, { name: "notes", mimeType: "text/x-markdown" })).toEqual(
+      markdown,
+    );
+    expect(detectDocumentFormat(csv, { name: "a.csv", mimeType: "text/plain" }).format).toBe("csv");
+    expect(detectDocumentFormat(content, { name: "a.json", mimeType: "text/plain" }).format).toBe(
+      "json",
+    );
+    expect(() =>
+      detectDocumentFormat(Buffer.from([0x68, 0, 0x69]), {
+        name: "notes.txt",
+        mimeType: "text/plain",
+      }),
+    ).toThrow(UnsupportedDocumentTypeError);
+    expect(() =>
+      detectDocumentFormat(content, { name: "notes.txt", mimeType: "image/png" }),
+    ).toThrow(UnsupportedDocumentTypeError);
+  });
+
   it("does not treat an embedded %PDF- string as a PDF header", () => {
     const signed = Buffer.from("Label,Value\nSignature,%PDF-1.7\n");
     const png = Buffer.concat([createPng(), Buffer.from("tEXt%PDF-1.7")]);
@@ -110,21 +139,51 @@ describe("detectDocumentFormat", () => {
     expect(detectDocumentFormat(ole, { name: "old.xls", mimeType: "" }).format).toBe("xls");
   });
 
+  it("detects Word documents by content before the declared type", () => {
+    const zipHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+    const docx = Buffer.concat([zipHeader, Buffer.from("word/document.xml")]);
+    const bare = Buffer.concat([zipHeader, Buffer.from("other.xml")]);
+    const detected = {
+      format: "docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    };
+
+    expect(detectDocumentFormat(docx, { name: "letter", mimeType: "application/zip" })).toEqual(
+      detected,
+    );
+    expect(detectDocumentFormat(docx, { name: "letter.xlsx", mimeType: "" })).toEqual(detected);
+    expect(detectDocumentFormat(bare, { name: "letter.docx", mimeType: "" })).toEqual(detected);
+    expect(detectDocumentFormat(bare, { name: "book.xlsx", mimeType: "" }).format).toBe("xlsx");
+  });
+
+  it("explains how to upload legacy .doc files", () => {
+    const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+    for (const metadata of [
+      { name: "letter.doc", mimeType: "" },
+      { name: "letter", mimeType: "application/msword" },
+    ]) {
+      expect(() => detectDocumentFormat(ole, metadata)).toThrow(
+        /Save Word 97-2003 \(\.doc\) files as \.docx or PDF/,
+      );
+    }
+  });
+
   it("rejects unsupported content with a typed error", () => {
-    const docx = Buffer.concat([
+    const pptx = Buffer.concat([
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-      Buffer.from("word/document.xml"),
+      Buffer.from("ppt/presentation.xml"),
     ]);
 
     for (const [buffer, metadata] of [
       [
-        docx,
+        pptx,
         {
-          name: "letter.docx",
-          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          name: "slides.pptx",
+          mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         },
       ],
-      [Buffer.from("hello"), { name: "notes.txt", mimeType: "text/plain" }],
+      [Buffer.from("<html></html>"), { name: "page.html", mimeType: "text/html" }],
       [Buffer.from("not an image"), { name: "photo.png", mimeType: "image/png" }],
       [Buffer.from([0, 1, 2, 3]), { name: "data.csv", mimeType: "text/csv" }],
     ] as const) {

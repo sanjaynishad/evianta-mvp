@@ -188,6 +188,41 @@ describe("TextSourceViewer", () => {
     expect(document.querySelector("[data-quote-highlight]")).not.toBeInTheDocument();
     expect(scrollIntoPane).toHaveBeenCalledTimes(4);
   });
+
+  it("describes parsed text as the original file's text", () => {
+    const page = { index: 1, text: "Reminder sent", confidence: 1 };
+    const extraction = (method: "parse" | "pdf-text") => ({
+      documentId: "doc",
+      kind: "text" as const,
+      method,
+      confidence: 1,
+      pages: [{ ...page, method }],
+      tables: [],
+      warnings: [],
+    });
+    const { rerender } = render(
+      <TextSourceViewer
+        documentName="notes.txt"
+        extraction={extraction("parse")}
+        page={1}
+        requestId={1}
+      />,
+    );
+
+    expect(screen.getByText("Text read from the original file.")).toBeInTheDocument();
+
+    rerender(
+      <TextSourceViewer
+        documentName="notice.pdf"
+        extraction={extraction("pdf-text")}
+        page={1}
+        requestId={1}
+      />,
+    );
+    expect(
+      screen.getByText("Extracted text, shown because the original cannot be displayed here."),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("Sheet", () => {

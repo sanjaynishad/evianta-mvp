@@ -348,6 +348,21 @@ function displayText(cell: RawCell | undefined): string {
   return cell.kind === "date" ? cell.iso : cell.text.trim();
 }
 
+/** Returns `base`, or `base (2)`, `base (3)`, ... when the name is already used, and records it. */
+export function uniqueName(base: string, used: Set<string>): string {
+  let name = base;
+  let suffix = 2;
+
+  while (used.has(name)) {
+    name = `${base} (${suffix})`;
+    suffix += 1;
+  }
+
+  used.add(name);
+
+  return name;
+}
+
 function uniqueHeaders(names: string[], firstColumnIndex: number): string[] {
   const used = new Set<string>();
   const nextSuffix = new Map<string, number>();

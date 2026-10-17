@@ -1,7 +1,7 @@
 import type { ExtractedTable } from "@evianta/core";
 
-import { capWarnings, MAX_EXPANDED_CELL_SLOTS, type TabularParseResult } from "./spreadsheet.js";
-import { buildTable, type DateOrder, type RawCell } from "./tabular.js";
+import { capWarnings, CellBudget, type TabularParseResult } from "./spreadsheet.js";
+import { buildTable, uniqueName, type DateOrder, type RawCell } from "./tabular.js";
 
 export type JsonParseResult =
   ({ kind: "tabular" } & TabularParseResult) | { kind: "text"; text: string; warnings: string[] };
@@ -80,22 +80,6 @@ function flattenRecord(
   }
 }
 
-class CellBudget {
-  private remaining = MAX_EXPANDED_CELL_SLOTS;
-
-  spend(rows: number, columns: number): void {
-    const slots = rows * columns;
-
-    if (!Number.isSafeInteger(slots) || slots > this.remaining) {
-      throw new RangeError(
-        `File exceeds the ${MAX_EXPANDED_CELL_SLOTS.toLocaleString("en-US")}-cell expanded grid limit.`,
-      );
-    }
-
-    this.remaining -= slots;
-  }
-}
-
 function header(names: readonly string[]): RawCell[] {
   return names.map((name): RawCell => ({ kind: "string", text: name }));
 }
@@ -164,20 +148,6 @@ function discover(value: JsonObject, prefix: string, depth: number, found: Disco
       found.fields.push([path, child]);
     }
   }
-}
-
-function uniqueName(base: string, used: Set<string>): string {
-  let name = base;
-  let suffix = 2;
-
-  while (used.has(name)) {
-    name = `${base} (${suffix})`;
-    suffix += 1;
-  }
-
-  used.add(name);
-
-  return name;
 }
 
 type TabularJsonResult = Extract<JsonParseResult, { kind: "tabular" }>;
