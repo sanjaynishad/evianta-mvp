@@ -54,6 +54,18 @@ export interface CaseUsageIncrement {
   lastRunAt?: string;
 }
 
+/** A journaled charge; with `taskId` its tokens and cost are also added to that task's totals. */
+export interface UsageCharge extends CaseUsageIncrement {
+  taskId?: string;
+  /** Token total for the task when it differs from input plus output. */
+  totalTokens?: number;
+}
+
+/** A fenced write commits only while `leaseOwner` holds the case run lease. */
+export interface LeaseFence {
+  leaseOwner: string;
+}
+
 export interface ApprovalInput {
   unresolvedQuestionIds?: string[];
   note?: string;
@@ -97,7 +109,7 @@ export interface CaseRepo {
   listCasesForVisitorAsync(visitorId: string): Promise<Case[]>;
   listSampleCasesAsync(): Promise<Case[]>;
   listAllCasesAsync(options?: ListAllCasesOptions): Promise<CasePage>;
-  updateCaseStatusAsync(caseId: string, status: CaseStatus): Promise<Case>;
+  updateCaseStatusAsync(caseId: string, status: CaseStatus, fence?: LeaseFence): Promise<Case>;
   updateCaseUsageAsync(caseId: string, increment: CaseUsageIncrement): Promise<Case>;
   recordApprovalAsync(caseId: string, approval: ApprovalInput): Promise<Case>;
   copyCaseAsync(sourceCaseId: string, visitorId: string): Promise<Case>;
@@ -106,13 +118,22 @@ export interface CaseRepo {
 export interface TaskRepo {
   createTaskAsync(task: TaskInput): Promise<Task>;
   /** Creates every task of one case atomically: all are stored, or none are. */
-  createTasksAsync(caseId: string, tasks: readonly TaskInput[]): Promise<Task[]>;
+  createTasksAsync(
+    caseId: string,
+    tasks: readonly TaskInput[],
+    fence?: LeaseFence,
+  ): Promise<Task[]>;
   getTasksForCaseAsync(caseId: string): Promise<Task[]>;
-  updateTaskAsync(caseId: string, taskId: string, update: TaskUpdate): Promise<Task>;
+  updateTaskAsync(
+    caseId: string,
+    taskId: string,
+    update: TaskUpdate,
+    fence?: LeaseFence,
+  ): Promise<Task>;
 }
 
 export interface FindingRepo {
-  addFindingAsync(caseId: string, finding: FindingInput): Promise<Finding>;
+  addFindingAsync(caseId: string, finding: FindingInput, fence?: LeaseFence): Promise<Finding>;
   getFindingsForCaseAsync(caseId: string): Promise<Finding[]>;
   updateOpenQuestionAsync(
     caseId: string,
@@ -122,7 +143,7 @@ export interface FindingRepo {
 }
 
 export interface EvidenceRepo {
-  addEvidenceAsync(caseId: string, evidence: EvidenceInput): Promise<Evidence>;
+  addEvidenceAsync(caseId: string, evidence: EvidenceInput, fence?: LeaseFence): Promise<Evidence>;
   getEvidenceForCaseAsync(caseId: string): Promise<Evidence[]>;
 }
 
@@ -136,6 +157,7 @@ export interface DeliverableRepo {
     caseId: string,
     deliverableId: string,
     update: (current: Deliverable | undefined) => DeliverableInput | undefined,
+    fence?: LeaseFence,
   ): Promise<Deliverable | undefined>;
   getDeliverablesForCaseAsync(caseId: string): Promise<Deliverable[]>;
   getDeliverableAsync(caseId: string, deliverableId: string): Promise<Deliverable | undefined>;
@@ -172,10 +194,29 @@ export interface RunRepo {
     caseId: string,
     runId: string,
     chargeId: string,
-    increment: CaseUsageIncrement,
+    charge: UsageCharge,
   ): Promise<void>;
-  /** Applies unapplied charges and their accounting markers atomically. Returns the count applied. */
+  /**
+   * Applies each unapplied charge to the case usage summary, and to its task's totals when it
+   * names one, atomically with its applied marker. Returns the count applied.
+   */
   reconcileUsageAsync(caseId: string): Promise<number>;
+  /**
+   * Reads, in one consistent snapshot, the case usage including journaled charges not yet
+   * applied, and the sum of every charge journaled under `runId`, applied or not.
+   */
+  getUsageTotalsAsync(caseId: string, runId: string): Promise<UsageTotals>;
+}
+
+export interface UsageAmounts {
+  inputTokens: number;
+  outputTokens: number;
+  costEstimate: number;
+}
+
+export interface UsageTotals {
+  case: UsageAmounts;
+  run: UsageAmounts;
 }
 
 export interface Store {

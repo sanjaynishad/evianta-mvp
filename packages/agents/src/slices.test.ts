@@ -139,6 +139,81 @@ describe("sliceDocuments", () => {
     expect(slice?.text).toContain("(showing rows 1-1 of 2)");
   });
 
+  it("reports table rows in worksheet coordinates from the table range", () => {
+    const sheet: ExtractedDocument = {
+      documentId: "sheet",
+      kind: "tabular",
+      method: "parse",
+      confidence: 1,
+      pages: [],
+      tables: [
+        {
+          name: "Ledger",
+          sheet: "Ledger",
+          range: "B3:C5",
+          columns: [
+            { name: "Invoice", type: "string" },
+            { name: "Amount", type: "number" },
+          ],
+          rows: [
+            ["INV-1", 1200],
+            ["INV-2", 800],
+          ],
+        },
+      ],
+      warnings: [],
+    };
+
+    const [whole] = sliceDocuments([{ metadata: metadata("sheet"), extraction: sheet }]);
+
+    expect(whole).toMatchObject({ range: "B3:C5", rowRange: { start: 4, end: 5 } });
+
+    const wide: ExtractedDocument = {
+      ...sheet,
+      tables: [
+        {
+          name: "Values",
+          range: "D10:D12",
+          columns: [{ name: "Value", type: "string" }],
+          rows: [["a".repeat(460)], ["b".repeat(460)]],
+        },
+      ],
+    };
+    const [truncated] = sliceDocuments([{ metadata: metadata("sheet"), extraction: wide }], {
+      tokenBudget: 140,
+    });
+
+    expect(truncated).toMatchObject({ range: "D10:D12", rowRange: { start: 11, end: 11 } });
+    expect(truncated?.text).toContain("(showing rows 11-11 of 11-12)");
+  });
+
+  it("drops a header-only table whose header exceeds the budget", () => {
+    const columns = Array.from({ length: 60 }, (_, index) => ({
+      name: `Column number ${index + 1}`,
+      type: "string" as const,
+    }));
+    const sheet: ExtractedDocument = {
+      documentId: "sheet",
+      kind: "tabular",
+      method: "parse",
+      confidence: 1,
+      pages: [],
+      tables: [{ name: "Empty", columns, rows: [] }],
+      warnings: [],
+    };
+
+    expect(
+      sliceDocuments([{ metadata: metadata("sheet"), extraction: sheet }], { tokenBudget: 120 }),
+    ).toEqual([]);
+
+    const [kept] = sliceDocuments([{ metadata: metadata("sheet"), extraction: sheet }], {
+      tokenBudget: 2000,
+    });
+
+    expect(kept).toMatchObject({ kind: "table", truncated: false });
+    expect(kept?.rowRange).toBeUndefined();
+  });
+
   it("builds truncated slices from unused budget when every share is too small", () => {
     const page = "lorem ipsum ".repeat(333);
     const slices = sliceDocuments(

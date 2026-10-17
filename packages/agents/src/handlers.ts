@@ -155,6 +155,9 @@ export function toPriorFindings(ctx: TaskExecutionContext): PriorFinding[] {
               text: truncate(question.text, 400),
               severity: question.severity,
               status: question.status,
+              ...(question.resolutionNote
+                ? { resolutionNote: truncate(question.resolutionNote, 400) }
+                : {}),
             })),
           }
         : {}),

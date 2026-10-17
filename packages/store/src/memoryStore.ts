@@ -18,24 +18,36 @@ import {
   type Task,
 } from "@evianta/core";
 
-import { StoreConflictError, StoreNotFoundError, type StoreEntity } from "./errors.js";
 import {
+  StoreConflictError,
+  StoreLeaseLostError,
+  StoreNotFoundError,
+  type StoreEntity,
+} from "./errors.js";
+import {
+  addChargeAmounts,
   applyCaseApproval,
   assertDeliverableIdentity,
   applyCaseStatus,
   applyCaseUsageIncrement,
   applyOpenQuestionUpdate,
   applySectionUpdate,
+  applyTaskCharge,
   applyTaskUpdate,
   buildCaseCopy,
   buildNewCase,
   buildRunEvent,
+  caseUsageAmounts,
   compareCasesNewestFirst,
   compareProfilesByRole,
+  emptyUsageAmounts,
   findingHasQuestion,
+  isLeaseHeld,
   resolvePageSize,
+  usageChargeSchema,
+  type StoredLease,
 } from "./mutations.js";
-import type { CaseUsageIncrement, Store } from "./types.js";
+import type { LeaseFence, Store, UsageCharge } from "./types.js";
 
 class CaseScopedCollection<T> {
   private readonly byCase = new Map<string, Map<string, T>>();
@@ -110,11 +122,17 @@ export function createInMemoryStore(): Store {
   const documents = new CaseScopedCollection<DocumentMetadata>("document");
   const extractions = new CaseScopedCollection<ExtractedDocument>("extraction");
   const events = new CaseScopedCollection<RunEvent>("event");
-  const leases = new Map<string, { owner: string; expiresAt: number }>();
+  const leases = new Map<string, StoredLease>();
   const charges = new Map<
     string,
-    Map<string, { increment: CaseUsageIncrement; applied: boolean }>
+    Map<string, { runId: string; charge: UsageCharge; applied: boolean }>
   >();
+
+  function assertFence(caseId: string, fence: LeaseFence | undefined): void {
+    if (fence && !isLeaseHeld(leases.get(caseId), fence.leaseOwner)) {
+      throw new StoreLeaseLostError(caseId, fence.leaseOwner);
+    }
+  }
 
   function getCaseOrThrow(caseId: string): Case {
     const found = cases.get(caseId);
@@ -149,7 +167,7 @@ export function createInMemoryStore(): Store {
       async renewLeaseAsync(caseId, owner, ttlMs) {
         const lease = leases.get(caseId);
 
-        if (!lease || lease.owner !== owner || lease.expiresAt <= Date.now()) {
+        if (!lease || !isLeaseHeld(lease, owner)) {
           return false;
         }
 
@@ -162,7 +180,8 @@ export function createInMemoryStore(): Store {
           leases.delete(caseId);
         }
       },
-      async recordChargeAsync(caseId, runId, chargeId, increment) {
+      async recordChargeAsync(caseId, runId, chargeId, charge) {
+        const parsed = usageChargeSchema.parse(charge);
         let journal = charges.get(caseId);
 
         if (!journal) {
@@ -173,24 +192,50 @@ export function createInMemoryStore(): Store {
         const key = JSON.stringify([runId, chargeId]);
 
         if (!journal.has(key)) {
-          journal.set(key, { increment: structuredClone(increment), applied: false });
+          journal.set(key, { runId, charge: parsed, applied: false });
         }
       },
       async reconcileUsageAsync(caseId) {
         const journal = charges.get(caseId);
         let applied = 0;
 
-        for (const charge of journal?.values() ?? []) {
-          if (charge.applied) {
+        for (const entry of journal?.values() ?? []) {
+          if (entry.applied) {
             continue;
           }
 
-          putCase(applyCaseUsageIncrement(getCaseOrThrow(caseId), charge.increment));
-          charge.applied = true;
+          const { taskId } = entry.charge;
+          const caseUpdate = applyCaseUsageIncrement(getCaseOrThrow(caseId), entry.charge);
+          const task = taskId === undefined ? undefined : tasks.get(caseId, taskId);
+          const taskUpdate = task ? applyTaskCharge(task, entry.charge) : undefined;
+
+          putCase(caseUpdate);
+
+          if (taskUpdate) {
+            tasks.put(caseId, taskUpdate.id, taskUpdate);
+          }
+
+          entry.applied = true;
           applied += 1;
         }
 
         return applied;
+      },
+      async getUsageTotalsAsync(caseId, runId) {
+        let caseTotals = caseUsageAmounts(getCaseOrThrow(caseId));
+        let runTotals = emptyUsageAmounts();
+
+        for (const entry of charges.get(caseId)?.values() ?? []) {
+          if (!entry.applied) {
+            caseTotals = addChargeAmounts(caseTotals, entry.charge);
+          }
+
+          if (entry.runId === runId) {
+            runTotals = addChargeAmounts(runTotals, entry.charge);
+          }
+        }
+
+        return { case: caseTotals, run: runTotals };
       },
     },
     agents: {
@@ -259,7 +304,9 @@ export function createInMemoryStore(): Store {
 
         return { cases: page, nextCursor: hasMore ? page.at(-1)?.id : undefined };
       },
-      async updateCaseStatusAsync(caseId, status) {
+      async updateCaseStatusAsync(caseId, status, fence) {
+        assertFence(caseId, fence);
+
         return putCase(applyCaseStatus(getCaseOrThrow(caseId), status));
       },
       async updateCaseUsageAsync(caseId, increment) {
@@ -293,7 +340,8 @@ export function createInMemoryStore(): Store {
 
         return tasks.create(task.caseId, task.id, task);
       },
-      async createTasksAsync(caseId, inputs) {
+      async createTasksAsync(caseId, inputs, fence) {
+        assertFence(caseId, fence);
         const parsed = inputs.map((input) => taskSchema.parse(input));
         const seen = new Set<string>();
 
@@ -314,14 +362,16 @@ export function createInMemoryStore(): Store {
       async getTasksForCaseAsync(caseId) {
         return tasks.list(caseId);
       },
-      async updateTaskAsync(caseId, taskId, update) {
+      async updateTaskAsync(caseId, taskId, update, fence) {
+        assertFence(caseId, fence);
         const next = applyTaskUpdate(tasks.getOrThrow(caseId, taskId), update);
 
         return tasks.put(caseId, taskId, next);
       },
     },
     findings: {
-      async addFindingAsync(caseId, input) {
+      async addFindingAsync(caseId, input, fence) {
+        assertFence(caseId, fence);
         const finding = findingSchema.parse(input);
 
         return findings.create(caseId, finding.id, finding);
@@ -346,7 +396,8 @@ export function createInMemoryStore(): Store {
       },
     },
     evidence: {
-      async addEvidenceAsync(caseId, input) {
+      async addEvidenceAsync(caseId, input, fence) {
+        assertFence(caseId, fence);
         const item = evidenceSchema.parse(input);
 
         return evidence.create(caseId, item.id, item);
@@ -361,7 +412,8 @@ export function createInMemoryStore(): Store {
 
         return deliverables.put(deliverable.caseId, deliverable.id, deliverable);
       },
-      async updateDeliverableAsync(caseId, deliverableId, update) {
+      async updateDeliverableAsync(caseId, deliverableId, update, fence) {
+        assertFence(caseId, fence);
         const current = deliverables.get(caseId, deliverableId);
         const input = update(current);
 

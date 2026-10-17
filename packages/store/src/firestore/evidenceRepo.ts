@@ -3,16 +3,18 @@ import type { Firestore } from "firebase-admin/firestore";
 
 import type { EvidenceRepo } from "../types.js";
 import { caseSubcollection, createDocAsync, listInInsertionOrderAsync } from "./helpers.js";
+import { leaseGuard } from "./lease.js";
 
 export function createEvidenceRepo(db: Firestore): EvidenceRepo {
   return {
-    async addEvidenceAsync(caseId, input) {
+    async addEvidenceAsync(caseId, input, fence) {
       const evidence = evidenceSchema.parse(input);
 
       await createDocAsync(
         caseSubcollection(db, caseId, "evidence").doc(evidence.id),
         evidence,
         "evidence",
+        leaseGuard(db, caseId, fence),
       );
 
       return evidence;
