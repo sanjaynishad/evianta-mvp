@@ -92,6 +92,13 @@ export async function streamRunEventsAsync(
     }
 
     writer.send(publicEvent.type, publicEvent, publicEvent.seq);
+
+    if (writer.closed) {
+      finish();
+
+      return;
+    }
+
     lastSentSeq = publicEvent.seq;
   };
 
@@ -145,6 +152,13 @@ export async function streamRunEventsAsync(
   // also covers runs started outside the launcher.
   const heartbeat = setInterval(() => {
     writer.comment("heartbeat");
+
+    if (writer.closed) {
+      finish();
+
+      return;
+    }
+
     enqueue(finishIfDone);
   }, heartbeatMs);
 

@@ -625,5 +625,51 @@ describe("case lifecycle over HTTP", () => {
     expect((frames.at(-1)?.data as { error: string }).error).toBe(
       "The run could not finish. Try again.",
     );
+    expect((await store.cases.getCaseAsync(caseId))?.status).toBe("failed");
+
+    await request(app).post(`/cases/${caseId}/retry`).expect(202);
+    await app.idleAsync();
+  });
+
+  it("records a failure event when the case status update also fails", async () => {
+    const store = createInMemoryStore();
+    const updateCaseStatusAsync = store.cases.updateCaseStatusAsync.bind(store.cases);
+
+    store.cases.updateCaseStatusAsync = async (caseId, status, fence) => {
+      if (status === "failed") {
+        throw new Error("Firestore unavailable");
+      }
+
+      return updateCaseStatusAsync(caseId, status, fence);
+    };
+
+    const appendEventAsync = store.events.appendEventAsync.bind(store.events);
+    let failedTerminalWrites = 0;
+
+    store.events.appendEventAsync = async (caseId, event) => {
+      if (
+        (event.type === "run-completed" || event.type === "run-failed") &&
+        failedTerminalWrites === 0
+      ) {
+        failedTerminalWrites += 1;
+
+        throw new Error("Firestore unavailable");
+      }
+
+      return appendEventAsync(caseId, event);
+    };
+
+    const { app } = createTestHarness({
+      store,
+      script: { "business-data-analyst": specialistStep([finding("Done")]) },
+    });
+    const caseId = await createCaseAsync(app);
+
+    await request(app).post(`/cases/${caseId}/run`).expect(202);
+    await app.idleAsync();
+
+    const events = await store.events.listEventsAsync(caseId);
+
+    expect(events.at(-1)).toMatchObject({ type: "run-failed" });
   });
 });
