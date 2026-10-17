@@ -41,6 +41,37 @@ describe("detectDocumentFormat", () => {
     ).toBe("tsv");
   });
 
+  it("detects JSON and JSON Lines from the MIME type or extension", () => {
+    const content = Buffer.from('[{"a":1}]');
+    const json = { format: "json", mimeType: "application/json" };
+    const jsonl = { format: "jsonl", mimeType: "application/x-ndjson" };
+
+    expect(detectDocumentFormat(content, { name: "a.json", mimeType: "" })).toEqual(json);
+    expect(
+      detectDocumentFormat(content, { name: "a", mimeType: "application/json; charset=utf-8" }),
+    ).toEqual(json);
+    expect(detectDocumentFormat(content, { name: "a", mimeType: "text/json" })).toEqual(json);
+    expect(detectDocumentFormat(content, { name: "a", mimeType: "application/ld+json" })).toEqual(
+      json,
+    );
+    expect(
+      detectDocumentFormat(content, { name: "a.json", mimeType: "application/octet-stream" }),
+    ).toEqual(json);
+    expect(detectDocumentFormat(content, { name: "a.jsonl", mimeType: "" })).toEqual(jsonl);
+    expect(
+      detectDocumentFormat(content, { name: "a.ndjson", mimeType: "application/json" }),
+    ).toEqual(jsonl);
+    expect(detectDocumentFormat(content, { name: "a", mimeType: "application/x-ndjson" })).toEqual(
+      jsonl,
+    );
+    expect(() =>
+      detectDocumentFormat(Buffer.from([0x7b, 0, 0x7d]), {
+        name: "a.json",
+        mimeType: "application/json",
+      }),
+    ).toThrow(UnsupportedDocumentTypeError);
+  });
+
   it("does not treat an embedded %PDF- string as a PDF header", () => {
     const signed = Buffer.from("Label,Value\nSignature,%PDF-1.7\n");
     const png = Buffer.concat([createPng(), Buffer.from("tEXt%PDF-1.7")]);

@@ -18,6 +18,9 @@ describe("upload allow list", () => {
     "sales.tsv",
     "ledger.xlsx",
     "ledger.xls",
+    "sales.json",
+    "events.jsonl",
+    "events.ndjson",
     "notice.pdf",
     "scan.png",
     "scan.jpg",
@@ -40,7 +43,20 @@ describe("upload allow list", () => {
       expect(uploadAccept.split(",")).toContain(mimeType);
     }
 
-    expect(uploadAccept.split(",")).toEqual(expect.arrayContaining([".csv", ".tsv", ".xls"]));
+    expect(uploadAccept.split(",")).toEqual(
+      expect.arrayContaining([".csv", ".tsv", ".xls", ".json", ".jsonl", ".ndjson"]),
+    );
+  });
+
+  it("accepts JSON in data checklist slots", () => {
+    const [salesData] = useCaseDefinitions["data-analysis"].checklist;
+
+    expect(salesData?.accept?.split(",")).toEqual(
+      expect.arrayContaining([".json", ".jsonl", ".ndjson"]),
+    );
+    expect(
+      matchChecklistItem("q2_export.json", useCaseDefinitions["data-analysis"].checklist)?.id,
+    ).toBe("sales-data");
   });
 
   it("splits a drop into supported and unsupported files", () => {

@@ -2,7 +2,7 @@ import type { DocumentMetadata } from "@evianta/core";
 
 import { UnsupportedDocumentTypeError } from "./errors.js";
 
-export type DocumentFormat = "csv" | "tsv" | "xlsx" | "xls" | "pdf" | "image";
+export type DocumentFormat = "csv" | "tsv" | "json" | "jsonl" | "xlsx" | "xls" | "pdf" | "image";
 
 export interface DetectedFormat {
   format: DocumentFormat;
@@ -13,6 +13,8 @@ export interface DetectedFormat {
 export const SUPPORTED_MIME_TYPES = [
   "text/csv",
   "text/tab-separated-values",
+  "application/json",
+  "application/x-ndjson",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
   "application/pdf",
@@ -32,6 +34,18 @@ const CSV_MIME_TYPES = new Set([
 ]);
 const TSV_MIME_TYPES = new Set(["text/tab-separated-values", "text/tsv"]);
 const XLSX_MIME_TYPES = new Set([XLSX_MIME, "application/vnd.ms-excel.sheet.macroenabled.12"]);
+const JSON_LINES_MIME_TYPES = new Set([
+  "application/x-ndjson",
+  "application/ndjson",
+  "application/jsonl",
+  "application/x-jsonl",
+  "application/jsonlines",
+  "application/x-jsonlines",
+]);
+
+function isJsonMime(mimeType: string): boolean {
+  return mimeType === "application/json" || mimeType === "text/json" || /\+json$/.test(mimeType);
+}
 
 function startsWithBytes(buffer: Uint8Array, bytes: readonly number[], offset = 0): boolean {
   return bytes.every((byte, index) => buffer[offset + index] === byte);
@@ -181,6 +195,15 @@ export function detectDocumentFormat(
 
   if (CSV_MIME_TYPES.has(declared)) {
     return csv;
+  }
+
+  // JSON Lines files are not valid JSON, so their extension wins over a declared JSON type.
+  if (JSON_LINES_MIME_TYPES.has(declared) || extension === "jsonl" || extension === "ndjson") {
+    return { format: "jsonl", mimeType: "application/x-ndjson" };
+  }
+
+  if (isJsonMime(declared) || extension === "json") {
+    return { format: "json", mimeType: "application/json" };
   }
 
   if (extension === "tsv" || extension === "tab") {

@@ -40,6 +40,14 @@ export function isWebEvidence(evidence: Pick<Evidence, "sourceRef">): boolean {
   return /^https?:\/\//i.test(evidence.sourceRef);
 }
 
+function isJsonDocument(name: string, mimeType: string): boolean {
+  return (
+    /\.(json|jsonl|ndjson)$/.test(name) ||
+    mimeType === "application/json" ||
+    mimeType === "application/x-ndjson"
+  );
+}
+
 export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): EvidenceSourceKind {
   if (isWebEvidence(evidence)) {
     return "web";
@@ -47,6 +55,10 @@ export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): Ev
 
   const name = (document?.name ?? evidence.sourceRef).toLowerCase();
   const mimeType = document?.mimeType ?? "";
+  if (isJsonDocument(name, mimeType.toLowerCase())) {
+    return document?.extraction?.kind === "text" ? "document" : "spreadsheet";
+  }
+
   if (/\.(csv|xlsx?)$/.test(name) || mimeType.includes("spreadsheet") || mimeType === "text/csv") {
     return "spreadsheet";
   }
@@ -81,10 +93,14 @@ export function evidenceNamingLabel(entries: EvidenceEntry[], label: string): Ev
 }
 
 export function getDocumentKind(
-  document: Pick<CaseDocument, "name" | "mimeType">,
+  document: Pick<CaseDocument, "name" | "mimeType" | "extraction">,
 ): DocumentViewKind {
   const name = document.name.toLowerCase();
   const mimeType = document.mimeType.toLowerCase();
+  if (isJsonDocument(name, mimeType)) {
+    return document.extraction?.kind === "text" ? "text" : "spreadsheet";
+  }
+
   if (mimeType === "application/pdf" || name.endsWith(".pdf")) {
     return "pdf";
   }
