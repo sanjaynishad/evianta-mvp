@@ -11,7 +11,7 @@ export interface TabularParseResult {
 
 const EMPTY_CELL: RawCell = { kind: "empty" };
 const MAX_PARSE_WARNINGS = 5;
-const MAX_EXPANDED_CELL_SLOTS = 1_000_000;
+export const MAX_EXPANDED_CELL_SLOTS = 1_000_000;
 
 export function decodeText(buffer: Uint8Array): { text: string; warning?: string } {
   try {
@@ -24,7 +24,7 @@ export function decodeText(buffer: Uint8Array): { text: string; warning?: string
   }
 }
 
-function capWarnings(messages: string[]): string[] {
+export function capWarnings(messages: string[]): string[] {
   if (messages.length <= MAX_PARSE_WARNINGS) {
     return messages;
   }

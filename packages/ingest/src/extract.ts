@@ -27,6 +27,7 @@ import {
   OcrExtractionError,
   type OcrAccounting,
 } from "./errors.js";
+import { parseJsonDocument, parseJsonLines, type JsonParseResult } from "./json.js";
 import {
   createPdfPageSplitterAsync,
   MIN_TEXT_LAYER_CHARS,
@@ -34,6 +35,7 @@ import {
   type PdfPageSplitter,
   type PdfTextPage,
 } from "./pdf.js";
+
 import {
   decodeText,
   parseDelimitedText,
@@ -504,6 +506,34 @@ function tableNameFor(metadata: DocumentMetadata): string {
   return metadata.name.replace(/\.[^./\\]+$/, "") || metadata.name;
 }
 
+function jsonOutcome(
+  metadata: DocumentMetadata,
+  parsed: JsonParseResult,
+  decodeWarning: string | undefined,
+): ExtractionOutcome {
+  const warnings = decodeWarning ? [decodeWarning, ...parsed.warnings] : parsed.warnings;
+
+  if (parsed.kind === "tabular") {
+    return tabularOutcome(metadata, { tables: parsed.tables, warnings });
+  }
+
+  return {
+    extraction: extractedDocumentSchema.parse({
+      documentId: metadata.id,
+      kind: "text",
+      method: "parse",
+      confidence: 1,
+      pages: [{ index: 1, text: parsed.text, method: "parse", confidence: 1 }],
+      tables: [],
+      warnings,
+    }),
+    usage: emptyUsage(),
+    cost: 0,
+    pageUsage: [],
+    failedPages: [],
+  };
+}
+
 /** Pure extraction: no store access. Deterministic formats never call the model. */
 export async function extractDocumentAsync(
   buffer: Uint8Array,
@@ -538,6 +568,28 @@ export async function extractDocumentAsync(
         tables: parsed.tables,
         warnings: decoded.warning ? [decoded.warning, ...parsed.warnings] : parsed.warnings,
       });
+    }
+
+    case "json":
+    case "jsonl": {
+      const decoded = decodeText(buffer);
+      const parse = detected.format === "jsonl" ? parseJsonLines : parseJsonDocument;
+      let parsed: JsonParseResult;
+
+      try {
+        parsed = parse(decoded.text, {
+          name: tableNameFor(metadata),
+          dateOrder: settings.dateOrder,
+        });
+      } catch (error) {
+        throw new DocumentExtractionError(
+          metadata.id,
+          `"${metadata.name}" could not be read as ${detected.format === "jsonl" ? "JSON Lines" : "JSON"}: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+
+      return jsonOutcome(metadata, parsed, decoded.warning);
     }
 
     case "xlsx":

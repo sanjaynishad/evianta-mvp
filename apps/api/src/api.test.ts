@@ -198,6 +198,48 @@ describe("request validation", () => {
     expect(accepted.body.documents[0]).toMatchObject({ name: "ledger.csv", mimeType: "text/csv" });
   });
 
+  it("accepts JSON and JSON Lines uploads and reads their records as tables", async () => {
+    const { app, store } = createTestHarness();
+    const caseRecord = await store.cases.createCaseAsync({
+      title: "JSON uploads",
+      useCase: "data-analysis",
+      visitorId: VISITOR_A,
+    });
+    const url = `/cases/${caseRecord.id}/documents`;
+
+    const upload = await request(app)
+      .post(url)
+      .attach("files", Buffer.from('[{"month":"Jan","revenue":120}]'), {
+        filename: "sales.json",
+        contentType: "application/json",
+      })
+      .attach("files", Buffer.from('{"month":"Feb","revenue":95}\n'), {
+        filename: "sales.jsonl",
+        contentType: "application/octet-stream",
+      })
+      .expect(201);
+
+    expect(upload.body.documents).toEqual([
+      expect.objectContaining({ name: "sales.json", mimeType: "application/json" }),
+      expect.objectContaining({ name: "sales.jsonl", mimeType: "application/x-ndjson" }),
+    ]);
+
+    await app.idleAsync();
+
+    const state = await request(app).get(`/cases/${caseRecord.id}`).expect(200);
+
+    expect(state.body.documents).toEqual([
+      expect.objectContaining({
+        status: "ready",
+        extraction: expect.objectContaining({ kind: "tabular", method: "parse", tableCount: 1 }),
+      }),
+      expect.objectContaining({
+        status: "ready",
+        extraction: expect.objectContaining({ kind: "tabular", method: "parse", tableCount: 1 }),
+      }),
+    ]);
+  });
+
   it("returns 404 without details for unknown cases and routes", async () => {
     const { app } = createTestHarness();
 

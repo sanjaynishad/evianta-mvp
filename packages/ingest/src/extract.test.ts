@@ -110,6 +110,110 @@ describe("extractDocumentAsync: deterministic paths", () => {
     ]);
   });
 
+  it("parses JSON records as tables without calling the model", async () => {
+    const ai = createMockAi();
+    const json = JSON.stringify({
+      seller: { gstin: "27AAACB1234C1Z5" },
+      invoices: [
+        { number: "INV-1", date: "2024-01-05", amount: 1200.5, buyer: { name: "Apex" } },
+        { number: "INV-2", date: "2024-02-10", amount: 300, buyer: { name: "Kite" } },
+      ],
+    });
+    const outcome = await extractDocumentAsync(
+      Buffer.from(json),
+      documentMetadata({ name: "ledger.json", mimeType: "application/json" }),
+      { ai },
+    );
+
+    expect(ai.calls).toEqual([]);
+    expect(outcome.usage).toEqual({ input: 0, output: 0, total: 0 });
+    expect(outcome.extraction).toMatchObject({
+      kind: "tabular",
+      method: "parse",
+      confidence: 1,
+      pages: [],
+      warnings: [],
+    });
+    expect(outcome.extraction.tables).toEqual([
+      {
+        name: "invoices",
+        sheet: "invoices",
+        range: "A1:D3",
+        columns: [
+          { name: "number", type: "string" },
+          { name: "date", type: "date" },
+          { name: "amount", type: "number" },
+          { name: "buyer.name", type: "string" },
+        ],
+        rows: [
+          ["INV-1", "2024-01-05", 1200.5, "Apex"],
+          ["INV-2", "2024-02-10", 300, "Kite"],
+        ],
+      },
+      {
+        name: "ledger fields",
+        sheet: "ledger fields",
+        range: "A1:B2",
+        columns: [
+          { name: "field", type: "string" },
+          { name: "value", type: "string" },
+        ],
+        rows: [["seller.gstin", "27AAACB1234C1Z5"]],
+      },
+    ]);
+  });
+
+  it("reads JSON without record arrays as pretty-printed text", async () => {
+    const outcome = await extractDocumentAsync(
+      Buffer.from('{"status":"ok","count":2}'),
+      documentMetadata({ name: "status.json", mimeType: "application/json" }),
+      { ai: createMockAi() },
+    );
+
+    expect(outcome.extraction).toMatchObject({
+      kind: "text",
+      method: "parse",
+      confidence: 1,
+      tables: [],
+      pages: [
+        {
+          index: 1,
+          text: '{\n  "status": "ok",\n  "count": 2\n}',
+          method: "parse",
+          confidence: 1,
+        },
+      ],
+      warnings: ["No arrays of records were found, so the file was read as text."],
+    });
+    expect(outcome.failedPages).toEqual([]);
+  });
+
+  it("parses JSON Lines and warns about invalid lines", async () => {
+    const outcome = await extractDocumentAsync(
+      Buffer.from('{"id":1,"ok":true}\n\nnot json\n{"id":2,"ok":false}\n'),
+      documentMetadata({ name: "events.jsonl", mimeType: "" }),
+      { ai: createMockAi() },
+    );
+
+    expect(outcome.extraction.kind).toBe("tabular");
+    expect(outcome.extraction.tables).toEqual([
+      {
+        name: "events",
+        range: "A1:B3",
+        columns: [
+          { name: "id", type: "number" },
+          { name: "ok", type: "boolean" },
+        ],
+        rows: [
+          [1, true],
+          [2, false],
+        ],
+      },
+    ]);
+    expect(outcome.extraction.warnings).toHaveLength(1);
+    expect(outcome.extraction.warnings[0]).toMatch(/^Line 3: /);
+  });
+
   it("parses every xlsx sheet with typed columns and cell references", async () => {
     const ai = createMockAi();
     const workbook = createWorkbook([
@@ -618,6 +722,26 @@ describe("extractDocumentAsync: errors", () => {
         { ai },
       ),
     ).rejects.toBeInstanceOf(DocumentExtractionError);
+  });
+
+  it("wraps malformed JSON and JSON Lines in a DocumentExtractionError", async () => {
+    const ai = createMockAi();
+
+    await expect(
+      extractDocumentAsync(
+        Buffer.from('{"a": 1,'),
+        documentMetadata({ name: "broken.json", mimeType: "application/json" }),
+        { ai },
+      ),
+    ).rejects.toThrow(/"broken\.json" could not be read as JSON: /);
+    await expect(
+      extractDocumentAsync(
+        Buffer.from("nope\nstill nope\n"),
+        documentMetadata({ name: "broken.jsonl", mimeType: "" }),
+        { ai },
+      ),
+    ).rejects.toBeInstanceOf(DocumentExtractionError);
+    expect(ai.calls).toEqual([]);
   });
 
   it("reports oversized delimited text as a DocumentExtractionError", async () => {

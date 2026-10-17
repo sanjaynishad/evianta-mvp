@@ -72,7 +72,7 @@ function rekeyState(state: CaseState, caseId: string): CaseState {
 
 function guessMethod(file: File): ExtractionMethod {
   const name = file.name.toLowerCase();
-  if (/\.(csv|tsv|xlsx?)$/.test(name)) {
+  if (/\.(csv|tsv|xlsx?|jsonl?|ndjson)$/.test(name)) {
     return "parse";
   }
 

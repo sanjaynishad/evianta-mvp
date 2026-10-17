@@ -26,6 +26,8 @@ export interface UseCaseDefinition {
 export const supportedUploadMimeTypes = [
   "text/csv",
   "text/tab-separated-values",
+  "application/json",
+  "application/x-ndjson",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
   "application/pdf",
@@ -37,6 +39,9 @@ export const supportedUploadMimeTypes = [
 export const supportedUploadExtensions = [
   "csv",
   "tsv",
+  "json",
+  "jsonl",
+  "ndjson",
   "xlsx",
   "xls",
   "pdf",
@@ -47,9 +52,9 @@ export const supportedUploadExtensions = [
 ] as const;
 
 export const unsupportedUploadMessage =
-  "This file type is not supported. Upload CSV, TSV, Excel (.xlsx, .xls), PDF, PNG, JPEG, or WebP files.";
+  "This file type is not supported. Upload CSV, TSV, Excel (.xlsx, .xls), JSON (.json, .jsonl), PDF, PNG, JPEG, or WebP files.";
 
-const spreadsheetAccept = ".xlsx,.xls,.csv,.tsv";
+const spreadsheetAccept = ".xlsx,.xls,.csv,.tsv,.json,.jsonl,.ndjson";
 const documentAccept = ".pdf,.png,.jpg,.jpeg,.webp";
 const anyAccept = [
   ...supportedUploadExtensions.map((extension) => `.${extension}`),
@@ -68,11 +73,11 @@ export const useCaseDefinitions: Record<UseCase, UseCaseDefinition> = {
     checklist: [
       {
         id: "sales-data",
-        label: "Sales data (Excel or CSV)",
+        label: "Sales data (Excel, CSV, or JSON)",
         hint: "Invoice or order lines with date, amount, region, and product.",
         requirement: "recommended",
         keywords: ["sales", "orders", "invoices", "transactions", "revenue"],
-        extensions: ["csv", "tsv", "xlsx", "xls"],
+        extensions: ["csv", "tsv", "xlsx", "xls", "json", "jsonl", "ndjson"],
         accept: spreadsheetAccept,
       },
       {
