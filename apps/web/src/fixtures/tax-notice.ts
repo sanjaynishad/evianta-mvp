@@ -38,7 +38,7 @@ export const taxNoticeCaseState: CaseStateInput = {
       size: 184220,
       uploadedAt: "2026-09-30T05:11:00.000Z",
       status: "ready",
-      extraction: extractionSummary("pdf-text", 0.98),
+      extraction: extractionSummary("pdf-text", 0.98, { pageCount: 2 }),
     },
     {
       id: form26as.id,

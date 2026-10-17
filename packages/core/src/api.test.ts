@@ -5,6 +5,7 @@ import {
   askResultSchema,
   caseStateSchema,
   createCaseRequestSchema,
+  documentDetailResponseSchema,
   isDocumentErrorCode,
   runStartResponseSchema,
   sampleReadOnlyErrorBodySchema,
@@ -90,6 +91,32 @@ describe("request schemas", () => {
 });
 
 describe("response schemas", () => {
+  it("parses a document with its extraction and without one", () => {
+    const document = {
+      id: "doc-1",
+      caseId: "case-1",
+      name: "notice.pdf",
+      mimeType: "application/pdf",
+      size: 1024,
+      uploadedAt: now,
+      status: "ready",
+    };
+    const parsed = documentDetailResponseSchema.parse({
+      document,
+      extraction: {
+        documentId: "doc-1",
+        kind: "text",
+        method: "pdf-text",
+        confidence: 0.98,
+        pages: [{ index: 1, text: "Difference 12,400", method: "pdf-text", confidence: 0.98 }],
+      },
+    });
+
+    expect(parsed.extraction?.pages[0]?.index).toBe(1);
+    expect(parsed.extraction?.tables).toEqual([]);
+    expect(documentDetailResponseSchema.parse({ document }).extraction).toBeUndefined();
+  });
+
   it("parses the 202 run start response", () => {
     expect(
       runStartResponseSchema.parse({

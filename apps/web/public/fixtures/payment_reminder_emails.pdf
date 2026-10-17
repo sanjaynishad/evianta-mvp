@@ -1,0 +1,62 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R 8 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Length 648 >>
+stream
+0.55 0.6 0.65 RG 0.8 w
+0.1 0.11 0.13 rg
+BT /F1 8 Tf 1 0 0 1 47.6 800.72 Tm (SYNTHETIC SAMPLE FOR DEMONSTRATION ONLY. NOT AN OFFICIAL DOCUMENT.) Tj ET
+BT /F1 8 Tf 1 0 0 1 47.6 42.92 Tm (Page 1 of 2) Tj ET
+BT /F2 13 Tf 1 0 0 1 47.6 753.87 Tm (Payment reminders) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 714.62 Tm (12 Jun 2026, to accounts@apexmotors.example) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 693.57 Tm (Invoices KF-2025-104, 107 are overdue. Please arrange payment.) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 647.26 Tm (18 Jul 2026, to accounts@apexmotors.example) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 626.21 Tm (Second reminder for invoices KF-2025-104, 107, and 111.) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 5 0 R >>
+endobj
+7 0 obj
+<< /Length 605 >>
+stream
+0.55 0.6 0.65 RG 0.8 w
+0.1 0.11 0.13 rg
+BT /F1 8 Tf 1 0 0 1 47.6 800.72 Tm (SYNTHETIC SAMPLE FOR DEMONSTRATION ONLY. NOT AN OFFICIAL DOCUMENT.) Tj ET
+BT /F1 8 Tf 1 0 0 1 47.6 42.92 Tm (Page 2 of 2) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 756.72 Tm (22 Aug 2026, to accounts@apexmotors.example) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 735.67 Tm (Third reminder: four invoices totalling Rs 8,42,000 remain unpaid.) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 680.94 Tm (23 Aug 2026, from accounts@apexmotors.example) Tj ET
+BT /F1 10 Tf 1 0 0 1 47.6 659.89 Tm (We acknowledge the outstanding amount and will share a payment plan.) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 7 0 R >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000320 00000 n 
+0000001019 00000 n 
+0000001155 00000 n 
+0000001811 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info << /Title (payment_reminder_emails.pdf) /Producer (Evianta synthetic fixture) >> >>
+startxref
+1947
+%%EOF

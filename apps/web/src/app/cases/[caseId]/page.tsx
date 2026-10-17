@@ -13,7 +13,7 @@ interface CasePageProps {
 export default async function CasePage({ params }: CasePageProps) {
   const { caseId } = await params;
   return (
-    <PageContainer className="max-w-7xl">
+    <PageContainer width="full" className="px-4 py-4 sm:px-6 lg:py-4">
       <CaseWorkspace caseId={decodeURIComponent(caseId)} />
     </PageContainer>
   );

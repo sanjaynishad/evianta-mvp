@@ -4,6 +4,7 @@ import { failedCaseId, failedCaseState, failedRunEvents, fixtureFailure } from "
 import { failedRunMessage } from "@/fixtures/run-events";
 import { toast } from "@/components/ui/sonner";
 import { casePlannedUploadMessage } from "@/hooks/use-case-workspace";
+import { stubMatchMedia } from "@/test/match-media";
 import {
   createTestDataSource,
   renderWithDataSource,
@@ -22,6 +23,7 @@ const streamTimeoutMs = 15000;
 
 beforeAll(() => {
   stubResizeObserver();
+  stubMatchMedia(false, { viewportWidth: 1440 });
 });
 
 beforeEach(() => {
@@ -35,9 +37,8 @@ describe("CaseWorkspace", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: /ITR intimation 143\(1\)\(a\)/ }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent("Fixture mode");
-    const banner = screen.getByRole("region", { name: "Read-only sample" });
-    expect(banner).toHaveTextContent(
+    expect(screen.getByText("Fixture mode.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Read-only sample" })).toHaveTextContent(
       "Try this case to run it and edit the results in your own copy. Start a new case to use your own documents.",
     );
     expect(screen.queryByRole("button", { name: /Run case/ })).not.toBeInTheDocument();
@@ -49,7 +50,7 @@ describe("CaseWorkspace", () => {
     expect(screen.getByTestId("run-announcer")).toHaveAttribute("aria-live", "polite");
   });
 
-  it("opens the evidence drawer from an evidence chip", async () => {
+  it("opens the source viewer at the cited rows from an evidence chip", async () => {
     renderWithDataSource(<CaseWorkspace caseId="sample-tax-notice" />);
 
     const evidence = await screen.findAllByRole("button", {
@@ -57,9 +58,13 @@ describe("CaseWorkspace", () => {
     });
     fireEvent.click(evidence[0]!);
 
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Receipts rows 182-190")).toBeInTheDocument();
-    expect(within(dialog).getByText(/12,400 gap is TDS/)).toBeInTheDocument();
+    const details = await screen.findByTestId("evidence-details");
+    expect(within(details).getByText("Receipts rows 182-190")).toBeInTheDocument();
+    expect(within(details).getByText(/12,400 gap is TDS/)).toBeInTheDocument();
+    const sheet = await screen.findByRole("table", { name: /sheet Receipts/ });
+    expect(
+      within(sheet).getByRole("button", { name: /^Row 182, highlighted/ }),
+    ).toBeInTheDocument();
   });
 
   it("renders the use case A dashboard charts", async () => {
@@ -117,12 +122,11 @@ describe("CaseWorkspace", () => {
         () => expect(screen.getByRole("region", { name: "Claim summary" })).toBeInTheDocument(),
         { timeout: streamTimeoutMs },
       );
-      const steps = screen.getByRole("list", { name: "Steps" });
-      expect(
-        within(steps)
-          .getAllByRole("listitem")
-          .every((item) => item.getAttribute("data-task-status") === "completed"),
-      ).toBe(true);
+      const steps = Array.from(document.querySelectorAll("[data-outline-task]"));
+      expect(steps.length).toBeGreaterThan(0);
+      expect(steps.every((item) => item.getAttribute("data-task-status") === "completed")).toBe(
+        true,
+      );
     },
     streamTimeoutMs * 2,
   );

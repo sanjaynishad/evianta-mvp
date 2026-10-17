@@ -2,9 +2,11 @@ import { CircleHelp, Lightbulb } from "lucide-react";
 import type { Finding, OpenQuestion } from "@evianta/core";
 import { ConfidenceBadge } from "@/components/patterns/confidence-badge";
 import { EmptyState } from "@/components/patterns/empty-state";
+import { VerifyFlagBadge } from "@/components/review/inline-findings";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import type { EvidenceEntry } from "@/lib/evidence";
 import { findingSeverityLabels } from "@/lib/labels";
+import { findingDomId, findingNeedsVerification, findingsDomId } from "@/lib/review";
 import { EvidenceChipList } from "./evidence-chip-list";
 
 export interface FindingsListProps {
@@ -28,7 +30,12 @@ const questionStatusLabels: Record<OpenQuestion["status"], string> = {
 
 export function FindingsList({ findings, evidenceIndex, onOpenEvidence }: FindingsListProps) {
   return (
-    <section aria-labelledby="findings-heading" className="flex flex-col gap-3 print:hidden">
+    <section
+      id={findingsDomId}
+      tabIndex={-1}
+      aria-labelledby="findings-heading"
+      className="flex scroll-mt-4 flex-col gap-3 focus:outline-none print:hidden"
+    >
       <h2 id="findings-heading" className="text-base font-semibold">
         Findings and evidence
       </h2>
@@ -43,8 +50,10 @@ export function FindingsList({ findings, evidenceIndex, onOpenEvidence }: Findin
           {findings.map((finding) => (
             <li
               key={finding.id}
+              id={findingDomId(finding.id)}
+              tabIndex={-1}
               data-finding-id={finding.id}
-              className="flex flex-col gap-3 rounded-lg border bg-card p-4 shadow-elevation-1"
+              className="flex scroll-mt-4 flex-col gap-3 rounded-lg border bg-card p-4 shadow-elevation-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <div className="flex flex-wrap items-start gap-2">
                 <h3 className="min-w-0 flex-1 text-sm font-semibold">{finding.summary}</h3>
@@ -54,6 +63,7 @@ export function FindingsList({ findings, evidenceIndex, onOpenEvidence }: Findin
                   </Badge>
                 ) : null}
                 <ConfidenceBadge level={finding.confidence ?? "unassessed"} compact />
+                {findingNeedsVerification(finding) ? <VerifyFlagBadge /> : null}
               </div>
               {finding.detail ? (
                 <p className="text-sm text-muted-foreground">{finding.detail}</p>

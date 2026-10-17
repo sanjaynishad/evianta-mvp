@@ -9,6 +9,7 @@ import type {
   CaseState,
   CreateCaseRequest,
   Deliverable,
+  DocumentDetail,
   ExportFormat,
   Finding,
   RunCompletedEvent,
@@ -63,6 +64,9 @@ export interface CaseDataSource {
   createCaseAsync(request: CreateCaseRequest): Promise<Case>;
   copyCaseAsync(caseId: string): Promise<Case>;
   getCaseStateAsync(caseId: string): Promise<CaseState>;
+  getDocumentAsync(caseId: string, documentId: string): Promise<DocumentDetail>;
+  // URL of the original file bytes, or undefined when the data source has no copy of them.
+  getDocumentFileUrl(caseId: string, documentId: string): string | undefined;
   uploadDocumentAsync(caseId: string, file: File, options?: UploadOptions): Promise<CaseDocument>;
   startRunAsync(caseId: string): Promise<RunStartResponse>;
   retryRunAsync(caseId: string): Promise<RunStartResponse>;

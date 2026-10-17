@@ -155,10 +155,6 @@ export function RunProgressPanel({
           </ul>
         </div>
       ) : null}
-
-      <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="run-announcer">
-        {progress.announcement}
-      </p>
     </section>
   );
 }
