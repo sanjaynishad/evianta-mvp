@@ -3,7 +3,17 @@ import type { DocumentMetadata } from "@evianta/core";
 import { UnsupportedDocumentTypeError } from "./errors.js";
 
 export type DocumentFormat =
-  "csv" | "tsv" | "json" | "jsonl" | "xlsx" | "xls" | "pdf" | "image" | "text";
+  | "csv"
+  | "tsv"
+  | "json"
+  | "jsonl"
+  | "text"
+  | "markdown"
+  | "docx"
+  | "xlsx"
+  | "xls"
+  | "pdf"
+  | "image";
 
 export interface DetectedFormat {
   format: DocumentFormat;
@@ -16,20 +26,20 @@ export const SUPPORTED_MIME_TYPES = [
   "text/tab-separated-values",
   "application/json",
   "application/x-ndjson",
+  "text/plain",
+  "text/markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
   "application/pdf",
   "image/png",
   "image/jpeg",
   "image/webp",
-  "text/plain",
-  "message/rfc822",
 ] as const;
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const XLS_MIME = "application/vnd.ms-excel";
-export const PLAIN_TEXT_MIME = "text/plain";
-export const EMAIL_MIME = "message/rfc822";
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 const CSV_MIME_TYPES = new Set([
   "text/csv",
@@ -47,6 +57,8 @@ const JSON_LINES_MIME_TYPES = new Set([
   "application/jsonlines",
   "application/x-jsonlines",
 ]);
+
+const MARKDOWN_MIME_TYPES = new Set(["text/markdown", "text/x-markdown"]);
 
 function isJsonMime(mimeType: string): boolean {
   return mimeType === "application/json" || mimeType === "text/json" || /\+json$/.test(mimeType);
@@ -169,11 +181,28 @@ export function detectDocumentFormat(
   }
 
   if (sniffed === "application/zip") {
+    const bytes = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
     const declaresXlsx =
       XLSX_MIME_TYPES.has(declared) || extension === "xlsx" || extension === "xlsm";
+    const declaresDocx = declared === DOCX_MIME || extension === "docx";
+    const xlsx: DetectedFormat = { format: "xlsx", mimeType: XLSX_MIME };
+    const docx: DetectedFormat = { format: "docx", mimeType: DOCX_MIME };
 
-    if (declaresXlsx || Buffer.from(buffer).includes("xl/workbook")) {
-      return { format: "xlsx", mimeType: XLSX_MIME };
+    // Zip entry names are stored uncompressed, so the main part names identify the package.
+    if (bytes.includes("xl/workbook")) {
+      return xlsx;
+    }
+
+    if (bytes.includes("word/document")) {
+      return docx;
+    }
+
+    if (declaresXlsx) {
+      return xlsx;
+    }
+
+    if (declaresDocx) {
+      return docx;
     }
 
     throw unsupported;
@@ -182,6 +211,14 @@ export function detectDocumentFormat(
   if (sniffed === "application/x-ole-storage") {
     if (declared === XLS_MIME || extension === "xls") {
       return { format: "xls", mimeType: XLS_MIME };
+    }
+
+    if (declared === "application/msword" || extension === "doc") {
+      throw new UnsupportedDocumentTypeError(
+        metadata.mimeType,
+        metadata.name,
+        "Save Word 97-2003 (.doc) files as .docx or PDF before uploading.",
+      );
     }
 
     throw unsupported;
@@ -220,20 +257,20 @@ export function detectDocumentFormat(
     return csv;
   }
 
-  if (declared === EMAIL_MIME || extension === "eml") {
-    return { format: "text", mimeType: EMAIL_MIME };
-  }
-
-  if (declared === PLAIN_TEXT_MIME || extension === "txt") {
-    return { format: "text", mimeType: PLAIN_TEXT_MIME };
-  }
-
   if (declared.startsWith("image/") || declared === "application/pdf") {
     throw new UnsupportedDocumentTypeError(
       metadata.mimeType,
       metadata.name,
       "The file content does not match the declared type.",
     );
+  }
+
+  if (MARKDOWN_MIME_TYPES.has(declared) || extension === "md" || extension === "markdown") {
+    return { format: "markdown", mimeType: "text/markdown" };
+  }
+
+  if (declared === "text/plain" || extension === "txt") {
+    return { format: "text", mimeType: "text/plain" };
   }
 
   throw unsupported;

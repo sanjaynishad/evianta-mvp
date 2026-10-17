@@ -13,6 +13,23 @@ const EMPTY_CELL: RawCell = { kind: "empty" };
 const MAX_PARSE_WARNINGS = 5;
 export const MAX_EXPANDED_CELL_SLOTS = 1_000_000;
 
+/** Shares the expanded cell limit across every table read from one file. */
+export class CellBudget {
+  private remaining = MAX_EXPANDED_CELL_SLOTS;
+
+  spend(rows: number, columns: number): void {
+    const slots = rows * columns;
+
+    if (!Number.isSafeInteger(slots) || slots > this.remaining) {
+      throw new RangeError(
+        `File exceeds the ${MAX_EXPANDED_CELL_SLOTS.toLocaleString("en-US")}-cell expanded grid limit.`,
+      );
+    }
+
+    this.remaining -= slots;
+  }
+}
+
 export function decodeText(buffer: Uint8Array): { text: string; warning?: string } {
   try {
     return { text: new TextDecoder("utf-8", { fatal: true }).decode(buffer) };

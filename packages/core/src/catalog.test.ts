@@ -52,9 +52,11 @@ describe("lowerFirstWord", () => {
 });
 
 describe("upload helpers", () => {
-  it("accepts plain text and email files", () => {
+  it("accepts plain text, Markdown, and Word files", () => {
     expect(isSupportedUploadFile({ name: "thread.txt", type: "" })).toBe(true);
-    expect(isSupportedUploadFile({ name: "reminder.eml", type: "message/rfc822" })).toBe(true);
+    expect(isSupportedUploadFile({ name: "notes.md", type: "" })).toBe(true);
+    expect(isSupportedUploadFile({ name: "letter.docx", type: "" })).toBe(true);
+    expect(isSupportedUploadFile({ name: "reminder.eml", type: "message/rfc822" })).toBe(false);
     expect(isSupportedUploadFile({ name: "archive.zip", type: "application/zip" })).toBe(false);
   });
 

@@ -82,7 +82,7 @@ export const documentStatusLabels: Record<DocumentStatus, string> = {
 
 export const documentErrorMessages: Record<DocumentErrorCode, string> = {
   "unsupported-type":
-    "This file type cannot be read. Upload CSV, TSV, Excel, JSON, PDF, PNG, JPEG, WebP, or plain-text files.",
+    "This file type cannot be read. Upload CSV, TSV, Excel, JSON, text, Markdown, Word (.docx), PDF, PNG, JPEG, or WebP files.",
   "ocr-unavailable":
     "Text recognition is unavailable right now. The file is read again when the case runs.",
   "ocr-failed":

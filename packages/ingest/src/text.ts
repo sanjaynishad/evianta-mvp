@@ -1,245 +1,289 @@
-export interface TextParseResult {
+import type { ExtractedTable } from "@evianta/core";
+
+import { CellBudget } from "./spreadsheet.js";
+import { buildTable, uniqueName, type DateOrder, type RawCell } from "./tabular.js";
+
+export const DEFAULT_PAGE_CHARS = 4000;
+
+export interface TextPage {
   text: string;
+  /** Offset of the page's first character in the normalized text. */
+  start: number;
+}
+
+export interface TextParseResult {
+  pages: string[];
+  tables: ExtractedTable[];
   warnings: string[];
 }
 
-const KEPT_EMAIL_HEADERS = ["from", "to", "cc", "date", "subject"] as const;
-const HEADER_LABELS: Record<(typeof KEPT_EMAIL_HEADERS)[number], string> = {
-  from: "From",
-  to: "To",
-  cc: "Cc",
-  date: "Date",
-  subject: "Subject",
-};
-const MAX_MIME_DEPTH = 10;
+const NO_TEXT_WARNING = "The file has no text.";
 
-interface MimeEntity {
-  headers: Map<string, string>;
-  body: string;
+export function normalizeText(text: string): string {
+  const withoutBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+
+  return withoutBom.replace(/\r\n?/g, "\n");
 }
 
-interface ContentType {
-  type: string;
-  params: Map<string, string>;
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
 }
 
-export function normalizeLineEndings(text: string): string {
-  return text.replace(/\r\n?/g, "\n");
-}
+// Prefers a paragraph break, then a line break, then a space; a break in the first half of the
+// window would leave a tiny page, so it falls through to the next option.
+function breakPoint(window: string): number {
+  const minimum = Math.floor(window.length / 2);
+  const candidates: [string, number][] = [
+    ["\n\n", 2],
+    ["\n", 1],
+    [" ", 1],
+  ];
 
-export function parsePlainText(text: string): TextParseResult {
-  return { text: normalizeLineEndings(text), warnings: [] };
-}
+  for (const [separator, length] of candidates) {
+    const index = window.lastIndexOf(separator);
 
-function splitEntity(raw: string): MimeEntity {
-  const separator = /(^|\n)[ \t]*\n/.exec(raw);
-  const headerBlock = separator ? raw.slice(0, separator.index) : raw;
-  const body = separator ? raw.slice(separator.index + separator[0].length) : "";
-  const headers = new Map<string, string>();
-  let current: string | undefined;
-
-  for (const line of headerBlock.split("\n")) {
-    if (/^[ \t]/.test(line) && current !== undefined) {
-      headers.set(current, `${headers.get(current) ?? ""} ${line.trim()}`);
-      continue;
-    }
-
-    const colon = line.indexOf(":");
-
-    if (colon <= 0) {
-      current = undefined;
-      continue;
-    }
-
-    current = line.slice(0, colon).trim().toLowerCase();
-
-    const value = line.slice(colon + 1).trim();
-    const existing = headers.get(current);
-
-    headers.set(current, existing === undefined ? value : `${existing}, ${value}`);
-  }
-
-  return { headers, body };
-}
-
-function parseContentType(value: string | undefined): ContentType {
-  const [type = "", ...rest] = (value ?? "text/plain").split(";");
-  const params = new Map<string, string>();
-
-  for (const part of rest) {
-    const equals = part.indexOf("=");
-
-    if (equals > 0) {
-      const key = part.slice(0, equals).trim().toLowerCase();
-      const paramValue = part
-        .slice(equals + 1)
-        .trim()
-        .replace(/^"(.*)"$/, "$1");
-
-      params.set(key, paramValue);
+    if (index >= minimum) {
+      return index + length;
     }
   }
 
-  return { type: type.trim().toLowerCase() || "text/plain", params };
+  return isHighSurrogate(window.charCodeAt(window.length - 1)) ? window.length - 1 : window.length;
 }
 
-function decodeBytes(bytes: Uint8Array, charset: string | undefined): string {
-  try {
-    return new TextDecoder(charset ?? "utf-8").decode(bytes);
-  } catch {
-    return new TextDecoder("utf-8").decode(bytes);
+function chunkSegment(segment: string, start: number, maxChars: number): TextPage[] {
+  const pages: TextPage[] = [];
+  let offset = 0;
+
+  while (segment.length - offset > maxChars) {
+    const cut = breakPoint(segment.slice(offset, offset + maxChars));
+
+    pages.push({ text: segment.slice(offset, offset + cut), start: start + offset });
+    offset += cut;
   }
+
+  pages.push({ text: segment.slice(offset), start: start + offset });
+
+  return pages;
 }
 
-function decodeQuotedPrintableBytes(text: string): Uint8Array {
-  const unfolded = text.replace(/=[ \t]*\n/g, "");
-  const bytes: number[] = [];
+/**
+ * Splits normalized text into pages. Form feeds always start a page; longer runs are split
+ * near `maxChars`. Page text is kept verbatim so quotes can be matched against it.
+ */
+export function paginateText(text: string, maxChars = DEFAULT_PAGE_CHARS): TextPage[] {
+  const pages: TextPage[] = [];
+  let start = 0;
 
-  for (let index = 0; index < unfolded.length; index += 1) {
-    const char = unfolded[index] as string;
-    const hex = unfolded.slice(index + 1, index + 3);
+  for (const segment of text.split("\f")) {
+    pages.push(...chunkSegment(segment, start, maxChars));
+    start += segment.length + 1;
+  }
 
-    if (char === "=" && /^[0-9A-Fa-f]{2}$/.test(hex)) {
-      bytes.push(Number.parseInt(hex, 16));
-      index += 2;
-      continue;
+  while (pages.length > 1 && pages[pages.length - 1]?.text.trim() === "") {
+    pages.pop();
+  }
+
+  return pages;
+}
+
+export function parsePlainText(text: string, maxChars = DEFAULT_PAGE_CHARS): TextParseResult {
+  const normalized = normalizeText(text);
+
+  return {
+    pages: paginateText(normalized, maxChars).map((page) => page.text),
+    tables: [],
+    warnings: normalized.trim() === "" ? [NO_TEXT_WARNING] : [],
+  };
+}
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const ATX_HEADING = /^ {0,3}#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+const DELIMITER_CELL = /^:?-+:?$/;
+
+/** Splits a pipe table row into trimmed cells, honouring `\|` escapes. */
+export function splitTableRow(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  const trimmed = line.trim();
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+
+    if (char === "\\" && trimmed[index + 1] === "|") {
+      current += "|";
+      index += 1;
+    } else if (char === "|") {
+      cells.push(current);
+      current = "";
+    } else {
+      current += char;
     }
-
-    bytes.push(...Buffer.from(char, "utf8"));
   }
 
-  return Uint8Array.from(bytes);
-}
+  cells.push(current);
 
-function decodeTransfer(body: string, encoding: string | undefined, charset?: string): string {
-  const normalized = encoding?.trim().toLowerCase();
-
-  if (normalized === "base64") {
-    return decodeBytes(Buffer.from(body.replace(/\s+/g, ""), "base64"), charset);
+  if (trimmed.startsWith("|")) {
+    cells.shift();
   }
 
-  if (normalized === "quoted-printable") {
-    return decodeBytes(decodeQuotedPrintableBytes(body), charset);
+  if (trimmed.endsWith("|") && !trimmed.endsWith("\\|")) {
+    cells.pop();
   }
 
-  return body;
+  return cells.map((cell) => cell.trim());
 }
 
-// RFC 2047 encoded words such as =?UTF-8?B?...?= appear in subjects and display names.
-function decodeHeaderValue(value: string): string {
-  return value
-    .replace(/(\?=)\s+(=\?)/g, "$1$2")
-    .replace(
-      /=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g,
-      (_match, charset: string, encoding: string, encoded: string) => {
-        if (encoding.toUpperCase() === "B") {
-          return decodeBytes(Buffer.from(encoded, "base64"), charset);
-        }
+function isDelimiterRow(line: string, columnCount: number): boolean {
+  if (!line.includes("-")) {
+    return false;
+  }
 
-        return decodeBytes(decodeQuotedPrintableBytes(encoded.replace(/_/g, " ")), charset);
-      },
-    );
+  const cells = splitTableRow(line);
+
+  return cells.length === columnCount && cells.every((cell) => DELIMITER_CELL.test(cell));
 }
 
-function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&amp;/gi, "&")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+interface Line {
+  text: string;
+  start: number;
 }
 
-interface BodyParts {
-  plain: string[];
-  html: string[];
+function linesWithOffsets(text: string): Line[] {
+  const lines: Line[] = [];
+  let start = 0;
+
+  for (const line of text.split(/[\n\f]/)) {
+    lines.push({ text: line, start });
+    start += line.length + 1;
+  }
+
+  return lines;
 }
 
-function collectBodyParts(entity: MimeEntity, parts: BodyParts, depth: number): void {
-  const contentType = parseContentType(entity.headers.get("content-type"));
-  const encoding = entity.headers.get("content-transfer-encoding");
-  const charset = contentType.params.get("charset");
+/** 1-based index of the page holding `offset`. */
+export function pageIndexAt(pages: readonly TextPage[], offset: number): number {
+  let low = 0;
+  let high = pages.length - 1;
 
-  if (contentType.type.startsWith("multipart/")) {
-    const boundary = contentType.params.get("boundary");
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
 
-    if (!boundary || depth >= MAX_MIME_DEPTH) {
-      return;
+    if ((pages[middle]?.start ?? Infinity) <= offset) {
+      low = middle;
+    } else {
+      high = middle - 1;
     }
+  }
 
-    const delimiter = `--${boundary}`;
-    const sections = entity.body.split("\n");
-    let current: string[] | undefined;
+  return low + 1;
+}
 
-    for (const line of sections) {
-      const trimmed = line.trimEnd();
+/** GFM pipe tables outside fenced code, named after the nearest heading above them. */
+function markdownTables(
+  lines: readonly Line[],
+  pages: readonly TextPage[],
+  dateOrder: DateOrder,
+): ExtractedTable[] {
+  const budget = new CellBudget();
+  const names = new Set<string>();
+  const tables: ExtractedTable[] = [];
+  let fence: string | undefined;
+  let heading: string | undefined;
+  let index = 0;
 
-      if (trimmed === delimiter || trimmed === `${delimiter}--`) {
-        if (current) {
-          collectBodyParts(splitEntity(current.join("\n")), parts, depth + 1);
-        }
+  while (index < lines.length) {
+    const line = lines[index] as Line;
+    const fenceMatch = FENCE.exec(line.text)?.[1];
 
-        current = trimmed === delimiter ? [] : undefined;
-        continue;
+    if (fence) {
+      if (fenceMatch && fenceMatch[0] === fence[0] && fenceMatch.length >= fence.length) {
+        fence = undefined;
       }
 
-      current?.push(line);
+      index += 1;
+      continue;
     }
 
-    if (current) {
-      collectBodyParts(splitEntity(current.join("\n")), parts, depth + 1);
+    if (fenceMatch) {
+      fence = fenceMatch;
+      index += 1;
+      continue;
     }
 
-    return;
+    const headingText = ATX_HEADING.exec(line.text)?.[1]?.trim();
+
+    if (headingText) {
+      heading = headingText;
+      index += 1;
+      continue;
+    }
+
+    const headerCells = line.text.includes("|") ? splitTableRow(line.text) : [];
+    const delimiter = lines[index + 1];
+
+    if (
+      headerCells.length === 0 ||
+      !delimiter ||
+      !isDelimiterRow(delimiter.text, headerCells.length)
+    ) {
+      index += 1;
+      continue;
+    }
+
+    const bodyRows: string[][] = [];
+    let next = index + 2;
+
+    while (next < lines.length) {
+      const row = lines[next] as Line;
+
+      if (row.text.trim() === "" || !row.text.includes("|") || FENCE.test(row.text)) {
+        break;
+      }
+
+      bodyRows.push(splitTableRow(row.text));
+      next += 1;
+    }
+
+    const width = headerCells.length;
+
+    budget.spend(bodyRows.length + 1, width);
+
+    const grid: RawCell[][] = [
+      headerCells.map((cell): RawCell => ({ kind: "string", text: cell })),
+      ...bodyRows.map((row) =>
+        Array.from({ length: width }, (_unused, column): RawCell => {
+          const cell = row[column];
+
+          return cell === undefined || cell === ""
+            ? { kind: "empty" }
+            : { kind: "text", text: cell };
+        }),
+      ),
+    ];
+    const name = uniqueName(heading ?? `Table ${tables.length + 1}`, names);
+    const table = buildTable(grid, { name, dateOrder });
+
+    if (table) {
+      tables.push({ ...table, pageIndex: pageIndexAt(pages, line.start) });
+    }
+
+    index = next;
   }
 
-  if (contentType.type === "message/rfc822" && depth < MAX_MIME_DEPTH) {
-    collectBodyParts(splitEntity(entity.body), parts, depth + 1);
-    return;
-  }
-
-  if (contentType.type === "text/plain") {
-    parts.plain.push(decodeTransfer(entity.body, encoding, charset).trim());
-    return;
-  }
-
-  if (contentType.type === "text/html") {
-    parts.html.push(htmlToText(decodeTransfer(entity.body, encoding, charset)));
-  }
+  return tables;
 }
 
-/** Keeps the From, To, Cc, Date, and Subject headers, then the plain-text body. */
-export function parseEmail(raw: string): TextParseResult {
-  const entity = splitEntity(normalizeLineEndings(raw));
-  const warnings: string[] = [];
-  const headerLines = KEPT_EMAIL_HEADERS.flatMap((name) => {
-    const value = entity.headers.get(name);
+/** Keeps the Markdown source as pages and also reads its pipe tables. */
+export function parseMarkdown(
+  text: string,
+  options: { dateOrder: DateOrder; maxChars?: number },
+): TextParseResult {
+  const normalized = normalizeText(text);
+  const pages = paginateText(normalized, options.maxChars ?? DEFAULT_PAGE_CHARS);
 
-    return value === undefined ? [] : [`${HEADER_LABELS[name]}: ${decodeHeaderValue(value)}`];
-  });
-  const parts: BodyParts = { plain: [], html: [] };
-
-  collectBodyParts(entity, parts, 0);
-
-  let bodyParts = parts.plain.filter((part) => part.length > 0);
-
-  if (bodyParts.length === 0 && parts.html.length > 0) {
-    bodyParts = parts.html.filter((part) => part.length > 0);
-    warnings.push("The email has no plain-text body; its HTML body was converted to text.");
-  } else if (parts.plain.length === 0) {
-    warnings.push("The email has no plain-text body.");
-  }
-
-  const body = normalizeLineEndings(bodyParts.join("\n\n"));
-  const text = [headerLines.join("\n"), body].filter((section) => section.length > 0).join("\n\n");
-
-  return { text, warnings };
+  return {
+    pages: pages.map((page) => page.text),
+    tables: markdownTables(linesWithOffsets(normalized), pages, options.dateOrder),
+    warnings: normalized.trim() === "" ? [NO_TEXT_WARNING] : [],
+  };
 }

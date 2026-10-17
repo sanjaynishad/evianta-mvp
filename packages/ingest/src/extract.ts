@@ -20,7 +20,8 @@ import {
   type VisionModelTier,
 } from "@evianta/ai";
 
-import { detectDocumentFormat, EMAIL_MIME } from "./detect.js";
+import { detectDocumentFormat } from "./detect.js";
+import { parseDocx } from "./docx.js";
 import {
   DocumentExtractionError,
   OcrConfigurationError,
@@ -43,7 +44,7 @@ import {
   type TabularParseResult,
 } from "./spreadsheet.js";
 import type { DateOrder } from "./tabular.js";
-import { parseEmail, parsePlainText, type TextParseResult } from "./text.js";
+import { paginateText, parseMarkdown, parsePlainText, type TextParseResult } from "./text.js";
 
 export const LOW_CONFIDENCE_THRESHOLD = 0.75;
 export const DEFAULT_OCR_TIER: VisionModelTier = "cheap";
@@ -507,36 +508,79 @@ function tableNameFor(metadata: DocumentMetadata): string {
   return metadata.name.replace(/\.[^./\\]+$/, "") || metadata.name;
 }
 
-function jsonOutcome(
+function parsedTextOutcome(
   metadata: DocumentMetadata,
-  parsed: JsonParseResult,
-  decodeWarning: string | undefined,
+  parsed: TextParseResult,
+  decodeWarning?: string,
 ): ExtractionOutcome {
-  const warnings = decodeWarning ? [decodeWarning, ...parsed.warnings] : parsed.warnings;
-
-  if (parsed.kind === "tabular") {
-    return tabularOutcome(metadata, { tables: parsed.tables, warnings });
-  }
-
-  return textOutcome(metadata, { text: parsed.text, warnings });
-}
-
-function textOutcome(metadata: DocumentMetadata, parsed: TextParseResult): ExtractionOutcome {
   return {
     extraction: extractedDocumentSchema.parse({
       documentId: metadata.id,
       kind: "text",
       method: "parse",
       confidence: 1,
-      pages: [{ index: 1, text: parsed.text, method: "parse", confidence: 1 }],
-      tables: [],
-      warnings: parsed.warnings,
+      pages: parsed.pages.map((text, offset) => ({
+        index: offset + 1,
+        text,
+        method: "parse",
+        confidence: 1,
+      })),
+      tables: parsed.tables,
+      warnings: decodeWarning ? [decodeWarning, ...parsed.warnings] : parsed.warnings,
     }),
     usage: emptyUsage(),
     cost: 0,
     pageUsage: [],
     failedPages: [],
   };
+}
+
+function jsonOutcome(
+  metadata: DocumentMetadata,
+  parsed: JsonParseResult,
+  decodeWarning: string | undefined,
+): ExtractionOutcome {
+  if (parsed.kind === "tabular") {
+    return tabularOutcome(metadata, {
+      tables: parsed.tables,
+      warnings: decodeWarning ? [decodeWarning, ...parsed.warnings] : parsed.warnings,
+    });
+  }
+
+  return parsedTextOutcome(
+    metadata,
+    {
+      pages: paginateText(parsed.text).map((page) => page.text),
+      tables: [],
+      warnings: parsed.warnings,
+    },
+    decodeWarning,
+  );
+}
+
+function textFormatOutcome(
+  buffer: Uint8Array,
+  metadata: DocumentMetadata,
+  format: "text" | "markdown",
+  settings: ResolvedOptions,
+): ExtractionOutcome {
+  const decoded = decodeText(buffer);
+  let parsed: TextParseResult;
+
+  try {
+    parsed =
+      format === "markdown"
+        ? parseMarkdown(decoded.text, { dateOrder: settings.dateOrder })
+        : parsePlainText(decoded.text);
+  } catch (error) {
+    throw new DocumentExtractionError(
+      metadata.id,
+      `"${metadata.name}" could not be read as ${format === "markdown" ? "Markdown" : "text"}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+
+  return parsedTextOutcome(metadata, parsed, decoded.warning);
 }
 
 /** Pure extraction: no store access. Deterministic formats never call the model. */
@@ -597,15 +641,23 @@ export async function extractDocumentAsync(
       return jsonOutcome(metadata, parsed, decoded.warning);
     }
 
-    case "text": {
-      const decoded = decodeText(buffer);
-      const parsed =
-        detected.mimeType === EMAIL_MIME ? parseEmail(decoded.text) : parsePlainText(decoded.text);
+    case "text":
+    case "markdown":
+      return textFormatOutcome(buffer, metadata, detected.format, settings);
+    case "docx": {
+      let parsed: TextParseResult;
 
-      return textOutcome(metadata, {
-        text: parsed.text,
-        warnings: decoded.warning ? [decoded.warning, ...parsed.warnings] : parsed.warnings,
-      });
+      try {
+        parsed = parseDocx(buffer, { dateOrder: settings.dateOrder });
+      } catch (error) {
+        throw new DocumentExtractionError(
+          metadata.id,
+          `"${metadata.name}" could not be read as a Word document: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+
+      return parsedTextOutcome(metadata, parsed);
     }
 
     case "xlsx":
