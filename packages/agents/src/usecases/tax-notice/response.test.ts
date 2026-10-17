@@ -61,6 +61,9 @@ describe("response-preparation handler", () => {
     expect(questions?.content).toContain(
       "Confirm whether a rectification request is preferable to a reply.",
     );
+    expect(questions?.content).toContain(
+      "- Assumes the deductor will file a correction statement before the hearing.",
+    );
     expect(draftFindings.flatMap((finding) => finding.openQuestions)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -82,5 +85,23 @@ describe("response-preparation handler", () => {
       "We hereby submit the reply.",
     ]);
     expect(findFilingClaims("The professional may file a rectification request.")).toEqual([]);
+    expect(
+      findFilingClaims(
+        [
+          "We submitted the response yesterday.",
+          "This response was uploaded to the portal.",
+          "Nothing has been filed or submitted.",
+          "No revised return has been filed.",
+          "We filed our return of income on 31 July 2024.",
+          "Nothing has been filed yet, but we submitted the reply on the portal.",
+          "A revised return has been filed.",
+        ].join(" "),
+      ),
+    ).toEqual([
+      "We submitted the response yesterday.",
+      "This response was uploaded to the portal.",
+      "Nothing has been filed yet, but we submitted the reply on the portal.",
+      "A revised return has been filed.",
+    ]);
   });
 });

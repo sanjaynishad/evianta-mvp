@@ -25,7 +25,7 @@ import {
   primaryTaxDifference,
   reconcileTaxRecords,
 } from "./reconcile.js";
-import { reconciliationTableMarkdown } from "./render.js";
+import { lineEvidence, MAX_ROW_EVIDENCE_PER_LINE, reconciliationTableMarkdown } from "./render.js";
 import { reconciliationDataCheck } from "./review.js";
 
 function metadata(id: string, name: string): DocumentMetadata {
@@ -756,5 +756,29 @@ describe("date and assessment-year columns", () => {
       ["FY 2022-23", "missing"],
       ["FY 2023-24", "missing"],
     ]);
+  });
+});
+
+describe("line evidence", () => {
+  it("keeps every compared source under the evidence cap", async () => {
+    const monthlyLedger = [
+      "Date,Party,Section,Gross amount,TDS deducted,Voucher",
+      ...Array.from({ length: 12 }, (_unused, index) => {
+        const month = ((index + 3) % 12) + 1;
+        const year = month >= 4 ? 2023 : 2024;
+
+        return `${year}-${String(month).padStart(2, "0")}-15,Sunrise Consulting Pvt Ltd,194J,10000,1000,PF-${index + 1}`;
+      }),
+    ].join("\n");
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ ledger: monthlyLedger })),
+    );
+    const sunrise = reconciliation.lines.find((line) => line.tan === "DELS20002B");
+    const evidence = lineEvidence(sunrise!);
+
+    expect(evidence).toHaveLength(MAX_ROW_EVIDENCE_PER_LINE);
+    expect(new Set(evidence.map((item) => item.documentId))).toEqual(
+      new Set(["doc-return", "doc-ledger", "doc-26as"]),
+    );
   });
 });

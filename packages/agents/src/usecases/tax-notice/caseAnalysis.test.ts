@@ -122,7 +122,69 @@ describe("case-analysis handler", () => {
       expect.arrayContaining([
         expect.objectContaining({
           severity: "medium",
-          text: "Reference number could not be traced to a page of the notice. Confirm it against the original.",
+          text: expect.stringContaining(
+            "These items could not be traced to a page and quote of the notice: Reference number.",
+          ),
+        }),
+      ]),
+    );
+  });
+
+  it("flags each untraced date and amount and keeps untraced amounts out of sourced evidence", async () => {
+    const step = caseAnalysisStep() as {
+      output: {
+        notice: {
+          dates: Array<Record<string, unknown>>;
+          demandedFigures: Array<Record<string, unknown>>;
+        };
+      };
+    };
+    const { notice } = step.output;
+    const { orchestrator, caseRecord, readAsync } = await createTaxNoticeHarnessAsync({
+      tasks: [{ id: "analyze", role: "case-analysis" }],
+      script: {
+        "case-analysis": {
+          output: {
+            notice: {
+              ...notice,
+              dates: notice.dates.map((entry) =>
+                entry.key === "due" ? { ...entry, source: undefined } : entry,
+              ),
+              demandedFigures: notice.demandedFigures.map((figure) =>
+                figure.key === "demand-interest"
+                  ? { ...figure, source: { documentId: DOCUMENT_IDS.notice, page: 1 } }
+                  : figure,
+              ),
+            },
+          },
+        },
+      },
+    });
+
+    await orchestrator.runCaseAsync(caseRecord.id);
+
+    const { findings } = await readAsync();
+    const overview = findings.find((finding) => finding.summary.startsWith("Intimation"));
+    const traced = findings.find((finding) => finding.summary === "Figures stated in the notice");
+    const untraced = findings.find((finding) =>
+      finding.summary.startsWith("Figures stated in the notice that could not be traced"),
+    );
+
+    expect(overview?.confidence).toBe("medium");
+    expect(traced?.figures?.map((figure) => figure.key)).not.toContain("demand-interest");
+    expect(untraced).toMatchObject({
+      severity: "high",
+      confidence: "low",
+      evidence: [],
+      figures: [expect.objectContaining({ key: "demand-interest", value: 620 })],
+    });
+    expect(findings.flatMap((finding) => finding.openQuestions)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          text: expect.stringContaining(
+            "Response due by (2025-02-14); Interest under sections 234B and 234C (Rs 620)",
+          ),
         }),
       ]),
     );

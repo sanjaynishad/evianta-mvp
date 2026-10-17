@@ -75,6 +75,9 @@ describe("tax-notice review checks", () => {
   });
 
   it("flags draft amounts that match no computed figure", () => {
+    const unsourced = verificationFinding("unsourced", "analyze", [
+      { key: "notice-other", label: "Untraced amount", value: 12000 },
+    ]);
     const notice = verificationFinding("notice", "analyze", [
       {
         key: "demand-total",
@@ -97,7 +100,9 @@ describe("tax-notice review checks", () => {
       ],
       expected,
     );
-    const issues = check([notice, ownFigure]);
+    notice.evidence.push({ id: "ev-notice", sourceRef: "notice.pdf p.1", description: "Demand" });
+
+    const issues = check([notice, ownFigure, unsourced]);
 
     expect(issues).toEqual([
       expect.objectContaining({
@@ -175,6 +180,11 @@ describe("tax-notice review checks", () => {
       expect.stringContaining('no longer has the row "Difference"'),
       expect.stringContaining('has a row "Adjustment" with amounts'),
     ]);
+    expect(
+      check(`${regenerated.content}\n| Difference | 12,000 | Edited |`).map(
+        (issue) => issue.message,
+      ),
+    ).toEqual([expect.stringContaining('has more than one row "Difference"')]);
     expect(check("The schedule was replaced by prose.")[0]?.message).toContain(
       "no longer contains its table",
     );

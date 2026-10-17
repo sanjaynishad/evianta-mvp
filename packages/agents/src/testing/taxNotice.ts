@@ -560,6 +560,9 @@ export function responseDraftOutput(
             summary: "Rectification route to confirm",
             severity: "low",
             confidence: "medium",
+            assumptions: [
+              "Assumes the deductor will file a correction statement before the hearing.",
+            ],
             openQuestions: [
               {
                 text: "Confirm whether a rectification request is preferable to a reply.",

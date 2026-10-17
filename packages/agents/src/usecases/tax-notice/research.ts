@@ -83,9 +83,32 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** True when the text names the complete identifier, so "80C" does not match "80CCC". */
-export function mentionsProvision(text: string, identifier: string): boolean {
-  return new RegExp(`(?<![\\w(])${escapeRegExp(identifier)}(?!\\w)`, "i").test(text);
+// How each kind of provision is written before its number, for example "u/s 143" or "r. 37BA".
+const PROVISION_KINDS: ReadonlyArray<{ kind: string; pattern: RegExp; prefix: string }> = [
+  {
+    kind: "section",
+    pattern: /\b(section|sec)\b|\bu\/s\b/i,
+    prefix: "(?:sections?|sec\\.?|u\\/s|s\\.)",
+  },
+  { kind: "rule", pattern: /\brules?\b/i, prefix: "(?:rules?|r\\.)" },
+  { kind: "circular", pattern: /\bcircular\b/i, prefix: "(?:circular(?:\\s+no\\.?)?)" },
+  { kind: "notification", pattern: /\bnotification\b/i, prefix: "(?:notification(?:\\s+no\\.?)?)" },
+];
+
+export function provisionKind(reference: string): string | undefined {
+  return PROVISION_KINDS.find((entry) => entry.pattern.test(reference))?.kind;
+}
+
+/**
+ * True when the text names the complete identifier, so "80C" does not match "80CCC". With a
+ * kind, the number must follow that kind's word, so "Rule 37" does not match "Section 37".
+ */
+export function mentionsProvision(text: string, identifier: string, kind?: string): boolean {
+  const prefix = PROVISION_KINDS.find((entry) => entry.kind === kind)?.prefix;
+  const number = `${escapeRegExp(identifier)}(?!\\w)`;
+  const pattern = prefix ? `\\b${prefix}\\s*${number}` : `(?<![\\w(])${number}`;
+
+  return new RegExp(pattern, "i").test(text);
 }
 
 /**
@@ -114,8 +137,10 @@ export function citationsForProvision(provision: Provision, citations: readonly 
   });
   const candidates = sameSite.length > 0 ? sameSite : citations;
 
+  const kind = provisionKind(provision.reference);
+
   return candidates.filter((citation) =>
-    mentionsProvision(`${citation.title} ${citation.snippet}`, identifier),
+    mentionsProvision(`${citation.title} ${citation.snippet}`, identifier, kind),
   );
 }
 

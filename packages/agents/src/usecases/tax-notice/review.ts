@@ -118,7 +118,8 @@ export function knownFigureValues(
 ): number[] {
   const values = new Set<number>();
 
-  for (const finding of findings) {
+  // Only figures that cite a source count; an untraced amount must not vouch for the draft.
+  for (const finding of findings.filter((item) => item.evidence.length > 0)) {
     for (const figure of finding.figures ?? []) {
       values.add(Math.abs(figure.value));
 
@@ -347,6 +348,27 @@ export function scheduleEditsCheck(
         headers.some(
           (header, index) => VALUE_COLUMN.test(header) && numbersIn(row[index] ?? "").length > 0,
         );
+      const seenKeys = new Set<string>();
+      let duplicated = false;
+
+      for (const row of actualTable.rows) {
+        const key = row[0] ?? "";
+
+        if (seenKeys.has(key)) {
+          duplicated = true;
+          issue(
+            `duplicate:${key}`,
+            `"${section.title}" has more than one row "${key}", so its amounts cannot be checked against the source records.`,
+          );
+        }
+
+        seenKeys.add(key);
+      }
+
+      if (duplicated) {
+        continue;
+      }
+
       const actualRows = new Map(actualTable.rows.map((row) => [row[0] ?? "", row]));
 
       for (const row of expectedTable.rows) {

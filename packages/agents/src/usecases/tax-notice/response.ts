@@ -102,16 +102,43 @@ export function createResponsePreparationAgent(): ResponsePreparationAgent {
   });
 }
 
-// Claims that this response or a filing was made, not facts such as "the return was filed on time".
-const FILING_CLAIM =
-  /\b(has|have)\s+been\s+(e-?filed|filed|submitted|uploaded)\b|\b(is|are)\s+being\s+(e-?filed|filed|submitted|uploaded)\b|\bwe\s+have\s+(e-?filed|filed|submitted|uploaded)\b|\bhereby\s+(file|submit)\b/i;
+const FILING_VERB = "(?:e-?filed|filed|submitted|uploaded|lodged)";
+
+// Active ("we submitted", "I have filed"), passive ("has been filed", "was uploaded"), and
+// performative ("hereby submit") claims that a filing or submission was made.
+const FILING_CLAIM = new RegExp(
+  [
+    `\\b(?:we|i|our firm|the assessee)\\s+(?:have\\s+|had\\s+|already\\s+)*${FILING_VERB}\\b`,
+    `\\b(?:has|have|had)\\s+(?:already\\s+)?been\\s+${FILING_VERB}\\b`,
+    `\\b(?:is|are|was|were)\\s+(?:being\\s+|already\\s+)?${FILING_VERB}\\b`,
+    "\\bhereby\\s+(?:file|submit|upload)\\b",
+  ].join("|"),
+  "i",
+);
+const NEGATION = /\b(?:no|not|nothing|never|neither|nor|none)\b|n't\b|\byet to be\b/i;
+// Statements about the original return, such as "the return was filed on 31 July 2024", are
+// historical facts, not claims about this response.
+const ORIGINAL_RETURN = /\b(?:original\s+)?return(?:\s+of\s+income)?\b/i;
+const THIS_SUBMISSION = /\b(?:revised|rectification|this|response|reply|letter|submission)\b/i;
+
+function claimsFiling(clause: string): boolean {
+  if (!FILING_CLAIM.test(clause) || NEGATION.test(clause)) {
+    return false;
+  }
+
+  return !(ORIGINAL_RETURN.test(clause) && !THIS_SUBMISSION.test(clause));
+}
 
 /** Sentences that claim a filing or submission happened, which the platform never does. */
 export function findFilingClaims(text: string): string[] {
   return text
     .split(/(?<=[.!?])\s+|\n+/)
     .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length > 0 && FILING_CLAIM.test(sentence));
+    .filter(
+      (sentence) =>
+        sentence.length > 0 &&
+        sentence.split(/[,;:]|\b(?:but|however|although|whereas|and)\b/i).some(claimsFiling),
+    );
 }
 
 export interface ComputedFigure {
@@ -268,6 +295,7 @@ const SEVERITY_ORDER: readonly OpenQuestionSeverity[] = ["high", "medium", "low"
 export function openQuestionsMarkdown(
   ctx: TaskExecutionContext,
   own: readonly OpenQuestionDraft[],
+  ownAssumptions: readonly string[] = [],
 ): string | undefined {
   const titleOf = (taskId: string) => ctx.tasks.find((task) => task.id === taskId)?.title ?? taskId;
   const questions = [
@@ -278,7 +306,12 @@ export function openQuestionsMarkdown(
     ),
     ...own.map((question) => ({ ...question, from: ctx.task.title })),
   ];
-  const assumptions = [...new Set(ctx.upstreamFindings.flatMap((finding) => finding.assumptions))];
+  const assumptions = [
+    ...new Set([
+      ...ctx.upstreamFindings.flatMap((finding) => finding.assumptions),
+      ...ownAssumptions,
+    ]),
+  ];
 
   if (questions.length === 0 && assumptions.length === 0) {
     return undefined;
@@ -457,7 +490,11 @@ export function responseTaskOutput(
 
   const allQuestions = [...openQuestions, ...(base.openQuestions ?? [])];
   const findingQuestions = findings.flatMap((finding) => finding.openQuestions ?? []);
-  const questionsText = openQuestionsMarkdown(ctx, [...allQuestions, ...findingQuestions]);
+  const questionsText = openQuestionsMarkdown(
+    ctx,
+    [...allQuestions, ...findingQuestions],
+    findings.flatMap((finding) => finding.assumptions ?? []),
+  );
 
   if (questionsText || draft) {
     sections.push({

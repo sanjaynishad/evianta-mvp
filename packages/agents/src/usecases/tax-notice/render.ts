@@ -36,17 +36,30 @@ export function rowEvidence(row: TaxRecordRow, description: string): EvidenceRef
   };
 }
 
+/** Takes rows from each source in turn, so every compared side keeps evidence under the cap. */
 export function lineEvidence(line: ReconciliationLine): EvidenceReference[] {
-  return Object.entries(line.values)
-    .flatMap(([source, values]) =>
-      (values?.rows ?? []).map((row) =>
-        rowEvidence(
-          row,
-          `${line.ref} ${sourceLabel(source as TaxRecordSource)} row for ${line.deductorName}`,
-        ),
+  const bySource = Object.entries(line.values).map(([source, values]) =>
+    (values?.rows ?? []).map((row) =>
+      rowEvidence(
+        row,
+        `${line.ref} ${sourceLabel(source as TaxRecordSource)} row for ${line.deductorName}`,
       ),
-    )
-    .slice(0, MAX_ROW_EVIDENCE_PER_LINE);
+    ),
+  );
+  const picked: EvidenceReference[] = [];
+  const longest = Math.max(0, ...bySource.map((rows) => rows.length));
+
+  for (let position = 0; position < longest; position += 1) {
+    for (const rows of bySource) {
+      const reference = rows[position];
+
+      if (reference && picked.length < MAX_ROW_EVIDENCE_PER_LINE) {
+        picked.push(reference);
+      }
+    }
+  }
+
+  return picked;
 }
 
 function amountCell(line: ReconciliationLine, source: TaxRecordSource, provided: boolean): string {

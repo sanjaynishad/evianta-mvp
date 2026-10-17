@@ -166,7 +166,7 @@ function sourceEvidence(
   source: NoticeSource | undefined,
   description: string,
 ): EvidenceReference[] {
-  if (!source) {
+  if (!source || !isTraceable(source)) {
     return [];
   }
 
@@ -200,6 +200,12 @@ function pageLabel(source: NoticeSource | undefined): string {
   return source?.page !== undefined ? ` (p.${source.page})` : "";
 }
 
+/** A source names the document, the page, and a verbatim quote, so a reviewer can find it. */
+export function isTraceable(source: NoticeSource | undefined): source is NoticeSource {
+  return Boolean(source?.documentId && source.page !== undefined && source.quote?.trim());
+}
+
+/** Low when a source is a low-confidence page; medium when any item cannot be traced. */
 function confidenceFor(
   sources: ReadonlyArray<NoticeSource | undefined>,
   lowConfidencePages: readonly ReviewPage[],
@@ -212,7 +218,31 @@ function confidenceFor(
       ),
   );
 
-  return usesLowConfidencePage ? "low" : "high";
+  if (usesLowConfidencePage) {
+    return "low";
+  }
+
+  return sources.every(isTraceable) ? "high" : "medium";
+}
+
+interface ExtractedItem {
+  label: string;
+  source?: NoticeSource;
+  /** Dates and amounts are what a response turns on, so untraced ones are high severity. */
+  critical: boolean;
+}
+
+function untracedItemsQuestion(items: readonly ExtractedItem[]): OpenQuestionDraft | undefined {
+  const untraced = items.filter((item) => !isTraceable(item.source));
+
+  if (untraced.length === 0) {
+    return undefined;
+  }
+
+  return {
+    text: `These items could not be traced to a page and quote of the notice: ${untraced.map((item) => item.label).join("; ")}. Verify them against the original before relying on them.`,
+    severity: untraced.some((item) => item.critical) ? "high" : "medium",
+  };
 }
 
 export function noticeFindings(
@@ -269,13 +299,37 @@ export function noticeFindings(
       : {}),
   });
 
-  const unsourced = identity.filter((entry) => !entry.source).map((entry) => entry.label);
+  const untraced = untracedItemsQuestion([
+    ...identity.map((entry) => ({ ...entry, critical: false })),
+    ...dates.map((entry) => ({
+      label: `${entry.label} (${entry.date})`,
+      source: entry.source,
+      critical: true,
+    })),
+    ...notice.sectionsCited.map((entry) => ({
+      label: `section ${entry.section}`,
+      source: entry.source,
+      critical: false,
+    })),
+    ...notice.demandedFigures.map((figure) => ({
+      label: `${figure.label} (Rs ${formatAmount(figure.amount)})`,
+      source: figure.source,
+      critical: true,
+    })),
+    ...notice.issues.map((issue) => ({
+      label: issue.title,
+      source: issue.source,
+      critical: false,
+    })),
+    ...notice.requestedInformation.map((entry) => ({
+      label: entry.item,
+      source: entry.source,
+      critical: false,
+    })),
+  ]);
 
-  if (unsourced.length > 0) {
-    openQuestions.push({
-      text: `${unsourced.join(", ")} could not be traced to a page of the notice. Confirm ${unsourced.length > 1 ? "them" : "it"} against the original.`,
-      severity: "medium",
-    });
+  if (untraced) {
+    openQuestions.push(untraced);
   }
 
   if (!dates.some((entry) => entry.key === TAX_DATE_KEYS.responseDueDate)) {
@@ -292,15 +346,42 @@ export function noticeFindings(
       summary: issue.title,
       detail: `${issue.description}${sections}`,
       severity: issue.severity,
-      confidence: confidenceFor([issue.source], lowConfidencePages),
+      confidence: isTraceable(issue.source)
+        ? confidenceFor([issue.source], lowConfidencePages)
+        : "low",
       evidence: sourceEvidence(issue.source, issue.title),
     });
   }
 
-  if (notice.demandedFigures.length > 0) {
+  const tracedFigures = notice.demandedFigures.filter((figure) => isTraceable(figure.source));
+  const untracedFigures = notice.demandedFigures.filter((figure) => !isTraceable(figure.source));
+  const toFigure = (figure: NoticeAnalysis["demandedFigures"][number]) => ({
+    key: figure.key,
+    label: figure.label,
+    value: figure.amount,
+    unit: "INR",
+    ...(figure.components && figure.components.length > 0 ? { components: figure.components } : {}),
+  });
+
+  // Untraced amounts get their own finding with no evidence, so review flags them instead of a
+  // traced amount lending them its source.
+  if (untracedFigures.length > 0) {
+    findings.push({
+      summary: "Figures stated in the notice that could not be traced to a page",
+      detail: untracedFigures
+        .map((figure) => `${figure.label}: Rs ${formatAmount(figure.amount)}`)
+        .join("\n"),
+      severity: "high",
+      confidence: "low",
+      evidence: [],
+      figures: untracedFigures.map(toFigure),
+    });
+  }
+
+  if (tracedFigures.length > 0) {
     findings.push({
       summary: "Figures stated in the notice",
-      detail: notice.demandedFigures
+      detail: tracedFigures
         .map(
           (figure) =>
             `${figure.label}: Rs ${formatAmount(figure.amount)}${pageLabel(figure.source)}`,
@@ -308,21 +389,13 @@ export function noticeFindings(
         .join("\n"),
       severity: "high",
       confidence: confidenceFor(
-        notice.demandedFigures.map((figure) => figure.source),
+        tracedFigures.map((figure) => figure.source),
         lowConfidencePages,
       ),
       evidence: dedupeEvidence(
-        notice.demandedFigures.flatMap((figure) => sourceEvidence(figure.source, figure.label)),
+        tracedFigures.flatMap((figure) => sourceEvidence(figure.source, figure.label)),
       ),
-      figures: notice.demandedFigures.map((figure) => ({
-        key: figure.key,
-        label: figure.label,
-        value: figure.amount,
-        unit: "INR",
-        ...(figure.components && figure.components.length > 0
-          ? { components: figure.components }
-          : {}),
-      })),
+      figures: tracedFigures.map(toFigure),
     });
   }
 

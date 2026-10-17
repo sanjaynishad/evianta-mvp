@@ -121,5 +121,29 @@ describe("tax-research handler", () => {
       ]),
     ).toEqual([]);
     expect(citationsForProvision(provision("Notice procedure", []), citations)).toEqual([]);
+
+    const section37 = {
+      title: "Section 37: business expenditure",
+      url: "https://tax-reference.example/act/section-37",
+      snippet: "",
+    };
+    const rule37 = {
+      title: "Rule 37: TDS returns",
+      url: "https://tax-reference.example/rules/rule-37",
+      snippet: "",
+    };
+
+    expect(
+      citationsForProvision(provision("Rule 37", ["https://tax-reference.example/x"]), [section37]),
+    ).toEqual([]);
+    expect(
+      citationsForProvision(provision("Rule 37", ["https://tax-reference.example/x"]), [
+        section37,
+        rule37,
+      ]),
+    ).toEqual([rule37]);
+    expect(citationsForProvision(provision("Section 37", []), [section37, rule37])).toEqual([
+      section37,
+    ]);
   });
 });
