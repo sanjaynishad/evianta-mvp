@@ -20,7 +20,7 @@ import type {
   SectionDraft,
   SpecialistOutput,
 } from "./findings.js";
-import type { DocumentSlice } from "./slices.js";
+import type { DocumentSlice, SliceOptions } from "./slices.js";
 import { withBilledUsageAsync } from "./errors.js";
 import { truncate } from "./text.js";
 
@@ -58,6 +58,8 @@ export interface TaskExecutionContext {
   upstreamSections: readonly UpstreamSection[];
   /** Relevant document slices within the task's token budget. */
   documents: readonly DocumentSlice[];
+  /** Original slicing options, retained when a handler re-slices eligible content. */
+  documentSliceOptions?: SliceOptions;
   documentMetadata: readonly DocumentMetadata[];
   /** Full cached extraction, for deterministic pre-steps that must not go to the model whole. */
   loadExtractionAsync(documentId: string): Promise<ExtractedDocument | undefined>;
@@ -155,6 +157,9 @@ export function toPriorFindings(ctx: TaskExecutionContext): PriorFinding[] {
               text: truncate(question.text, 400),
               severity: question.severity,
               status: question.status,
+              ...(question.resolutionNote
+                ? { resolutionNote: truncate(question.resolutionNote, 400) }
+                : {}),
             })),
           }
         : {}),

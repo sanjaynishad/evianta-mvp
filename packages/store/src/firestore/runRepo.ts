@@ -1,27 +1,30 @@
-import { caseSchema } from "@evianta/core";
-import type { Firestore } from "firebase-admin/firestore";
+import { caseSchema, taskSchema } from "@evianta/core";
+import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { z } from "zod";
 
 import { StoreNotFoundError } from "../errors.js";
-import { applyCaseUsageIncrement } from "../mutations.js";
-import type { RunRepo } from "../types.js";
-import { casesCollection, toFirestoreData } from "./helpers.js";
+import {
+  addChargeAmounts,
+  applyCaseUsageIncrement,
+  applyTaskCharge,
+  caseUsageAmounts,
+  emptyUsageAmounts,
+  isLeaseHeld,
+  usageChargeSchema,
+} from "../mutations.js";
+import type { RunRepo, UsageAmounts } from "../types.js";
+import { caseSubcollection, casesCollection, toFirestoreData } from "./helpers.js";
+import { leaseRef, leaseSchema } from "./lease.js";
 
-const leaseSchema = z.object({ owner: z.string(), expiresAt: z.number() });
 const chargeSchema = z.object({
   applied: z.boolean(),
-  increment: z.object({
-    inputTokens: z.number().nonnegative().optional(),
-    outputTokens: z.number().nonnegative().optional(),
-    costEstimate: z.number().nonnegative().optional(),
-    runCount: z.number().int().nonnegative().optional(),
-    lastRunAt: z.string().optional(),
-  }),
+  runId: z.string().optional(),
+  taskId: z.string().optional(),
+  increment: usageChargeSchema.omit({ taskId: true }),
 });
 
 export function createRunRepo(db: Firestore): RunRepo {
   const cases = casesCollection(db);
-  const leaseRef = (caseId: string) => cases.doc(caseId).collection("runState").doc("lease");
 
   async function claimAsync(
     caseId: string,
@@ -30,7 +33,7 @@ export function createRunRepo(db: Firestore): RunRepo {
     renew: boolean,
   ): Promise<boolean> {
     return db.runTransaction(async (transaction) => {
-      const ref = leaseRef(caseId);
+      const ref = leaseRef(db, caseId);
       const [caseSnapshot, snapshot] = await Promise.all([
         transaction.get(cases.doc(caseId)),
         transaction.get(ref),
@@ -41,14 +44,13 @@ export function createRunRepo(db: Firestore): RunRepo {
       }
 
       const lease = snapshot.exists ? leaseSchema.parse(snapshot.data()) : undefined;
-      const now = Date.now();
-      const active = lease !== undefined && lease.expiresAt > now;
+      const active = lease !== undefined && lease.expiresAt > Date.now();
 
-      if (renew ? !active || lease.owner !== owner : active) {
+      if (renew ? !isLeaseHeld(lease, owner) : active) {
         return false;
       }
 
-      transaction.set(ref, { owner, expiresAt: now + ttlMs });
+      transaction.set(ref, { owner, expiresAt: Date.now() + ttlMs });
 
       return true;
     });
@@ -59,7 +61,7 @@ export function createRunRepo(db: Firestore): RunRepo {
     renewLeaseAsync: (caseId, owner, ttlMs) => claimAsync(caseId, owner, ttlMs, true),
     async releaseLeaseAsync(caseId, owner) {
       await db.runTransaction(async (transaction) => {
-        const ref = leaseRef(caseId);
+        const ref = leaseRef(db, caseId);
         const snapshot = await transaction.get(ref);
 
         if (snapshot.exists && leaseSchema.parse(snapshot.data()).owner === owner) {
@@ -67,12 +69,13 @@ export function createRunRepo(db: Firestore): RunRepo {
         }
       });
     },
-    async recordChargeAsync(caseId, runId, chargeId, increment) {
+    async recordChargeAsync(caseId, runId, chargeId, input) {
+      const { taskId, ...increment } = usageChargeSchema.parse(input);
       const ref = cases
         .doc(caseId)
         .collection("runCharges")
         .doc(`${encodeURIComponent(runId)}:${encodeURIComponent(chargeId)}`);
-      const charge = chargeSchema.parse({ applied: false, increment });
+      const charge = chargeSchema.parse({ applied: false, runId, taskId, increment });
 
       await db.runTransaction(async (transaction) => {
         const snapshot = await transaction.get(ref);
@@ -108,12 +111,27 @@ export function createRunRepo(db: Firestore): RunRepo {
             return false;
           }
 
+          const taskRef =
+            current.taskId === undefined
+              ? undefined
+              : caseSubcollection(db, caseId, "tasks").doc(current.taskId);
+          const taskSnapshot = taskRef ? await transaction.get(taskRef) : undefined;
           const updated = applyCaseUsageIncrement(
             caseSchema.parse(caseSnapshot.data()),
             current.increment,
           );
 
           transaction.update(caseRef, toFirestoreData(updated));
+
+          if (taskRef && taskSnapshot?.exists) {
+            const task = applyTaskCharge(taskSchema.parse(taskSnapshot.data()), current.increment);
+
+            transaction.update(
+              taskRef,
+              toFirestoreData({ tokenUsage: task.tokenUsage, costEstimate: task.costEstimate }),
+            );
+          }
+
           transaction.update(charge.ref, { applied: true });
 
           return true;
@@ -123,6 +141,35 @@ export function createRunRepo(db: Firestore): RunRepo {
       }
 
       return applied;
+    },
+    async getUsageTotalsAsync(caseId, runId) {
+      const charges = cases.doc(caseId).collection("runCharges");
+
+      return db.runTransaction(
+        async (transaction) => {
+          const [caseSnapshot, pending, runCharges] = await Promise.all([
+            transaction.get(cases.doc(caseId)),
+            transaction.get(charges.where("applied", "==", false)),
+            transaction.get(charges.where("runId", "==", runId)),
+          ]);
+
+          if (!caseSnapshot.exists) {
+            throw new StoreNotFoundError("case", caseId);
+          }
+
+          const sum = (start: UsageAmounts, docs: QueryDocumentSnapshot[]) =>
+            docs.reduce(
+              (total, doc) => addChargeAmounts(total, chargeSchema.parse(doc.data()).increment),
+              start,
+            );
+
+          return {
+            case: sum(caseUsageAmounts(caseSchema.parse(caseSnapshot.data())), pending.docs),
+            run: sum(emptyUsageAmounts(), runCharges.docs),
+          };
+        },
+        { readOnly: true },
+      );
     },
   };
 }
