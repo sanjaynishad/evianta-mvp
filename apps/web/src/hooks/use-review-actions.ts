@@ -23,6 +23,8 @@ export interface ReviewActionsOptions {
 
 export interface ReviewActions {
   isPending: (key: string) => boolean;
+  // True while a section, resolve, or dismiss change awaits the server.
+  hasPendingChanges: boolean;
   updateSectionAsync: (
     deliverableId: string,
     sectionId: string,
@@ -115,6 +117,7 @@ export function useReviewActions({
 }: ReviewActionsOptions): ReviewActions {
   const dataSource = useDataSource();
   const [pending, setPending] = useState<ReadonlySet<string>>(() => new Set());
+  const hasPendingChanges = [...pending].some((key) => key !== approveActionKey);
 
   function setKey(key: string, active: boolean) {
     setPending((current) => {
@@ -237,6 +240,15 @@ export function useReviewActions({
       return false;
     }
 
+    // Approval records which questions are still open, so it waits for resolves, dismissals,
+    // and section changes that have not been confirmed yet.
+    if (hasPendingChanges) {
+      toast.info("Your review changes are still saving", {
+        description: "Approve once they are saved, so the approval records them.",
+      });
+      return false;
+    }
+
     const previousApproval = state.case.approval;
     const cleaned = cleanNote(note);
     const optimisticApproval = {
@@ -279,6 +291,7 @@ export function useReviewActions({
 
   return {
     isPending: (key) => pending.has(key),
+    hasPendingChanges,
     updateSectionAsync,
     resolveQuestionAsync,
     dismissQuestionAsync,

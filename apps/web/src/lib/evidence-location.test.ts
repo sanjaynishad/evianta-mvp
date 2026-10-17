@@ -5,10 +5,13 @@ import {
   columnNumber,
   findQuoteInSpans,
   findQuoteRange,
+  findTableForLocation,
+  locationMatchesSheet,
   parseCellRange,
   rangeContainsCell,
   resolveRegionHighlight,
   sheetRangeOf,
+  splitSheetQualifier,
   tableLayout,
   toPercentStyle,
   unionBoxes,
@@ -36,6 +39,17 @@ describe("findQuoteInSpans", () => {
 
   it("returns undefined when the quote is not on the page", () => {
     expect(findQuoteInSpans("Total TDS", page.spans ?? [])).toBeUndefined();
+  });
+
+  it("matches a quote split inside a number across spans", () => {
+    const spans = [
+      { text: "Difference", bbox: { x: 0.1, y: 0.5, width: 0.15, height: 0.02 } },
+      { text: "12", bbox: { x: 0.7, y: 0.5, width: 0.02, height: 0.02 } },
+      { text: ",400", bbox: { x: 0.72, y: 0.5, width: 0.04, height: 0.02 } },
+    ];
+
+    expect(findQuoteInSpans("12,400", spans)).toEqual([spans[1]!.bbox, spans[2]!.bbox]);
+    expect(findQuoteInSpans("Difference 12,400", spans)).toHaveLength(3);
   });
 });
 
@@ -131,5 +145,26 @@ describe("sheet ranges", () => {
   it("maps table rows to worksheet rows from the table range", () => {
     const table: ExtractedTable = { name: "SOA", range: "C3:H20", columns: [], rows: [] };
     expect(tableLayout(table)).toEqual({ headerRow: 3, firstDataRow: 4, firstColumn: 3 });
+  });
+
+  it("uses the sheet named in a qualified cell range", () => {
+    const expenses: ExtractedTable = { name: "Expenses", sheet: "Expenses", columns: [], rows: [] };
+    const sales: ExtractedTable = { name: "Sales", sheet: "Sales", columns: [], rows: [] };
+    const quarter: ExtractedTable = { name: "Q2 Sales", sheet: "Q2 Sales", columns: [], rows: [] };
+    const tables = [expenses, sales, quarter];
+
+    expect(splitSheetQualifier("'Q2 Sales'!A1:B4")).toEqual({
+      sheet: "Q2 Sales",
+      reference: "A1:B4",
+    });
+    expect(splitSheetQualifier("H2")).toEqual({ reference: "H2" });
+    expect(findTableForLocation(tables, { cellRange: "Sales!H2" })).toBe(sales);
+    expect(findTableForLocation(tables, { cellRange: "'Q2 Sales'!A1" })).toBe(quarter);
+    expect(locationMatchesSheet({ cellRange: "Sales!H2" }, expenses)).toBe(false);
+    expect(locationMatchesSheet({ cellRange: "Sales!H2" }, sales)).toBe(true);
+    expect(sheetRangeOf({ cellRange: "'Q2 Sales'!B2:C3" })).toMatchObject({
+      startRow: 2,
+      endColumn: 3,
+    });
   });
 });

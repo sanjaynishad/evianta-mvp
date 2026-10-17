@@ -68,9 +68,14 @@ export function findQuoteRange(
   return { start: offsets[found]!, end: offsets[found + needle.length - 1]! + 1 };
 }
 
-// Finds the spans that together contain the quote, comparing case- and whitespace-insensitively.
+function compactText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, "");
+}
+
+// Finds the spans that together contain the quote, comparing case-insensitively and ignoring
+// whitespace entirely, because span boundaries can fall inside a word or number ("12" ",400").
 export function findQuoteInSpans(quote: string, spans: TextSpan[]): BoundingBox[] | undefined {
-  const needle = normalizeText(quote);
+  const needle = compactText(quote);
   if (!needle) {
     return undefined;
   }
@@ -78,13 +83,9 @@ export function findQuoteInSpans(quote: string, spans: TextSpan[]): BoundingBox[
   let haystack = "";
   const ranges: { start: number; end: number; span: TextSpan }[] = [];
   for (const span of spans) {
-    const text = normalizeText(span.text);
+    const text = compactText(span.text);
     if (!text) {
       continue;
-    }
-
-    if (haystack) {
-      haystack += " ";
     }
 
     ranges.push({ start: haystack.length, end: haystack.length + text.length, span });
@@ -217,10 +218,22 @@ export function columnLabel(column: number): string {
 }
 
 const cellPattern = /^\$?([A-Za-z]{1,3})\$?(\d+)$/;
+const qualifiedRangePattern = /^(?:'((?:[^']|'')+)'|([^!']+))!(.+)$/;
 
-// Parses an A1 cell or range such as "B14:F29" or "H2".
+// Splits "Sales!H2" or "'Q2 Sales'!A1:B4" into the worksheet name and the A1 reference.
+export function splitSheetQualifier(range: string): { sheet?: string; reference: string } {
+  const match = qualifiedRangePattern.exec(range.trim());
+  if (!match) {
+    return { reference: range.trim() };
+  }
+
+  const sheet = match[1] !== undefined ? match[1].replace(/''/g, "'") : match[2]!.trim();
+  return { sheet, reference: match[3]!.trim() };
+}
+
+// Parses an A1 cell or range such as "B14:F29" or "H2", optionally sheet-qualified.
 export function parseCellRange(range: string): SheetRange | undefined {
-  const [startRef, endRef = startRef] = range.split("!").at(-1)?.split(":") ?? [];
+  const [startRef, endRef = startRef] = splitSheetQualifier(range).reference.split(":");
   const start = startRef ? cellPattern.exec(startRef.trim()) : null;
   const end = endRef ? cellPattern.exec(endRef.trim()) : null;
   if (!start || !end) {
@@ -276,14 +289,22 @@ export function tableLayout(table: ExtractedTable): TableLayout {
   };
 }
 
+// The worksheet a location points at: its sheet field, else the qualifier on its cell range.
+export function sheetOfLocation(location: EvidenceLocation | undefined): string | undefined {
+  if (location?.sheet) {
+    return location.sheet;
+  }
+
+  return location?.cellRange ? splitSheetQualifier(location.cellRange).sheet : undefined;
+}
+
 export function findTableForLocation(
   tables: ExtractedTable[],
   location: EvidenceLocation | undefined,
 ): ExtractedTable | undefined {
-  if (location?.sheet) {
-    const match = tables.find(
-      (table) => table.sheet === location.sheet || table.name === location.sheet,
-    );
+  const sheet = sheetOfLocation(location);
+  if (sheet) {
+    const match = tables.find((table) => table.sheet === sheet || table.name === sheet);
     if (match) {
       return match;
     }
@@ -312,9 +333,10 @@ export function locationMatchesSheet(
   location: EvidenceLocation | undefined,
   table: ExtractedTable,
 ): boolean {
-  if (!location?.sheet) {
+  const sheet = sheetOfLocation(location);
+  if (!sheet) {
     return true;
   }
 
-  return location.sheet === table.sheet || location.sheet === table.name;
+  return sheet === table.sheet || sheet === table.name;
 }

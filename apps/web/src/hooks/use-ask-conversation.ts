@@ -33,7 +33,7 @@ export interface AskConversation {
 export interface AskConversationOptions {
   caseId: string;
   localNotes: LocalReviewNotes;
-  // Called after the API settles an answer, so the case can pick up the usage it recorded.
+  // Called after every request settles, so the case can pick up the usage the API recorded.
   onSettled?: () => void;
 }
 
@@ -98,7 +98,6 @@ export function useAskConversation({
           ? `Answer ready, citing ${result.evidenceIds.length} sources.`
           : "The work record does not support an answer to this question.",
       );
-      onSettled?.();
     } catch (error) {
       const cancelled = error instanceof DOMException && error.name === "AbortError";
       update(id, (exchange) => ({
@@ -111,6 +110,9 @@ export function useAskConversation({
       if (abortRef.current === controller) {
         abortRef.current = null;
       }
+
+      // Failed and stopped requests can still be billed, so reconcile usage after every outcome.
+      onSettled?.();
     }
   }
 

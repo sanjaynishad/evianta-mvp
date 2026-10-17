@@ -48,6 +48,8 @@ export interface ApprovalGateDialogProps {
   localNotes: LocalReviewNote[];
   cost: { total: number; tokens: number };
   approving: boolean;
+  // Set while review changes are still saving; approval waits so it records the saved state.
+  waitingForChanges?: boolean;
   onApprove: (note: string) => Promise<boolean>;
 }
 
@@ -60,6 +62,7 @@ export function ApprovalGateDialog({
   localNotes,
   cost,
   approving,
+  waitingForChanges = false,
   onApprove,
 }: ApprovalGateDialogProps) {
   const noteId = useId();
@@ -208,10 +211,23 @@ export function ApprovalGateDialog({
         </div>
 
         <DialogFooter>
+          {waitingForChanges ? (
+            <p
+              role="status"
+              data-testid="approval-waiting"
+              className="mr-auto self-center text-xs text-muted-foreground"
+            >
+              Saving your review changes. The summary updates when they are saved.
+            </p>
+          ) : null}
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Keep reviewing
           </Button>
-          <Button onClick={() => void handleApproveAsync()} loading={approving}>
+          <Button
+            onClick={() => void handleApproveAsync()}
+            loading={approving}
+            disabled={waitingForChanges}
+          >
             {approving ? null : <BadgeCheck aria-hidden />}
             {unresolved.length > 0 ? `Approve with ${unresolved.length} open` : "Approve case"}
           </Button>

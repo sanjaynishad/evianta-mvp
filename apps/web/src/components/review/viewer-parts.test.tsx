@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Evidence } from "@evianta/core";
 import { evidenceNamingLabel, type EvidenceEntry } from "@/lib/evidence";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { formatCell } from "./spreadsheet-viewer";
 import { TextSourceViewer } from "./text-source-viewer";
 
@@ -67,5 +68,20 @@ describe("TextSourceViewer", () => {
     const mark = document.querySelector("[data-quote-highlight]");
     expect(mark?.textContent).toBe("Difference\n12,400");
     expect(screen.getByText(/Particulars/)).toBeInTheDocument();
+  });
+});
+
+describe("Sheet", () => {
+  it("keeps open sheets and their overlay out of print", () => {
+    render(
+      <Sheet open>
+        <SheetContent side="right">
+          <SheetTitle>Evidence and Ask</SheetTitle>
+        </SheetContent>
+      </Sheet>,
+    );
+
+    expect(screen.getByRole("dialog")).toHaveClass("print:hidden");
+    expect(document.querySelector("[data-slot='sheet-overlay']")).toHaveClass("print:hidden");
   });
 });

@@ -26,6 +26,24 @@ describe("parseTextTable", () => {
     expect(table?.total?.discrepancy).toBeUndefined();
   });
 
+  it("places right-aligned values by full column width and keeps complete rows in order", () => {
+    const header = `${"Party".padEnd(20)}${"Ledger".padEnd(12)}${"Statement".padEnd(12)}Difference`;
+    const complete = `${"Alpha".padEnd(20)}${"1".padStart(11)} ${"1,000".padStart(11)} ${"-999".padStart(10)}`;
+    const sparse = `${"Beta".padEnd(20)}${" ".repeat(12)}${"1,000".padStart(11)} ${"-999".padStart(10)}`;
+    const table = parseTextTable([header, complete, sparse].join("\n"));
+
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ["Alpha", "1", "1,000", "-999"],
+      ["Beta", "", "1,000", "-999"],
+    ]);
+  });
+
+  it("falls back to plain text when two values land in one column", () => {
+    expect(
+      parseTextTable("Party        Amount\nAlpha   10   20   30\nBeta    1,000"),
+    ).toBeUndefined();
+  });
+
   it("aligns sparse rows under their headers", () => {
     const table = parseTextTable(
       "Invoice        Amount   Days overdue   Interest\nKF-2025-104  2,40,000            148     28,410\nTotal        8,42,000                    61,870",

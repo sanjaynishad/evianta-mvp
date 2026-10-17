@@ -44,37 +44,38 @@ export function parseFigure(text: string): number | undefined {
   return Number.isFinite(value) ? value : undefined;
 }
 
-function overlap(token: Token, header: Token): number {
-  return Math.min(token.end, header.end) - Math.max(token.start, header.start);
+function columnAt(position: number, headers: Token[]): number {
+  let column = 0;
+  headers.forEach((header, index) => {
+    if (position >= header.start) {
+      column = index;
+    }
+  });
+  return column;
 }
 
-function distance(token: Token, header: Token): number {
-  if (overlap(token, header) > 0) {
-    return 0;
+// Places each value under its header. A row with one value per column keeps the column order.
+// Otherwise each column spans from its header to the next header; numbers are placed by where
+// they end (they are right-aligned), text by where it starts. Two values landing in one column
+// make the row ambiguous, so the caller falls back to plain text.
+function assignColumns(tokens: Token[], headers: Token[]): string[] | undefined {
+  if (tokens.length === headers.length) {
+    return tokens.map((token) => token.text);
   }
 
-  return Math.min(Math.abs(token.end - header.end), Math.abs(token.start - header.start));
-}
+  if (tokens.length > headers.length) {
+    return undefined;
+  }
 
-function assignColumns(tokens: Token[], headers: Token[]): string[] {
   const cells = headers.map(() => "");
   for (const token of tokens) {
-    let best = 0;
-    let bestOverlap = Number.NEGATIVE_INFINITY;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    headers.forEach((header, index) => {
-      const tokenOverlap = overlap(token, header);
-      const tokenDistance = distance(token, header);
-      if (
-        tokenOverlap > bestOverlap ||
-        (tokenOverlap === bestOverlap && tokenDistance < bestDistance)
-      ) {
-        best = index;
-        bestOverlap = tokenOverlap;
-        bestDistance = tokenDistance;
-      }
-    });
-    cells[best] = cells[best] ? `${cells[best]} ${token.text}` : token.text;
+    const anchor = parseFigure(token.text) !== undefined ? token.end - 1 : token.start;
+    const column = columnAt(anchor, headers);
+    if (cells[column]) {
+      return undefined;
+    }
+
+    cells[column] = token.text;
   }
 
   return cells;
@@ -94,10 +95,16 @@ export function parseTextTable(content: string): TextTable | undefined {
   }
 
   const headers = headerTokens.map((token) => token.text);
-  const parsedRows = lines.slice(1).map((line) => {
+  const parsedRows: { cells: string[]; values: (number | undefined)[] }[] = [];
+  for (const line of lines.slice(1)) {
     const cells = assignColumns(tokenize(line), headerTokens);
-    return { cells, values: cells.map(parseFigure) };
-  });
+    if (!cells) {
+      return undefined;
+    }
+
+    parsedRows.push({ cells, values: cells.map(parseFigure) });
+  }
+
   const numericColumns = headers.map(
     (_, index) =>
       index > 0 &&

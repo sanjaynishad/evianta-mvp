@@ -23,7 +23,7 @@ function SheetOverlay({ className, ...props }: ComponentProps<typeof SheetPrimit
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-foreground/30 duration-base data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 dark:bg-black/60",
+        "fixed inset-0 z-50 bg-foreground/30 duration-base data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 dark:bg-black/60 print:hidden",
         className,
       )}
       {...props}
@@ -32,7 +32,7 @@ function SheetOverlay({ className, ...props }: ComponentProps<typeof SheetPrimit
 }
 
 const sheetVariants = cva(
-  "fixed z-50 flex flex-col gap-4 bg-popover text-popover-foreground shadow-elevation-3 ease-emphasized data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=open]:animate-in data-[state=open]:duration-slow",
+  "fixed z-50 flex flex-col gap-4 bg-popover text-popover-foreground shadow-elevation-3 ease-emphasized data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=open]:animate-in data-[state=open]:duration-slow print:hidden",
   {
     variants: {
       side: {

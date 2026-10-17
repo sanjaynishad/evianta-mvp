@@ -446,6 +446,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
         localNotes={localNotes.notes}
         cost={{ total: progress.totalCost, tokens: progress.totalTokens }}
         approving={actions.isPending(approveActionKey)}
+        waitingForChanges={actions.hasPendingChanges}
         onApprove={(note) => {
           setGateOpen(false);
           return actions.approveAsync(note);

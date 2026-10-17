@@ -397,6 +397,64 @@ describe("review workspace", { timeout }, () => {
     );
   });
 
+  it("refreshes usage after a failed Ask request", async () => {
+    const dataSource = createTestDataSource();
+    vi.spyOn(dataSource, "askAsync").mockRejectedValue(
+      new ApiError("The assistant could not answer right now.", 200, { code: "ask-failed" }),
+    );
+    renderWithDataSource(<CaseWorkspace caseId="sample-tax-notice" />, dataSource);
+
+    fireEvent.mouseDown(await screen.findByRole("tab", { name: /Ask/ }));
+    const refreshSpy = vi.spyOn(dataSource, "getCaseStateAsync");
+    fireEvent.click(await screen.findByRole("button", { name: "Why is the TDS mismatch 12,400?" }));
+
+    expect(
+      await screen.findByText("The assistant could not answer right now."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(refreshSpy).toHaveBeenCalledWith("sample-tax-notice"));
+  });
+
+  it("holds approval until pending review changes are saved", async () => {
+    const copy = visitorCopy(taxSample, "case-approval-waits");
+    const dataSource = createTestDataSource({ seedStates: [copy] });
+    const realResolve = dataSource.resolveOpenQuestionAsync.bind(dataSource);
+    let release: () => void = () => {};
+
+    vi.spyOn(dataSource, "resolveOpenQuestionAsync").mockImplementation(
+      async (caseId, questionId, note) => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return realResolve(caseId, questionId, note);
+      },
+    );
+    const approveSpy = vi.spyOn(dataSource, "approveCaseAsync");
+    renderWithDataSource(<CaseWorkspace caseId={copy.case.id} />, dataSource);
+
+    const question =
+      "Has Mehta Exports been asked to file a correction statement with the right PAN?";
+    fireEvent.click(await screen.findByRole("button", { name: `Resolve: ${question}` }));
+    fireEvent.click(screen.getByRole("button", { name: `Confirm resolve: ${question}` }));
+    fireEvent.click(screen.getByRole("button", { name: /Review and approve/ }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Approve this case" });
+    expect(within(dialog).getByTestId("approval-waiting")).toBeInTheDocument();
+    const approve = within(dialog).getByRole("button", { name: "Approve with 1 open" });
+    expect(approve).toBeDisabled();
+    fireEvent.click(approve);
+    expect(approveSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      release();
+    });
+    await waitFor(() =>
+      expect(within(dialog).queryByTestId("approval-waiting")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Approve with 1 open" }));
+    await waitFor(() => expect(approveSpy).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("approval-badge")).toHaveTextContent("with 1 open item");
+  });
+
   it("offers to flag an unsupported question for review", async () => {
     renderWithDataSource(<CaseWorkspace caseId="sample-tax-notice" />);
 
