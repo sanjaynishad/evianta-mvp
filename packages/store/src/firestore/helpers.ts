@@ -4,12 +4,16 @@ import type {
   DocumentReference,
   Firestore,
   QueryDocumentSnapshot,
+  Transaction,
 } from "firebase-admin/firestore";
 import type { z } from "zod";
 
 import { StoreConflictError, StoreNotFoundError, type StoreEntity } from "../errors.js";
 
 export type EntitySchema<T> = z.ZodType<T, z.ZodTypeDef, unknown>;
+
+/** Runs first inside a write transaction and throws to abort the write. */
+export type TransactionGuard = (transaction: Transaction) => Promise<void>;
 
 export type CaseSubcollection =
   | "tasks"
@@ -120,7 +124,22 @@ export async function createDocAsync(
   ref: DocumentReference,
   value: object,
   entity: StoreEntity,
+  guard?: TransactionGuard,
 ): Promise<void> {
+  if (guard) {
+    await ref.firestore.runTransaction(async (transaction) => {
+      await guard(transaction);
+
+      if ((await transaction.get(ref)).exists) {
+        throw new StoreConflictError(entity, ref.id);
+      }
+
+      transaction.create(ref, toFirestoreData({ ...value, [orderField]: nextOrder() }));
+    });
+
+    return;
+  }
+
   try {
     await ref.create(toFirestoreData({ ...value, [orderField]: nextOrder() }));
   } catch (error) {
@@ -152,8 +171,10 @@ export async function mutateDocAsync<T extends object>(
   schema: EntitySchema<T>,
   entity: StoreEntity,
   mutate: (current: T) => T,
+  guard?: TransactionGuard,
 ): Promise<T> {
   return db.runTransaction(async (transaction) => {
+    await guard?.(transaction);
     const snapshot = await transaction.get(ref);
 
     if (!snapshot.exists) {

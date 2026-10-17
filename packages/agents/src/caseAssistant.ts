@@ -1,5 +1,11 @@
 import { AiNonTransientError, emptyUsage, type AiClient, type Cost } from "@evianta/ai";
-import type { Evidence, Finding, ModelTier, TokenUsage } from "@evianta/core";
+import {
+  openQuestionStatusSchema,
+  type Evidence,
+  type Finding,
+  type ModelTier,
+  type TokenUsage,
+} from "@evianta/core";
 import type { Store } from "@evianta/store";
 import { z } from "zod";
 
@@ -33,7 +39,15 @@ export const caseAssistantInputSchema = z.object({
           excerpt: z.string().optional(),
         }),
       ),
-      openQuestions: z.array(z.string()).optional(),
+      openQuestions: z
+        .array(
+          z.object({
+            text: z.string(),
+            status: openQuestionStatusSchema,
+            resolutionNote: z.string().optional(),
+          }),
+        )
+        .optional(),
     }),
   ),
 });
@@ -53,6 +67,7 @@ export const CASE_ASSISTANT_SYSTEM_PROMPT = [
   "You answer a reviewer's question about a case using only the provided findings and evidence from its work record.",
   "Do not do new arithmetic; quote figures exactly as they appear in the findings.",
   "Cite the evidenceIds and findingIds you relied on, using only ids that appear in the input.",
+  "Open questions carry their status; a resolved or dismissed question's resolutionNote is the professional's answer and is part of the record.",
   "If the provided record does not answer the question, set supported to false and leave the answer short. Never guess.",
 ].join("\n");
 
@@ -112,7 +127,9 @@ function findingSearchFields(finding: Finding, evidenceById: ReadonlyMap<string,
     evidence: evidence
       .map((item) => `${item.sourceRef} ${item.description} ${item.excerpt ?? ""}`)
       .join(" "),
-    questions: finding.openQuestions.map((question) => question.text).join(" "),
+    questions: finding.openQuestions
+      .map((question) => `${question.text} ${question.resolutionNote ?? ""}`)
+      .join(" "),
   };
 }
 
@@ -228,7 +245,15 @@ export async function askCaseAsync(
         };
       }),
       ...(finding.openQuestions.length > 0
-        ? { openQuestions: finding.openQuestions.map((item) => item.text) }
+        ? {
+            openQuestions: finding.openQuestions.map((item) => ({
+              text: truncate(item.text, 400),
+              status: item.status,
+              ...(item.resolutionNote
+                ? { resolutionNote: truncate(item.resolutionNote, 400) }
+                : {}),
+            })),
+          }
         : {}),
     })),
   };

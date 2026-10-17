@@ -42,6 +42,7 @@ export const documentSliceSchema = z.object({
   page: z.number().int().positive().optional(),
   sheet: z.string().optional(),
   table: z.string().optional(),
+  range: z.string().optional(),
   rowRange: z.object({ start: z.number().int(), end: z.number().int() }).optional(),
   text: z.string(),
   confidence: z.number().min(0).max(1).optional(),
@@ -64,6 +65,7 @@ export const priorFindingSchema = z.object({
         text: z.string(),
         severity: openQuestionSeveritySchema,
         status: openQuestionStatusSchema,
+        resolutionNote: z.string().optional(),
       }),
     )
     .optional(),
@@ -299,7 +301,7 @@ export const SPECIALIST_DEFINITIONS: Readonly<Record<SpecialistRole, SpecialistD
 export function specialistSystemPrompt(role: AgentRole, focus: string, grounding: boolean): string {
   const citation = grounding
     ? "Cite web sources with evidence entries whose url is a grounding source. Add a high-severity open question for any claim you could not source."
-    : "Cite evidence with the documentId of a provided document slice plus the page, sheet, cellRange, rows, or a short verbatim textQuote.";
+    : "Cite evidence with the documentId of a provided document slice plus the page, sheet, cellRange, rows, or a short verbatim textQuote. Table slices number rows and cells in worksheet coordinates from their range and rowRange.";
 
   return [
     `You are the ${role} specialist in a professional workspace that prepares work for human review.`,

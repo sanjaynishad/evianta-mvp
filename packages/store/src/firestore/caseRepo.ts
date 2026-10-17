@@ -22,6 +22,7 @@ import {
 } from "../mutations.js";
 import type { CaseRepo } from "../types.js";
 import { extractionChunkSchema, extractionMetaSchema } from "./documentRepo.js";
+import { leaseGuard } from "./lease.js";
 import {
   caseSubcollection,
   casesCollection,
@@ -103,9 +104,14 @@ export function createCaseRepo(db: Firestore): CaseRepo {
 
       return { cases: page, nextCursor: hasMore ? page.at(-1)?.id : undefined };
     },
-    async updateCaseStatusAsync(caseId, status) {
-      return mutateDocAsync(db, cases.doc(caseId), caseSchema, "case", (current) =>
-        applyCaseStatus(current, status),
+    async updateCaseStatusAsync(caseId, status, fence) {
+      return mutateDocAsync(
+        db,
+        cases.doc(caseId),
+        caseSchema,
+        "case",
+        (current) => applyCaseStatus(current, status),
+        leaseGuard(db, caseId, fence),
       );
     },
     async updateCaseUsageAsync(caseId, increment) {

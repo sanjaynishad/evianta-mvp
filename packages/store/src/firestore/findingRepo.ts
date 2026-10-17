@@ -11,16 +11,18 @@ import {
   orderField,
   toFirestoreData,
 } from "./helpers.js";
+import { leaseGuard } from "./lease.js";
 
 export function createFindingRepo(db: Firestore): FindingRepo {
   return {
-    async addFindingAsync(caseId, input) {
+    async addFindingAsync(caseId, input, fence) {
       const finding = findingSchema.parse(input);
 
       await createDocAsync(
         caseSubcollection(db, caseId, "findings").doc(finding.id),
         finding,
         "finding",
+        leaseGuard(db, caseId, fence),
       );
 
       return finding;
