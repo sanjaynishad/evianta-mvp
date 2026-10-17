@@ -118,11 +118,14 @@ export function resolveCreditTerms(
   upstreamFindings: readonly Finding[] = [],
 ): CreditTermsResolution {
   const sources = creditTermsInDocuments(documents);
-  const analysed = upstreamFindings.flatMap((finding) =>
-    (finding.figures ?? [])
-      .filter((figure) => figure.key === MSME_FIGURE_KEYS.agreedCreditDays && figure.value > 0)
-      .map((figure) => ({ finding, days: figure.value })),
-  );
+  // A credit period the model reported without a surviving source document is never relied on.
+  const analysed = upstreamFindings
+    .filter((finding) => finding.evidence.some((item) => item.documentId !== undefined))
+    .flatMap((finding) =>
+      (finding.figures ?? [])
+        .filter((figure) => figure.key === MSME_FIGURE_KEYS.agreedCreditDays && figure.value > 0)
+        .map((figure) => ({ finding, days: figure.value })),
+    );
   const distinct = new Map<number, CreditTermsConflict>();
 
   for (const source of sources) {

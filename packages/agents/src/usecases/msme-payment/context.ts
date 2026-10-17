@@ -10,7 +10,12 @@ import {
 } from "../../handlers.js";
 import { MSME_DATE_KEYS } from "./constants.js";
 import { toIsoDate } from "./dates.js";
-import { readPaymentRecords, type PaymentCaseDocument, type PaymentRecordSet } from "./records.js";
+import {
+  readPaymentRecords,
+  recordTableKey,
+  type PaymentCaseDocument,
+  type PaymentRecordSet,
+} from "./records.js";
 import {
   reconcilePayments,
   type PaymentReconcileOptions,
@@ -144,12 +149,16 @@ export function resolveAgentFor<A>(
 
 /** Drops table slices of the invoice and payment records; their rows reach the model as context. */
 export function withoutRecordTables<
-  T extends { documents: Array<{ kind: string; documentId: string }> },
->(input: T, recordDocumentIds: ReadonlySet<string>): T {
+  T extends { documents: Array<{ kind: string; documentId: string; table?: string }> },
+>(input: T, recordTables: ReadonlySet<string>): T {
   return {
     ...input,
     documents: input.documents.filter(
-      (slice) => !(slice.kind === "table" && recordDocumentIds.has(slice.documentId)),
+      (slice) =>
+        !(
+          slice.kind === "table" &&
+          recordTables.has(recordTableKey(slice.documentId, slice.table ?? ""))
+        ),
     ),
   };
 }

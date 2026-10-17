@@ -259,7 +259,22 @@ export function reconcilePayments(
     const [match] = exact;
 
     if (match) {
-      allocate(match, payment, amount, exact.length === 1 ? "amount-match" : "date-order");
+      const applied = allocate(
+        match,
+        payment,
+        amount,
+        exact.length === 1 ? "amount-match" : "date-order",
+      );
+      const left = round2(amount - applied);
+
+      if (left > 0) {
+        unallocated.push({
+          payment,
+          amount: left,
+          reason: `it exceeds the open balance of ${match.invoice.invoiceNumber} by this amount`,
+        });
+      }
+
       continue;
     }
 

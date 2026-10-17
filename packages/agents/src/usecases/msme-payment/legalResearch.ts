@@ -29,7 +29,7 @@ import {
   withoutRecordTables,
 } from "./context.js";
 import { msmeDocumentSourceSchema } from "./documentAnalysis.js";
-import { readPaymentRecords, recordDocumentIds } from "./records.js";
+import { readPaymentRecords, recordTableKeys } from "./records.js";
 
 export const legalRouteKindSchema = z.enum(["contractual", "statutory", "procedural"]);
 
@@ -302,7 +302,7 @@ export function createLegalResearchTaskHandler(
     (ctx) => resolveAgentFor(ctx, "legal-research", options.agent, createLegalResearchAgent),
     {
       async prepareAsync(ctx) {
-        return recordDocumentIds(readPaymentRecords(await loadPaymentCaseDocumentsAsync(ctx)));
+        return recordTableKeys(readPaymentRecords(await loadPaymentCaseDocumentsAsync(ctx)));
       },
       buildInput(ctx, recordIds) {
         return withoutRecordTables(buildSpecialistInput(ctx), recordIds);

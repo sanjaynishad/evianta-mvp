@@ -42,7 +42,7 @@ import { toIsoDate } from "./dates.js";
 import {
   normalizeInvoiceNumber,
   readPaymentRecords,
-  recordDocumentIds,
+  recordTableKeys,
   recordLocationLabel,
   type PaymentRecordSet,
 } from "./records.js";
@@ -163,7 +163,7 @@ export function createDocumentAnalysisAgent(): DocumentAnalysisAgent {
 
 interface DocumentAnalysisPrepared {
   records: PaymentRecordSet;
-  recordDocumentIds: Set<string>;
+  recordTables: Set<string>;
   lowConfidencePages: PaymentReviewPage[];
   termsInText: CreditTermsSource[];
 }
@@ -611,14 +611,12 @@ export function createDocumentAnalysisTaskHandler(
       async prepareAsync(ctx) {
         const documents = await loadPaymentCaseDocumentsAsync(ctx);
         const records = readPaymentRecords(documents);
-        const ids = recordDocumentIds(records);
-        const others = documents.filter((document) => !ids.has(document.metadata.id));
 
         return {
           records,
-          recordDocumentIds: ids,
-          lowConfidencePages: paymentPagesToVerify(others),
-          termsInText: creditTermsInDocuments(others),
+          recordTables: recordTableKeys(records),
+          lowConfidencePages: paymentPagesToVerify(documents),
+          termsInText: creditTermsInDocuments(documents),
         };
       },
       buildInput(ctx, prepared) {
@@ -635,7 +633,7 @@ export function createDocumentAnalysisTaskHandler(
             : {}),
         };
 
-        return withoutRecordTables(buildSpecialistInput(ctx, context), prepared.recordDocumentIds);
+        return withoutRecordTables(buildSpecialistInput(ctx, context), prepared.recordTables);
       },
       toTaskOutput(result, ctx, prepared) {
         return documentAnalysisTaskOutput(

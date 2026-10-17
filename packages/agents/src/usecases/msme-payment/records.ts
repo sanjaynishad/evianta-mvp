@@ -21,8 +21,24 @@ type PaymentColumn = "date" | "amount" | "invoiceRef" | "reference" | "narration
 
 // Headers such as "Total Quantity" or "Credit days" hold no money even though they say total or credit.
 const NON_MONETARY = /\b(qty|quantity|units?|count|pcs|nos|weight|days|rate|percent(age)?)\b|%/i;
-// Among several money columns, the one that clearly holds the invoice or receipt amount.
-const PREFERRED_AMOUNT = /\btotal\b|invoice\s*(amount|value)|amount\s*(paid|received)/i;
+const MONEY_WORD = /\b(amount|amt|value)\b/i;
+
+interface AmountRules {
+  /** Among several money columns, the one that clearly holds the amount. */
+  preferred: RegExp;
+  /** Money columns that never hold this table's amount. */
+  excluded?: RegExp;
+}
+
+const INVOICE_AMOUNT_RULES: AmountRules = {
+  preferred: /\btotal\b|invoice\s*(amount|value)/i,
+};
+
+// In a payment table, an invoice or bill amount is what was billed, not what was received.
+const PAYMENT_AMOUNT_RULES: AmountRules = {
+  preferred: /\b(paid|received|receipt|credited|remitted)\b/i,
+  excluded: /\b(invoice|bill|outstanding|balance|due)\b/i,
+};
 
 // Checked in order, so "Invoice date" is a date column and "Invoice no" is the number column.
 const INVOICE_COLUMN_PATTERNS: ReadonlyArray<[InvoiceColumn, RegExp]> = [
@@ -33,10 +49,14 @@ const INVOICE_COLUMN_PATTERNS: ReadonlyArray<[InvoiceColumn, RegExp]> = [
   ["amount", /total|amount|value|gross/i],
 ];
 
+// Reference patterns skip money and date headers such as "Transaction Amount" or "Invoice Date".
 const PAYMENT_COLUMN_PATTERNS: ReadonlyArray<[PaymentColumn, RegExp]> = [
-  ["invoiceRef", /invoice|bill|against/i],
+  ["invoiceRef", /^(?!.*\b(amount|amt|value|date)\b).*(invoice|bill|against)/i],
   ["date", /date/i],
-  ["reference", /\butr\b|\bref|cheque|chq|transaction|txn|voucher|payment\s*(id|no)/i],
+  [
+    "reference",
+    /^(?!.*\b(amount|amt|value)\b).*(\butr\b|\bref|cheque|chq|transaction|txn|voucher|payment\s*(id|no))/i,
+  ],
   ["amount", /amount|paid|received|credit|value/i],
   ["narration", /narration|remark|description|particulars|note/i],
 ];
@@ -155,6 +175,7 @@ interface ColumnSelection<C extends string> {
 function selectColumns<C extends string>(
   columnNames: readonly string[],
   patterns: ReadonlyArray<[C, RegExp]>,
+  rules: AmountRules,
 ): ColumnSelection<C> {
   const amountKind = "amount" as C;
   const amountPattern = patterns.find(([kind]) => kind === amountKind)?.[1];
@@ -167,9 +188,12 @@ function selectColumns<C extends string>(
     .map((name, index) => ({ name, index }))
     .filter(
       ({ name, index }) =>
-        !taken.has(index) && amountPattern?.test(name) === true && !NON_MONETARY.test(name),
+        !taken.has(index) &&
+        amountPattern?.test(name) === true &&
+        !NON_MONETARY.test(name) &&
+        !(rules.excluded?.test(name) && MONEY_WORD.test(name)),
     );
-  const preferred = candidates.filter(({ name }) => PREFERRED_AMOUNT.test(name));
+  const preferred = candidates.filter(({ name }) => rules.preferred.test(name));
   const chosen = candidates.length === 1 ? candidates : preferred;
 
   if (chosen.length === 1 && chosen[0]) {
@@ -190,8 +214,16 @@ export function classifyRecordTable(
 ): PaymentRecordKind | undefined {
   const name = `${documentName} ${tableName}`.toLowerCase();
   const headers = columnNames.join(" ").toLowerCase();
-  const invoiceSelection = selectColumns(columnNames, INVOICE_COLUMN_PATTERNS);
-  const paymentSelection = selectColumns(columnNames, PAYMENT_COLUMN_PATTERNS);
+  const invoiceSelection = selectColumns(
+    columnNames,
+    INVOICE_COLUMN_PATTERNS,
+    INVOICE_AMOUNT_RULES,
+  );
+  const paymentSelection = selectColumns(
+    columnNames,
+    PAYMENT_COLUMN_PATTERNS,
+    PAYMENT_AMOUNT_RULES,
+  );
   const invoiceColumns = invoiceSelection.columns;
   const paymentColumns = paymentSelection.columns;
   // An ambiguous amount still marks a record table; the reader reports it instead of guessing.
@@ -280,6 +312,8 @@ function labelColumn(columnNames: readonly string[]): number | undefined {
 const INVOICE_NUMBER_IN_TEXT =
   /\b(?:inv|invoice|bill)[\s#:.-]*(?:no\.?\s*)?(?=[A-Z0-9/-]*\d)[A-Z0-9](?:[A-Z0-9/-]*[A-Z0-9])?(?![A-Z0-9/-]*[A-Z0-9])/gi;
 const PLACEHOLDER_REF = /^(n\/?a|nil|none|-+|tbd|on\s+account|advance)$/i;
+// A whole identifier-like token: letters, digits, "/" and "-", not cut off inside a longer token.
+const IDENTIFIER_TOKEN = /(?<![A-Z0-9/-])[A-Z0-9](?:[A-Z0-9/-]*[A-Z0-9])?(?![A-Z0-9/-]*[A-Z0-9])/gi;
 
 function withoutLetterPrefix(key: string): string {
   return key.replace(/^[A-Z]+/, "");
@@ -333,9 +367,13 @@ export function invoiceRefsInText(
     refs.push(match[0].trim());
   }
 
-  for (const part of invoiceRefsInCell(text)) {
-    if (knownKeys.has(normalizeInvoiceNumber(part))) {
-      refs.push(part);
+  // Register numbers written without a label, as in "Paid against B-1001"; a token must match a
+  // register key exactly, so "B-1001/24A" or "OLD-1001" never stands in for B-1001.
+  for (const match of text.matchAll(IDENTIFIER_TOKEN)) {
+    const token = match[0];
+
+    if (/\d/.test(token) && knownKeys.has(normalizeInvoiceNumber(token))) {
+      refs.push(token);
     }
   }
 
@@ -375,7 +413,11 @@ function readInvoices(
   seen: Map<string, InvoiceRecord>,
 ): number {
   const columnNames = table.columns.map((column) => column.name);
-  const { columns, ambiguousAmount } = selectColumns(columnNames, INVOICE_COLUMN_PATTERNS);
+  const { columns, ambiguousAmount } = selectColumns(
+    columnNames,
+    INVOICE_COLUMN_PATTERNS,
+    INVOICE_AMOUNT_RULES,
+  );
   const amountColumn = columns.amount;
   let count = 0;
 
@@ -471,6 +513,7 @@ function readPayments(
   const { columns, ambiguousAmount } = selectColumns(
     table.columns.map((column) => column.name),
     PAYMENT_COLUMN_PATTERNS,
+    PAYMENT_AMOUNT_RULES,
   );
 
   if (ambiguousAmount) {
@@ -686,8 +729,13 @@ export function readPaymentRecords(documents: readonly PaymentCaseDocument[]): P
   return set;
 }
 
-export function recordDocumentIds(records: PaymentRecordSet): Set<string> {
-  return new Set(records.tables.map((table) => table.documentId));
+export function recordTableKey(documentId: string, tableName: string): string {
+  return `${documentId}|${tableName}`;
+}
+
+/** The invoice and payment tables, by document and table, so other tables in a workbook are kept. */
+export function recordTableKeys(records: PaymentRecordSet): Set<string> {
+  return new Set(records.tables.map((table) => recordTableKey(table.documentId, table.table.name)));
 }
 
 export function recordLocationLabel(record: {

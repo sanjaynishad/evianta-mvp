@@ -37,7 +37,7 @@ import {
   withoutRecordTables,
   type PaymentCase,
 } from "./context.js";
-import { normalizeInvoiceNumber, recordDocumentIds, recordLocationLabel } from "./records.js";
+import { normalizeInvoiceNumber, recordTableKeys, recordLocationLabel } from "./records.js";
 import {
   hasPaymentData,
   outstandingComponents,
@@ -565,7 +565,7 @@ export function createPaymentReconciliationTaskHandler(
 
         return withoutRecordTables(
           buildSpecialistInput(ctx, paymentReconciliationContext(prepared.reconciliation)),
-          recordDocumentIds(prepared.records),
+          recordTableKeys(prepared.records),
         );
       },
       toTaskOutput(result, _ctx, prepared) {

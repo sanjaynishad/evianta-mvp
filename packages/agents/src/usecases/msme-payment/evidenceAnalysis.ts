@@ -41,7 +41,7 @@ import {
 } from "./context.js";
 import { toIsoDate } from "./dates.js";
 import { msmeDocumentSourceSchema } from "./documentAnalysis.js";
-import { recordDocumentIds } from "./records.js";
+import { recordTableKeys } from "./records.js";
 import type { PaymentReconcileOptions } from "./reconcile.js";
 
 export const disputedItemSchema = z.object({
@@ -308,7 +308,7 @@ export function createEvidenceAnalysisTaskHandler(
 
         return withoutRecordTables(
           buildSpecialistInput(ctx, context),
-          recordDocumentIds(prepared.records),
+          recordTableKeys(prepared.records),
         );
       },
       toTaskOutput(result, _ctx, prepared) {

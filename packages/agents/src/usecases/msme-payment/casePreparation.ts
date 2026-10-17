@@ -48,7 +48,7 @@ import {
   prepareEvidenceAnalysisAsync,
   type EvidenceAnalysisPrepared,
 } from "./evidenceAnalysis.js";
-import { recordDocumentIds } from "./records.js";
+import { recordTableKeys } from "./records.js";
 import {
   hasPaymentData,
   type PaymentReconcileOptions,
@@ -676,7 +676,7 @@ export function createCasePreparationTaskHandler(
 
         return withoutRecordTables(
           buildSpecialistInput(ctx, context),
-          recordDocumentIds(prepared.records),
+          recordTableKeys(prepared.records),
         );
       },
       toTaskOutput(result, ctx, prepared) {
