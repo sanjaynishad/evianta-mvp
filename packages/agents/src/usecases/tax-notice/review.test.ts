@@ -12,6 +12,7 @@ import type { VerificationFinding } from "../../verification.js";
 import { TAX_FIGURE_KEYS } from "./constants.js";
 import {
   draftFiguresCheck,
+  numbersIn,
   parseMarkdownTable,
   quotedAmounts,
   reconciliationRecomputeCheck,
@@ -185,6 +186,13 @@ describe("tax-notice review checks", () => {
         (issue) => issue.message,
       ),
     ).toEqual([expect.stringContaining('has more than one row "Difference"')]);
+    for (const reversed of ["(12,400)", "−12,400", "-12,400"]) {
+      expect(check(regenerated.content.replace("| 12,400 |", `| ${reversed} |`))).toEqual([
+        expect.objectContaining({ message: expect.stringContaining(`shows "${reversed}"`) }),
+      ]);
+    }
+
+    expect(numbersIn("5,00,000 / (3,000) / −2.5")).toEqual([500000, -3000, -2.5]);
     expect(check("The schedule was replaced by prose.")[0]?.message).toContain(
       "no longer contains its table",
     );

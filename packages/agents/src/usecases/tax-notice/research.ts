@@ -79,6 +79,21 @@ function sectionNumber(reference: string): string | undefined {
   return /\b(\d{1,3}[A-Z]{0,3})(\(\w+\))*/i.exec(reference)?.[0];
 }
 
+/**
+ * The identifier to match: the full number and year for circulars and notifications ("13/2024"),
+ * else the section or rule number. Undefined when a circular's year cannot be read, so the
+ * provision stays unverified rather than matching on its first number.
+ */
+function provisionIdentifier(reference: string, kind: string | undefined): string | undefined {
+  if (kind === "circular" || kind === "notification") {
+    const match = /\b(\d{1,4})\s*\/\s*(\d{4})\b/.exec(reference);
+
+    return match ? `${match[1]}/${match[2]}` : undefined;
+  }
+
+  return sectionNumber(reference);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -105,7 +120,7 @@ export function provisionKind(reference: string): string | undefined {
  */
 export function mentionsProvision(text: string, identifier: string, kind?: string): boolean {
   const prefix = PROVISION_KINDS.find((entry) => entry.kind === kind)?.prefix;
-  const number = `${escapeRegExp(identifier)}(?!\\w)`;
+  const number = `${escapeRegExp(identifier).replace("/", "\\s*\\/\\s*")}(?![\\w/])`;
   const pattern = prefix ? `\\b${prefix}\\s*${number}` : `(?<![\\w(])${number}`;
 
   return new RegExp(pattern, "i").test(text);
@@ -123,7 +138,8 @@ export function citationsForProvision(provision: Provision, citations: readonly 
     return exact;
   }
 
-  const identifier = sectionNumber(provision.reference);
+  const kind = provisionKind(provision.reference);
+  const identifier = provisionIdentifier(provision.reference, kind);
 
   if (!identifier) {
     return [];
@@ -136,8 +152,6 @@ export function citationsForProvision(provision: Provision, citations: readonly 
     return hosts.has(title) || hosts.has(hostnameOf(citation.url) ?? "");
   });
   const candidates = sameSite.length > 0 ? sameSite : citations;
-
-  const kind = provisionKind(provision.reference);
 
   return candidates.filter((citation) =>
     mentionsProvision(`${citation.title} ${citation.snippet}`, identifier, kind),

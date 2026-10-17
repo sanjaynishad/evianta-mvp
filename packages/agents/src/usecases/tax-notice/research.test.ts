@@ -145,5 +145,26 @@ describe("tax-research handler", () => {
     expect(citationsForProvision(provision("Section 37", []), [section37, rule37])).toEqual([
       section37,
     ]);
+
+    const circular2023 = {
+      title: "Circular No. 13/2023",
+      url: "https://cbdt.example/c13-2023",
+      snippet: "",
+    };
+    const circular2024 = {
+      title: "CBDT Circular No. 13 / 2024",
+      url: "https://cbdt.example/c13-2024",
+      snippet: "",
+    };
+
+    expect(citationsForProvision(provision("Circular No. 13/2024", []), [circular2023])).toEqual(
+      [],
+    );
+    expect(
+      citationsForProvision(provision("Circular No. 13/2024", []), [circular2023, circular2024]),
+    ).toEqual([circular2024]);
+    expect(
+      citationsForProvision(provision("Circular No. 13", []), [circular2023, circular2024]),
+    ).toEqual([]);
   });
 });

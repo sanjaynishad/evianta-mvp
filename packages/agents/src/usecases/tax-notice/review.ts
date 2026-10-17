@@ -287,10 +287,14 @@ export function parseMarkdownTable(content: string): MarkdownTable | undefined {
   };
 }
 
-function numbersIn(text: string): number[] {
-  return [...text.matchAll(/-?\d+(?:,\d+)*(?:\.\d+)?/g)].map((match) =>
-    Number(match[0].replace(/,/g, "")),
-  );
+/** Amounts in a cell, keeping the sign of "-12,400", "−12,400" (Unicode minus), and "(12,400)". */
+export function numbersIn(text: string): number[] {
+  return [...text.matchAll(/(\()?\s*([-−])?\s*(\d+(?:,\d+)*(?:\.\d+)?)\s*(\))?/g)].map((match) => {
+    const magnitude = Number((match[3] ?? "").replace(/,/g, ""));
+    const negative = Boolean(match[2]) || Boolean(match[1] && match[4]);
+
+    return negative ? -magnitude : magnitude;
+  });
 }
 
 const VALUE_COLUMN = /tds|difference|amount/i;

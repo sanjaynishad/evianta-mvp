@@ -95,6 +95,9 @@ describe("response-preparation handler", () => {
           "We filed our return of income on 31 July 2024.",
           "Nothing has been filed yet, but we submitted the reply on the portal.",
           "A revised return has been filed.",
+          "We submitted the response with no attachments.",
+          "We have submitted the response with no attachments.",
+          "We have not submitted anything yet.",
         ].join(" "),
       ),
     ).toEqual([
@@ -102,6 +105,8 @@ describe("response-preparation handler", () => {
       "This response was uploaded to the portal.",
       "Nothing has been filed yet, but we submitted the reply on the portal.",
       "A revised return has been filed.",
+      "We submitted the response with no attachments.",
+      "We have submitted the response with no attachments.",
     ]);
   });
 });

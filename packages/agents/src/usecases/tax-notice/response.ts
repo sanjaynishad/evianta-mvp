@@ -115,7 +115,16 @@ const FILING_CLAIM = new RegExp(
   ].join("|"),
   "i",
 );
-const NEGATION = /\b(?:no|not|nothing|never|neither|nor|none)\b|n't\b|\byet to be\b/i;
+// Negation of the filing action itself ("nothing has been filed", "we have not submitted"), not
+// an unrelated qualifier such as "submitted the response with no attachments".
+const NEGATION = new RegExp(
+  [
+    `\\b(?:no|not|nothing|never|neither|nor|none)\\b(?:\\s+[\\w-]+){0,4}?\\s+${FILING_VERB}\\b`,
+    `n't\\s+(?:[\\w-]+\\s+){0,2}?${FILING_VERB}\\b`,
+    `\\byet\\s+to\\s+be\\s+${FILING_VERB}\\b`,
+  ].join("|"),
+  "i",
+);
 // Statements about the original return, such as "the return was filed on 31 July 2024", are
 // historical facts, not claims about this response.
 const ORIGINAL_RETURN = /\b(?:original\s+)?return(?:\s+of\s+income)?\b/i;

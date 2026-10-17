@@ -8,6 +8,7 @@ import {
   classifyTaxRecordSource,
   financialPeriodOfDate,
   financialYearOfAssessmentYear,
+  isTcsTable,
   mapTaxColumns,
   normalizeDeductorName,
   normalizeQuarter,
@@ -780,5 +781,50 @@ describe("line evidence", () => {
     expect(new Set(evidence.map((item) => item.documentId))).toEqual(
       new Set(["doc-return", "doc-ledger", "doc-26as"]),
     );
+  });
+});
+
+describe("quarter columns and TDS/TCS workbooks", () => {
+  it("reads a TDS quarter column as a period so offsetting quarters are not hidden", async () => {
+    expect(
+      mapTaxColumns(["TAN", "Deductor", "TDS quarter", "TDS claimed"], "return"),
+    ).toMatchObject({ quarter: 2, tax: 3 });
+
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(
+        await fixtureDocumentsAsync({
+          ledger: false,
+          returnComputation: [
+            "TAN,Deductor,Financial year,TDS quarter,TDS claimed",
+            "DELS20002B,Sunrise Consulting Pvt Ltd,2023-24,Q1,100",
+            "DELS20002B,Sunrise Consulting Pvt Ltd,2023-24,Q2,200",
+          ].join("\n"),
+          taxCredit: [
+            TAX_CREDIT_CSV.split("\n")[0],
+            "DELS20002B,Sunrise Consulting Pvt Ltd,194J,2023-06-30,2000,200,F",
+            "DELS20002B,Sunrise Consulting Pvt Ltd,194J,2023-09-30,1000,100,F",
+          ].join("\n"),
+        }),
+      ),
+    );
+
+    expect(
+      reconciliation.lines.map((line) => [line.period, line.status, line.returnVsTaxCredit?.tax]),
+    ).toEqual([
+      ["FY 2023-24 Q1", "mismatched", -100],
+      ["FY 2023-24 Q2", "mismatched", 100],
+    ]);
+  });
+
+  it("uses the workbook name for TCS only when the sheet and headers do not identify TDS", () => {
+    expect(
+      isTcsTable("form-26as-tds-tcs.xlsx", "Part A", ["TAN of deductor", "Tax deducted"]),
+    ).toBe(false);
+    expect(
+      isTcsTable("form-26as-tds-tcs.xlsx", "Part B", ["TAN of collector", "Tax collected"]),
+    ).toBe(true);
+    expect(isTcsTable("form-26as-tds-tcs.xlsx", "TCS", ["TAN", "Amount"])).toBe(true);
+    expect(isTcsTable("tcs-statement.xlsx", "Sheet1", ["TAN", "Amount"])).toBe(true);
+    expect(isTcsTable("form-26as-tds-tcs.xlsx", "Sheet1", ["TAN", "Amount"])).toBe(false);
   });
 });

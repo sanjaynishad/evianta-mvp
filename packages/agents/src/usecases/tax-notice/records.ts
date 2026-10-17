@@ -35,8 +35,8 @@ export type TaxColumnMap = Partial<Record<TaxColumnKind, number>>;
 const COLUMN_PATTERNS: ReadonlyArray<[TaxColumnKind, RegExp]> = [
   ["tan", /\btan\b/i],
   ["date", /^(?!.*\b(?:to|till|up to)[\s-]date\b).*\bdate\b/i],
-  ["tax", /\btds\b|tax deducted|tax credit/i],
   ["quarter", /quarter/i],
+  ["tax", /\btds\b|tax deducted|tax credit/i],
   ["financialYear", /financial year|\bfy\b|\bf\.y\.?/i],
   ["assessmentYear", /assessment year|\ba\.?y\.?(?![a-z])/i],
   ["section", /\bsection\b|\bsec\.?\b/i],
@@ -242,11 +242,19 @@ export function isTcsTable(
 ): boolean {
   const tcs = /\btcs\b|tax collected/i;
   const tds = /\btds\b|tax deducted/i;
+  const tdsInHeaders = columnNames.some((name) => tds.test(name));
+  const tcsInHeaders = columnNames.some((name) => tcs.test(name));
 
-  return (
-    (tcs.test(`${documentName} ${tableName}`) && !tds.test(tableName)) ||
-    (columnNames.some((name) => tcs.test(name)) && !columnNames.some((name) => tds.test(name)))
-  );
+  if (tdsInHeaders || tds.test(tableName)) {
+    return false;
+  }
+
+  if (tcsInHeaders || tcs.test(tableName)) {
+    return true;
+  }
+
+  // The workbook name decides only when neither the sheet nor its headers say which tax it is.
+  return tcs.test(documentName) && !tds.test(documentName);
 }
 
 function sourceFromName(name: string): TaxRecordSource | undefined {
