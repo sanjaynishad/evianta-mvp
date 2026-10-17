@@ -7,6 +7,7 @@ import {
   CASE_ASSISTANT_KEY,
   NOT_SUPPORTED_MESSAGE,
   retrieveRelevantFindings,
+  type CaseAssistantInput,
 } from "./caseAssistant.js";
 
 async function seedRecordAsync() {
@@ -220,6 +221,48 @@ describe("askCaseAsync", () => {
 
     expect(result.retrievedFindingIds).toEqual(["f-notice"]);
     expect(ai.calls[0]?.prompt).toContain("2026-11-15");
+  });
+
+  it("passes open question status and resolution notes to the assistant", async () => {
+    const store = await seedRecordAsync();
+
+    await store.findings.addFindingAsync("case-1", {
+      id: "f-ledger",
+      taskId: "reconcile",
+      summary: "Purchase ledger needed for reconciliation",
+      severity: "medium",
+      openQuestions: [
+        { id: "q-ledger", text: "Is the purchase ledger available?", severity: "high" },
+        { id: "q-form16", text: "Is Form 16 available?", severity: "low" },
+      ],
+    });
+    await store.findings.updateOpenQuestionAsync("case-1", "q-ledger", {
+      status: "resolved",
+      resolutionNote: "Ledger uploaded on 3 March",
+    });
+
+    const ai = createMockAi({
+      [CASE_ASSISTANT_KEY]: {
+        output: { supported: false, answer: "", evidenceIds: [], findingIds: [] },
+      },
+    });
+
+    await askCaseAsync(
+      { caseId: "case-1", question: "Is the purchase ledger available?" },
+      { store, ai },
+    );
+
+    const input = JSON.parse(ai.calls[0]?.prompt ?? "{}") as CaseAssistantInput;
+    const ledger = input.findings.find((finding) => finding.findingId === "f-ledger");
+
+    expect(ledger?.openQuestions).toEqual([
+      {
+        text: "Is the purchase ledger available?",
+        status: "resolved",
+        resolutionNote: "Ledger uploaded on 3 March",
+      },
+      { text: "Is Form 16 available?", status: "open" },
+    ]);
   });
 
   it("ignores findings left by superseded or unfinished task attempts", async () => {

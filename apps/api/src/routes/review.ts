@@ -42,12 +42,14 @@ export function createReviewRoutes(ctx: ApiContext): Router {
       asyncRoute(async (req, res) => {
         const { caseId, questionId } = questionParamsSchema.parse(req.params);
 
-        await getMutableCaseAsync(ctx, caseId);
-
         const { note } = noteBodySchema.parse(req.body ?? {});
-        const finding = await store.findings.updateOpenQuestionAsync(caseId, questionId, {
-          status: action === "resolve" ? "resolved" : "dismissed",
-          ...(note ? { resolutionNote: note } : {}),
+        const finding = await ctx.approvals.runAsync(caseId, async () => {
+          await getMutableCaseAsync(ctx, caseId);
+
+          return store.findings.updateOpenQuestionAsync(caseId, questionId, {
+            status: action === "resolve" ? "resolved" : "dismissed",
+            ...(note ? { resolutionNote: note } : {}),
+          });
         });
 
         res.json({ finding });

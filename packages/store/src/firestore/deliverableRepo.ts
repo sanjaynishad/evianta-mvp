@@ -14,6 +14,7 @@ import {
   toFirestoreData,
   upsertDocAsync,
 } from "./helpers.js";
+import { leaseGuard } from "./lease.js";
 
 export function createDeliverableRepo(db: Firestore): DeliverableRepo {
   return {
@@ -25,10 +26,12 @@ export function createDeliverableRepo(db: Firestore): DeliverableRepo {
 
       return deliverable;
     },
-    async updateDeliverableAsync(caseId, deliverableId, update) {
+    async updateDeliverableAsync(caseId, deliverableId, update, fence) {
       const ref = caseSubcollection(db, caseId, "deliverables").doc(deliverableId);
+      const guard = leaseGuard(db, caseId, fence);
 
       return db.runTransaction(async (transaction) => {
+        await guard?.(transaction);
         const snapshot = await transaction.get(ref);
         const current = snapshot.exists ? deliverableSchema.parse(snapshot.data()) : undefined;
         const input = update(current);

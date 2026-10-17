@@ -2,7 +2,7 @@ import type { ExtractedDocumentInput, NewRunEvent } from "@evianta/core";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DocumentStore } from "./documents/documentStore.js";
-import { StoreConflictError, StoreNotFoundError } from "./errors.js";
+import { StoreConflictError, StoreLeaseLostError, StoreNotFoundError } from "./errors.js";
 import type { CreateCaseInput, Store } from "./types.js";
 
 export interface StoreContractContext {
@@ -129,6 +129,212 @@ export function describeStoreContract(
         runCount: 1,
       });
       expect(await store.runs.reconcileUsageAsync(created.id)).toBe(0);
+    });
+
+    it("adds task charges to the task totals once and skips tasks that do not exist", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+
+      await store.tasks.createTaskAsync({
+        id: "task-1",
+        caseId: created.id,
+        title: "Reconcile",
+        assignedRole: "reconciliation",
+        tokenUsage: { input: 10, output: 5, total: 15 },
+        costEstimate: 0.001,
+      });
+
+      const charge = {
+        taskId: "task-1",
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 130,
+        costEstimate: 0.01,
+      };
+
+      await Promise.all([
+        store.runs.recordChargeAsync(created.id, "run-1", "task:task-1:1", charge),
+        store.runs.recordChargeAsync(created.id, "run-1", "task:task-1:1", charge),
+      ]);
+      await store.runs.recordChargeAsync(created.id, "run-1", "task:task-2:1", {
+        taskId: "task-2",
+        inputTokens: 7,
+      });
+      await expect(
+        store.runs.recordChargeAsync(created.id, "run-1", "task:task-1:2", {
+          taskId: "task-1",
+          inputTokens: 10,
+          totalTokens: 0.5,
+        }),
+      ).rejects.toThrow();
+
+      const [task] = await store.tasks.getTasksForCaseAsync(created.id);
+
+      expect(task?.tokenUsage).toEqual({ input: 10, output: 5, total: 15 });
+
+      const applied = await Promise.all([
+        store.runs.reconcileUsageAsync(created.id),
+        store.runs.reconcileUsageAsync(created.id),
+      ]);
+      const [charged] = await store.tasks.getTasksForCaseAsync(created.id);
+
+      expect(applied[0] + applied[1]).toBe(2);
+      expect(charged?.tokenUsage).toEqual({ input: 110, output: 25, total: 145 });
+      expect(charged?.costEstimate).toBeCloseTo(0.011, 10);
+      expect(charged?.status).toBe("pending");
+      expect((await store.cases.getCaseAsync(created.id))?.usage).toMatchObject({
+        inputTokens: 107,
+        outputTokens: 20,
+      });
+      expect(await store.tasks.getTasksForCaseAsync(created.id)).toHaveLength(1);
+      expect(await store.runs.reconcileUsageAsync(created.id)).toBe(0);
+    });
+
+    it("reports case usage with unapplied charges and every charge of one run", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+
+      await store.runs.recordChargeAsync(created.id, "run-1", "task:a:1", {
+        taskId: "a",
+        inputTokens: 100,
+        outputTokens: 10,
+        costEstimate: 0.01,
+      });
+      await store.runs.recordChargeAsync(created.id, "run-0", "task:a:0", {
+        inputTokens: 40,
+        outputTokens: 4,
+        costEstimate: 0.004,
+      });
+      await store.runs.reconcileUsageAsync(created.id);
+      await store.runs.recordChargeAsync(created.id, "run-1", "task:b:1", {
+        inputTokens: 20,
+        outputTokens: 2,
+        costEstimate: 0.002,
+      });
+      await store.runs.recordChargeAsync(created.id, "run-2", "task:c:1", {
+        inputTokens: 7,
+        outputTokens: 1,
+        costEstimate: 0.001,
+      });
+
+      const before = await store.runs.getUsageTotalsAsync(created.id, "run-1");
+
+      await store.runs.reconcileUsageAsync(created.id);
+
+      const after = await store.runs.getUsageTotalsAsync(created.id, "run-1");
+
+      for (const totals of [before, after]) {
+        expect(totals.case).toMatchObject({ inputTokens: 167, outputTokens: 17 });
+        expect(totals.case.costEstimate).toBeCloseTo(0.017, 10);
+        expect(totals.run).toMatchObject({ inputTokens: 120, outputTokens: 12 });
+        expect(totals.run.costEstimate).toBeCloseTo(0.012, 10);
+      }
+
+      await expect(store.runs.getUsageTotalsAsync("missing", "run-1")).rejects.toThrow(
+        StoreNotFoundError,
+      );
+    });
+
+    it("commits fenced writes only while the fence owner holds the run lease", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+      const first = { leaseOwner: "first" };
+      const second = { leaseOwner: "second" };
+      const deliverable = (title: string) => ({
+        id: "del-1",
+        caseId: created.id,
+        title,
+        format: "document" as const,
+      });
+
+      await expect(
+        store.cases.updateCaseStatusAsync(created.id, "in-progress", first),
+      ).rejects.toThrow(StoreLeaseLostError);
+      expect(await store.runs.acquireLeaseAsync(created.id, "first", 1000)).toBe(true);
+      expect(
+        (await store.cases.updateCaseStatusAsync(created.id, "in-progress", first)).status,
+      ).toBe("in-progress");
+      await sleepAsync(1100);
+      await expect(store.cases.updateCaseStatusAsync(created.id, "review", first)).rejects.toThrow(
+        StoreLeaseLostError,
+      );
+      expect(await store.runs.acquireLeaseAsync(created.id, "second", 60_000)).toBe(true);
+      await store.tasks.createTasksAsync(
+        created.id,
+        [{ id: "task-1", caseId: created.id, title: "Analyse", assignedRole: "case-analysis" }],
+        second,
+      );
+      await store.deliverables.updateDeliverableAsync(
+        created.id,
+        "del-1",
+        () => deliverable("Second"),
+        second,
+      );
+
+      const staleWrites: Array<() => Promise<unknown>> = [
+        () => store.cases.updateCaseStatusAsync(created.id, "completed", first),
+        () =>
+          store.tasks.createTasksAsync(
+            created.id,
+            [{ id: "task-2", caseId: created.id, title: "Stale", assignedRole: "reconciliation" }],
+            first,
+          ),
+        () => store.tasks.updateTaskAsync(created.id, "task-1", { status: "completed" }, first),
+        () =>
+          store.findings.addFindingAsync(
+            created.id,
+            { id: "finding-stale", taskId: "task-1", summary: "Stale" },
+            first,
+          ),
+        () =>
+          store.evidence.addEvidenceAsync(
+            created.id,
+            { id: "ev-stale", sourceRef: "Stale", description: "Stale" },
+            first,
+          ),
+        () =>
+          store.deliverables.updateDeliverableAsync(
+            created.id,
+            "del-1",
+            () => deliverable("Stale"),
+            first,
+          ),
+      ];
+
+      for (const write of staleWrites) {
+        await expect(write()).rejects.toThrow(StoreLeaseLostError);
+      }
+
+      expect((await store.cases.getCaseAsync(created.id))?.status).toBe("in-progress");
+      expect(await store.tasks.getTasksForCaseAsync(created.id)).toMatchObject([
+        { id: "task-1", status: "pending" },
+      ]);
+      expect(await store.findings.getFindingsForCaseAsync(created.id)).toEqual([]);
+      expect(await store.evidence.getEvidenceForCaseAsync(created.id)).toEqual([]);
+      expect((await store.deliverables.getDeliverableAsync(created.id, "del-1"))?.title).toBe(
+        "Second",
+      );
+
+      await store.tasks.updateTaskAsync(created.id, "task-1", { status: "completed" }, second);
+      await store.findings.addFindingAsync(
+        created.id,
+        { id: "finding-1", taskId: "task-1", summary: "Current" },
+        second,
+      );
+      await store.evidence.addEvidenceAsync(
+        created.id,
+        { id: "ev-1", sourceRef: "Current", description: "Current" },
+        second,
+      );
+      await expect(
+        store.evidence.addEvidenceAsync(
+          created.id,
+          { id: "ev-1", sourceRef: "Current", description: "Current" },
+          second,
+        ),
+      ).rejects.toThrow(StoreConflictError);
+      await store.runs.releaseLeaseAsync(created.id, "second");
+      await expect(
+        store.tasks.updateTaskAsync(created.id, "task-1", { status: "failed" }, second),
+      ).rejects.toThrow(StoreLeaseLostError);
+      expect((await store.tasks.getTasksForCaseAsync(created.id))[0]?.status).toBe("completed");
     });
 
     async function seedSampleAsync() {
@@ -327,6 +533,17 @@ export function describeStoreContract(
         });
         expect(approved.approval?.approvedAt).toEqual(expect.any(String));
         expect(await store.cases.getCaseAsync(created.id)).toEqual(approved);
+      });
+
+      it("clears case approval", async () => {
+        const created = await store.cases.createCaseAsync(caseInput());
+
+        await store.cases.recordApprovalAsync(created.id, { note: "Old approval" });
+
+        const cleared = await store.cases.clearApprovalAsync(created.id);
+
+        expect(cleared.approval).toBeUndefined();
+        expect(await store.cases.getCaseAsync(created.id)).toEqual(cleared);
       });
 
       it("accumulates the usage summary from task usage", async () => {

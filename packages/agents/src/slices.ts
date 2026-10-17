@@ -20,7 +20,9 @@ export interface DocumentSlice {
   page?: number;
   sheet?: string;
   table?: string;
-  /** 1-based data rows included from the table. */
+  /** A1 range of the source table's header and data rows, for example "B3:E20". */
+  range?: string;
+  /** Data rows included from the table, as worksheet rows when `range` is known, else 1-based. */
   rowRange?: RowRange;
   text: string;
   /** Extraction confidence in 0..1. */
@@ -51,8 +53,19 @@ function renderRow(cells: readonly unknown[]): string {
   return cells.map((cell) => (cell === null || cell === undefined ? "" : String(cell))).join(" | ");
 }
 
-function truncationMarker(included: number, total: number): string {
-  return `(showing rows 1-${included} of ${total})`;
+/** Row number of the first data row: the worksheet row after the header when the range is known. */
+function firstDataRow(table: Pick<ExtractedTable, "range">): number {
+  const headerRow = /^\$?[A-Za-z]+\$?(\d+)/.exec(table.range ?? "")?.[1];
+
+  return headerRow ? Number(headerRow) + 1 : 1;
+}
+
+function truncationMarker(firstRow: number, included: number, total: number): string {
+  const lastIncluded = firstRow + included - 1;
+
+  return firstRow === 1
+    ? `(showing rows 1-${lastIncluded} of ${total})`
+    : `(showing rows ${firstRow}-${lastIncluded} of ${firstRow}-${firstRow + total - 1})`;
 }
 
 function tableUnit(
@@ -65,15 +78,21 @@ function tableUnit(
   const header = renderRow(table.columns.map((column) => `${column.name} (${column.type})`));
   const rows = table.rows.map((row) => renderRow(row));
   const fullText = [header, ...rows].join("\n");
+  const firstRow = firstDataRow(table);
 
   return {
     order,
     score: countMatchingTerms(terms, `${table.name} ${table.sheet ?? ""} ${fullText}`),
     fullTokens: estimateTokens(fullText),
     build(maxTokens) {
-      const lines = [header];
-      const markerCost = estimateTokens(truncationMarker(rows.length, rows.length)) + 1;
       let used = estimateTokens(header);
+
+      if (used > maxTokens) {
+        return undefined;
+      }
+
+      const lines = [header];
+      const markerCost = estimateTokens(truncationMarker(firstRow, rows.length, rows.length)) + 1;
       let included = 0;
 
       for (const [index, row] of rows.entries()) {
@@ -96,7 +115,7 @@ function tableUnit(
       const truncated = included < rows.length;
 
       if (truncated) {
-        lines.push(truncationMarker(included, rows.length));
+        lines.push(truncationMarker(firstRow, included, rows.length));
       }
 
       return {
@@ -106,7 +125,8 @@ function tableUnit(
         page: table.pageIndex,
         sheet: table.sheet,
         table: table.name,
-        rowRange: included > 0 ? { start: 1, end: included } : undefined,
+        range: table.range,
+        rowRange: included > 0 ? { start: firstRow, end: firstRow + included - 1 } : undefined,
         text: lines.join("\n"),
         confidence: extraction.confidence,
         method: extraction.method,

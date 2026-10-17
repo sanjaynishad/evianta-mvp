@@ -26,33 +26,6 @@ export function createRunRoutes(ctx: ApiContext): Router {
   const router = Router();
 
   async function startAsync(caseId: string, mode: RunMode) {
-    const caseRecord = await getMutableCaseAsync(ctx, caseId);
-
-    if (!caseRecord.useCase) {
-      throw new ApiError(422, "use-case-missing", "The case has no use case to plan from.");
-    }
-
-    if (mode === "retry") {
-      const tasks = await ctx.store.tasks.getTasksForCaseAsync(caseId);
-
-      if (!ctx.runs.isActive(caseId) && !hasRetryableWork(caseRecord, tasks)) {
-        throw new ApiError(409, "nothing-to-retry", "The case has no failed or blocked tasks.");
-      }
-    }
-
-    // No awaits from here to start(), so an upload or approval cannot begin in between.
-    if (ctx.runs.isActive(caseId)) {
-      throw new ApiError(409, "run-in-progress", "This case already has a run in progress.");
-    }
-
-    if (ctx.uploads.isActive(caseId)) {
-      throw new ApiError(
-        409,
-        "upload-in-progress",
-        "Wait for the upload to finish before running.",
-      );
-    }
-
     if (ctx.approvals.isActive(caseId)) {
       throw new ApiError(
         409,
@@ -61,14 +34,56 @@ export function createRunRoutes(ctx: ApiContext): Router {
       );
     }
 
-    const started = ctx.runs.start(caseId, mode);
+    return ctx.approvals.runAsync(caseId, async () => {
+      const caseRecord = await getMutableCaseAsync(ctx, caseId);
 
-    return {
-      caseId,
-      runId: started.runId,
-      mode: started.mode,
-      streamUrl: `/cases/${encodeURIComponent(caseId)}/stream`,
-    };
+      if (!caseRecord.useCase) {
+        throw new ApiError(422, "use-case-missing", "The case has no use case to plan from.");
+      }
+
+      if (mode === "retry") {
+        const tasks = await ctx.store.tasks.getTasksForCaseAsync(caseId);
+
+        if (!ctx.runs.isActive(caseId) && !hasRetryableWork(caseRecord, tasks)) {
+          throw new ApiError(409, "nothing-to-retry", "The case has no failed or blocked tasks.");
+        }
+      }
+
+      if (ctx.runs.isActive(caseId)) {
+        throw new ApiError(409, "run-in-progress", "This case already has a run in progress.");
+      }
+
+      if (ctx.uploads.isActive(caseId)) {
+        throw new ApiError(
+          409,
+          "upload-in-progress",
+          "Wait for the upload to finish before running.",
+        );
+      }
+
+      await ctx.store.cases.clearApprovalAsync(caseId);
+
+      if (ctx.runs.isActive(caseId)) {
+        throw new ApiError(409, "run-in-progress", "This case already has a run in progress.");
+      }
+
+      if (ctx.uploads.isActive(caseId)) {
+        throw new ApiError(
+          409,
+          "upload-in-progress",
+          "Wait for the upload to finish before running.",
+        );
+      }
+
+      const started = ctx.runs.start(caseId, mode);
+
+      return {
+        caseId,
+        runId: started.runId,
+        mode: started.mode,
+        streamUrl: `/cases/${encodeURIComponent(caseId)}/stream`,
+      };
+    });
   }
 
   router.post(

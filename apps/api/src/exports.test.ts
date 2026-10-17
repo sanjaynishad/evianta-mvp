@@ -260,6 +260,59 @@ describe("deliverable exports", () => {
     }
   });
 
+  it("preserves over-precision JSON table numbers as text in both table shapes", async () => {
+    const { app, store, caseRecord, base } = await seedExportCaseAsync();
+    const deliverable = (await store.deliverables.getDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+    ))!;
+    const id = "1234567890123456789";
+    const amount = "123456789012345.6789";
+    const structuredCellText =
+      '{"quantity":2,"prices":[1,3],"precise":1234567890123456789,"numericString":"2","identifier":"00104"}';
+    const objectRows = `[{"Details":${structuredCellText},"Invoice ID":${id},"Amount":${amount}}]`;
+    const columnRows = `{"columns":["Details","Invoice ID","Amount"],"rows":[[${structuredCellText},${id},${amount}]]}`;
+
+    await store.deliverables.saveDeliverableAsync({
+      ...deliverable,
+      sections: [
+        ...deliverable.sections,
+        {
+          id: "json-object-table",
+          title: "JSON objects",
+          kind: "table",
+          content: objectRows,
+          producedByRole: "payment-reconciliation",
+        },
+        {
+          id: "json-column-table",
+          title: "JSON columns",
+          kind: "table",
+          content: columnRows,
+          producedByRole: "payment-reconciliation",
+        },
+      ],
+    });
+
+    expect(parseTable(objectRows)?.rows).toEqual([[structuredCellText, id, amount]]);
+    expect(parseTable(columnRows)?.rows).toEqual([[structuredCellText, id, amount]]);
+
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "xlsx" }),
+    ).expect(200);
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(response.body as Buffer);
+
+    for (const name of ["JSON objects", "JSON columns"]) {
+      const row = workbook.getWorksheet(name)!.getRow(2);
+
+      expect(row.getCell(1).value).toBe(structuredCellText);
+      expect(row.getCell(2).value).toBe(id);
+      expect(row.getCell(3).value).toBe(amount);
+    }
+  });
+
   it("parses markdown and JSON tables", () => {
     expect(parseTable("Intro\n| A | B |\n|---|---|\n| 1 | 2 |\nOutro")).toEqual({
       header: ["A", "B"],
@@ -274,6 +327,8 @@ describe("deliverable exports", () => {
       rows: [["1"], ["2"]],
     });
     expect(parseTable("No table here.")).toBeUndefined();
+    expect(parseTable("[1,2,3]")).toBeUndefined();
+    expect(parseTable('[{"a":1},5]')).toBeUndefined();
     expect(parseTable("| Party | Amount |\n|---|---|\n| Acme \\| West | 10 |")?.rows).toEqual([
       ["Acme | West", "10"],
     ]);

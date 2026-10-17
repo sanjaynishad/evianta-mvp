@@ -166,24 +166,130 @@ function parseMarkdownTable(lines: readonly string[]): ParsedTable | undefined {
   return { header, rows: body.map((row) => header.map((_, index) => row[index] ?? "")) };
 }
 
+class JsonNumber {
+  constructor(readonly lexeme: string) {}
+}
+
+function jsonCellText(value: unknown): string {
+  if (value instanceof JsonNumber) {
+    return value.lexeme;
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(jsonCellText).join(",")}]`;
+  }
+
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value)
+      .map(([key, nested]) => `${JSON.stringify(key)}:${jsonCellText(nested)}`)
+      .join(",")}}`;
+  }
+
+  return JSON.stringify(value) ?? "";
+}
+
 function cellText(value: unknown): string {
   if (value === null || value === undefined) {
     return "";
   }
 
-  return typeof value === "object" ? JSON.stringify(value) : String(value);
+  return typeof value === "object" ? jsonCellText(value) : String(value);
+}
+
+function parseJsonPreservingNumberLexemes(content: string): unknown {
+  const source = JSON.parse(content) as unknown;
+  const objectKeys = new Set<string>();
+  const collectObjectKeys = (value: unknown) => {
+    if (Array.isArray(value)) {
+      value.forEach(collectObjectKeys);
+
+      return;
+    }
+
+    if (value !== null && typeof value === "object") {
+      for (const [key, nested] of Object.entries(value)) {
+        objectKeys.add(key);
+        collectObjectKeys(nested);
+      }
+    }
+  };
+
+  collectObjectKeys(source);
+
+  let numberMarkerKey = "__evianta_json_number__";
+
+  while (objectKeys.has(numberMarkerKey)) {
+    numberMarkerKey += "_";
+  }
+
+  const transformed: string[] = [];
+  let index = 0;
+
+  while (index < content.length) {
+    const character = content[index];
+
+    if (character === '"') {
+      const start = index++;
+
+      while (index < content.length) {
+        if (content[index] === "\\") {
+          index += 2;
+        } else if (content[index++] === '"') {
+          break;
+        }
+      }
+
+      transformed.push(content.slice(start, index));
+
+      continue;
+    }
+
+    if (character === "-" || (character !== undefined && /\d/.test(character))) {
+      const number = content.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+
+      if (number) {
+        transformed.push(`{"${numberMarkerKey}":${JSON.stringify(number[0])}}`);
+        index += number[0].length;
+
+        continue;
+      }
+    }
+
+    transformed.push(character ?? "");
+    index++;
+  }
+
+  return JSON.parse(transformed.join(""), (_key, value: unknown) => {
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      const [entry] = Object.entries(value);
+
+      if (
+        entry &&
+        Object.keys(value).length === 1 &&
+        entry[0] === numberMarkerKey &&
+        typeof entry[1] === "string"
+      ) {
+        return new JsonNumber(entry[1]);
+      }
+    }
+
+    return value;
+  }) as unknown;
 }
 
 function parseJsonTable(content: string): ParsedTable | undefined {
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(content);
+    parsed = parseJsonPreservingNumberLexemes(content);
   } catch {
     return undefined;
   }
 
-  if (Array.isArray(parsed) && parsed.every((row) => row && typeof row === "object")) {
+  if (
+    Array.isArray(parsed) &&
+    parsed.every((row) => row && typeof row === "object" && !(row instanceof JsonNumber))
+  ) {
     const header = [...new Set(parsed.flatMap((row) => Object.keys(row as object)))];
 
     return {

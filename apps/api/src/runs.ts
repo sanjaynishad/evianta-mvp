@@ -48,6 +48,16 @@ export function createRunLauncher(options: RunLauncherOptions): RunLauncher {
   // here; stream clients always see run-completed or run-failed for every accepted run.
   async function recordFailureAsync(caseId: string, runId: string, error: unknown) {
     try {
+      await store.cases.updateCaseStatusAsync(caseId, "failed");
+    } catch (statusError) {
+      logger.error("Could not mark the failed run on its case.", {
+        caseId,
+        runId,
+        error: messageOf(statusError),
+      });
+    }
+
+    try {
       const recorded = await store.events.listEventsAsync(caseId);
 
       if (recorded.some((event) => event.runId === runId && isTerminalRunEvent(event))) {
