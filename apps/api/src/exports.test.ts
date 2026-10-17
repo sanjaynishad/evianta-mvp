@@ -268,8 +268,10 @@ describe("deliverable exports", () => {
     ))!;
     const id = "1234567890123456789";
     const amount = "123456789012345.6789";
-    const objectRows = `[{"Invoice ID":${id},"Amount":${amount}}]`;
-    const columnRows = `{"columns":["Invoice ID","Amount"],"rows":[[${id},${amount}]]}`;
+    const structuredCellText =
+      '{"quantity":2,"prices":[1,3],"precise":1234567890123456789,"numericString":"2","identifier":"00104"}';
+    const objectRows = `[{"Details":${structuredCellText},"Invoice ID":${id},"Amount":${amount}}]`;
+    const columnRows = `{"columns":["Details","Invoice ID","Amount"],"rows":[[${structuredCellText},${id},${amount}]]}`;
 
     await store.deliverables.saveDeliverableAsync({
       ...deliverable,
@@ -292,8 +294,8 @@ describe("deliverable exports", () => {
       ],
     });
 
-    expect(parseTable(objectRows)?.rows).toEqual([[id, amount]]);
-    expect(parseTable(columnRows)?.rows).toEqual([[id, amount]]);
+    expect(parseTable(objectRows)?.rows).toEqual([[structuredCellText, id, amount]]);
+    expect(parseTable(columnRows)?.rows).toEqual([[structuredCellText, id, amount]]);
 
     const response = await binary(
       request(app).get(`${base}/export`).query({ format: "xlsx" }),
@@ -305,8 +307,9 @@ describe("deliverable exports", () => {
     for (const name of ["JSON objects", "JSON columns"]) {
       const row = workbook.getWorksheet(name)!.getRow(2);
 
-      expect(row.getCell(1).value).toBe(id);
-      expect(row.getCell(2).value).toBe(amount);
+      expect(row.getCell(1).value).toBe(structuredCellText);
+      expect(row.getCell(2).value).toBe(id);
+      expect(row.getCell(3).value).toBe(amount);
     }
   });
 
@@ -324,6 +327,8 @@ describe("deliverable exports", () => {
       rows: [["1"], ["2"]],
     });
     expect(parseTable("No table here.")).toBeUndefined();
+    expect(parseTable("[1,2,3]")).toBeUndefined();
+    expect(parseTable('[{"a":1},5]')).toBeUndefined();
     expect(parseTable("| Party | Amount |\n|---|---|\n| Acme \\| West | 10 |")?.rows).toEqual([
       ["Acme | West", "10"],
     ]);

@@ -61,9 +61,7 @@ export function createRunRoutes(ctx: ApiContext): Router {
         );
       }
 
-      if (mode === "retry") {
-        await ctx.store.cases.clearApprovalAsync(caseId);
-      }
+      await ctx.store.cases.clearApprovalAsync(caseId);
 
       if (ctx.runs.isActive(caseId)) {
         throw new ApiError(409, "run-in-progress", "This case already has a run in progress.");

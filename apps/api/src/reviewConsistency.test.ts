@@ -307,4 +307,40 @@ describe("approval and editing consistency", () => {
     expect(approvalResponse.status).toBe(409);
     expect((await store.cases.getCaseAsync(caseId))?.approval).toBeUndefined();
   });
+
+  it("clears approval before restarting a failed case through /run", async () => {
+    const { app, store, caseId, base, orchestrator } = await seedAsync();
+    const gate = createGate();
+    const runCaseAsync = orchestrator.runCaseAsync.bind(orchestrator);
+    let startingRun = false;
+
+    await store.cases.updateCaseStatusAsync(caseId, "failed");
+    await store.tasks.createTaskAsync({
+      id: "failed-task",
+      caseId,
+      title: "Retry analysis",
+      assignedRole: "business-data-analyst",
+      status: "failed",
+      attempts: 1,
+    });
+    await store.cases.recordApprovalAsync(caseId, { note: "Approved before restart" });
+
+    orchestrator.runCaseAsync = async (...args) => {
+      startingRun = true;
+      await gate.opened;
+
+      return runCaseAsync(...args);
+    };
+
+    try {
+      await request(app).post(`${base}/run`).send({}).expect(202);
+      await waitForAsync(() => startingRun);
+
+      expect((await store.cases.getCaseAsync(caseId))?.approval).toBeUndefined();
+      expect(await exportedTextAsync(app, base)).not.toContain("Approved by the reviewer");
+    } finally {
+      gate.release();
+      await app.idleAsync();
+    }
+  });
 });
