@@ -8,11 +8,13 @@ import {
   classifyTaxRecordSource,
   financialPeriodOfDate,
   mapTaxColumns,
+  normalizeDeductorName,
   normalizeQuarter,
   normalizeTan,
   parseAmount,
   readTaxRecords,
   selectTaxColumns,
+  taxCreditStatementOf,
   type TaxRecordDocument,
 } from "./records.js";
 import {
@@ -624,5 +626,87 @@ describe("periods, TCS, and corroborating statements", () => {
     expect(
       selectTaxColumns(["Party", "Date", "Entry date", "TDS deducted"], "ledger").ambiguous,
     ).toEqual([{ measure: "date", names: ["Date", "Entry date"] }]);
+  });
+});
+
+describe("worksheet names and non-Latin deductors", () => {
+  it("classifies a named worksheet before the workbook name", () => {
+    expect(classifyTaxRecordSource("itr-computation.xlsx", "Ledger", ["Party", "Voucher"])).toBe(
+      "ledger",
+    );
+    expect(classifyTaxRecordSource("itr-computation.xlsx", "Sheet1", ["TAN", "TDS claimed"])).toBe(
+      "return",
+    );
+    expect(taxCreditStatementOf("ais-download.xlsx", "Form 26AS")).toBe("26as");
+    expect(taxCreditStatementOf("statements.xlsx", "AIS")).toBe("ais");
+
+    const records = readTaxRecords([
+      {
+        metadata: metadata("doc-book", "itr-computation.xlsx"),
+        extraction: {
+          documentId: "doc-book",
+          kind: "tabular",
+          method: "parse",
+          confidence: 1,
+          pages: [],
+          warnings: [],
+          tables: [
+            {
+              name: "Schedule TDS",
+              sheet: "Schedule TDS",
+              range: "A1:D2",
+              columns: [
+                { name: "TAN", type: "string" },
+                { name: "Deductor", type: "string" },
+                { name: "Financial year", type: "string" },
+                { name: "TDS claimed", type: "number" },
+              ],
+              rows: [["MUMN10001A", "Northwind Bank Ltd", "2023-24", 1000]],
+            },
+            {
+              name: "Ledger",
+              sheet: "Ledger",
+              range: "A1:D2",
+              columns: [
+                { name: "Date", type: "date" },
+                { name: "Party", type: "string" },
+                { name: "TDS deducted", type: "number" },
+                { name: "Voucher", type: "string" },
+              ],
+              rows: [["2023-09-30", "Northwind Bank Ltd", 400, "INT-01"]],
+            },
+          ],
+        },
+      },
+    ]);
+
+    expect(records.tables.map((table) => [table.table.name, table.source])).toEqual([
+      ["Schedule TDS", "return"],
+      ["Ledger", "ledger"],
+    ]);
+  });
+
+  it("keeps non-Latin deductor names distinct", async () => {
+    expect(normalizeDeductorName("अजय")).toBe("अजय");
+    expect(normalizeDeductorName("विजय Pvt. Ltd.")).toBe("विजय");
+    expect(normalizeDeductorName("Ｓｕｎｒｉｓｅ")).toBe("sunrise");
+
+    const ledger = [
+      "Date,Party,Section,Gross amount,TDS deducted,Voucher",
+      "2023-09-30,अजय,194J,10000,1000,P-1",
+      "2023-09-30,विजय,194J,20000,2000,P-2",
+    ].join("\n");
+    const reconciliation = reconcileTaxRecords(
+      readTaxRecords(await fixtureDocumentsAsync({ ledger })),
+    );
+
+    expect(
+      reconciliation.lines
+        .filter((line) => line.deductorKey.startsWith("name:"))
+        .map((line) => [line.deductorName, line.values.ledger?.tax]),
+    ).toEqual([
+      ["अजय", 1000],
+      ["विजय", 2000],
+    ]);
   });
 });

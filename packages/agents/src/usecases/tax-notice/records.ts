@@ -199,18 +199,12 @@ export function classifyTaxRecordSource(
   tableName: string,
   columnNames: readonly string[],
 ): TaxRecordSource | undefined {
-  const name = `${documentName} ${tableName}`.toLowerCase();
+  // An explicitly named worksheet wins over the workbook name, so a "Ledger" sheet in
+  // itr-computation.xlsx is still a ledger.
+  const named = sourceFromName(tableName) ?? sourceFromName(documentName);
 
-  if (/26\s*-?as|\bais\b|\btis\b|tax[\s_-]*credit|annual information/.test(name)) {
-    return "tax-credit";
-  }
-
-  if (/\bitr\b|itr[\s_-]|return|computation|schedule[\s_-]*tds/.test(name)) {
-    return "return";
-  }
-
-  if (/ledger|books?\b|journal|daybook|tally/.test(name)) {
-    return "ledger";
+  if (named) {
+    return named;
   }
 
   const headers = columnNames.join(" ").toLowerCase();
@@ -245,10 +239,30 @@ export function isTcsTable(
   );
 }
 
+function sourceFromName(name: string): TaxRecordSource | undefined {
+  const text = name.toLowerCase();
+
+  if (/26\s*-?as|\bais\b|\btis\b|tax[\s_-]*credit|annual information/.test(text)) {
+    return "tax-credit";
+  }
+
+  if (/\bitr\b|itr[\s_-]|return|computation|schedule[\s_-]*tds/.test(text)) {
+    return "return";
+  }
+
+  return /ledger|books?\b|journal|daybook|tally/.test(text) ? "ledger" : undefined;
+}
+
+function statementFromName(name: string): TaxCreditStatement | undefined {
+  if (/\bais\b|\btis\b|annual information/i.test(name)) {
+    return "ais";
+  }
+
+  return /26\s*-?as|form[\s_-]*26/i.test(name) ? "26as" : undefined;
+}
+
 export function taxCreditStatementOf(documentName: string, tableName: string): TaxCreditStatement {
-  return /\bais\b|\btis\b|annual information/i.test(`${documentName} ${tableName}`)
-    ? "ais"
-    : "26as";
+  return statementFromName(tableName) ?? statementFromName(documentName) ?? "26as";
 }
 
 export function parseAmount(cell: TableCell | undefined): number | undefined {
@@ -307,8 +321,9 @@ export function normalizeTan(value: string | undefined): string | undefined {
 
 export function normalizeDeductorName(value: string | undefined): string | undefined {
   const words = value
-    ?.toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
+    ?.normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, " ")
     .split(/\s+/)
     .filter((word) => word && !["the", "pvt", "private", "ltd", "limited", "co"].includes(word));
 
