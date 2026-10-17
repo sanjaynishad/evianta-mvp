@@ -232,6 +232,28 @@ describe("orchestrator", () => {
     });
   });
 
+  it("stamps a caller-supplied run id on the run and retry events", async () => {
+    const { store, orchestrator } = createHarness({
+      "case-analysis": [{ error: "non-transient", message: "Notice unreadable" }, specialistStep()],
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "analyze", role: "case-analysis" }]);
+
+    const first = await orchestrator.runCaseAsync(caseRecord.id, { runId: "run-from-api" });
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id, { runId: "retry-from-api" });
+    const events = await store.events.listEventsAsync(caseRecord.id);
+
+    expect(first).toMatchObject({ runId: "run-from-api", status: "failed" });
+    expect(retry).toMatchObject({ runId: "retry-from-api", status: "completed" });
+    expect(new Set(events.map((event) => event.runId))).toEqual(
+      new Set(["run-from-api", "retry-from-api"]),
+    );
+    expect(events.filter((event) => event.runId === "retry-from-api").at(-1)?.type).toBe(
+      "run-completed",
+    );
+  });
+
   it("fails fast on a dependency cycle", async () => {
     const { store, ai, orchestrator } = createHarness({});
     const caseRecord = await createCaseAsync(store);
@@ -659,8 +681,11 @@ describe("orchestrator", () => {
     const caseRecord = await createCaseAsync(store);
 
     await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+
     vi.spyOn(store.runs, "reconcileUsageAsync")
       .mockResolvedValueOnce(0)
+      .mockImplementationOnce(reconcileUsageAsync)
       .mockRejectedValueOnce(new Error("Usage write failed"));
 
     const result = await orchestrator.runCaseAsync(caseRecord.id);
@@ -1036,5 +1061,306 @@ describe("orchestrator", () => {
     const reconciliationPrompt = ai.calls.find((call) => call.key === "reconciliation")?.prompt;
 
     expect(reconciliationPrompt).toContain("Is Form 16 available?");
+  });
+
+  it("does not run a task whose start cannot be persisted", async () => {
+    const { store, ai, orchestrator } = createHarness({ "case-analysis": specialistStep() });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    vi.spyOn(store.tasks, "updateTaskAsync").mockRejectedValueOnce(new Error("Task write failed"));
+
+    const first = await orchestrator.runCaseAsync(caseRecord.id);
+    const [failed] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(ai.calls).toHaveLength(0);
+    expect(first.failedTaskIds).toEqual(["a"]);
+    expect(failed).toMatchObject({ status: "failed", attempts: 1 });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const [completed] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+    const findings = await store.findings.getFindingsForCaseAsync(caseRecord.id);
+
+    expect(retry.status).toBe("completed");
+    expect(completed).toMatchObject({ status: "completed", attempts: 2 });
+    expect(findings.map((item) => item.attempt)).toEqual([2]);
+  });
+
+  it("rejects the output of a worker whose lease passed to another worker mid-task", async () => {
+    const handlers = createDefaultTaskHandlers();
+    const { store, orchestrator } = createHarness({}, { handlers });
+    const caseRecord = await createCaseAsync(store);
+    const acquireLease = vi.spyOn(store.runs, "acquireLeaseAsync");
+
+    handlers.register({
+      role: "case-analysis",
+      async executeAsync() {
+        const owner = acquireLease.mock.calls[0]?.[1] ?? "";
+
+        // The worker pauses long enough for its lease to pass to a newer worker, and its own
+        // lease check still passed just before the pause.
+        await store.runs.releaseLeaseAsync(caseRecord.id, owner);
+        await store.runs.acquireLeaseAsync(caseRecord.id, "newer-worker", 60_000);
+        vi.spyOn(store.runs, "renewLeaseAsync").mockResolvedValue(true);
+
+        return {
+          findings: [finding("Stale output")],
+          sections: [{ title: "Stale", kind: "text", content: "Stale" }],
+          usage: { input: 10, output: 2, total: 12 },
+          cost: 0.001,
+        };
+      },
+    });
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+
+    const result = await orchestrator.runCaseAsync(caseRecord.id);
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(result.status).toBe("failed");
+    expect(await store.findings.getFindingsForCaseAsync(caseRecord.id)).toEqual([]);
+    expect(await store.deliverables.getDeliverablesForCaseAsync(caseRecord.id)).toEqual([]);
+    expect(task).toMatchObject({
+      status: "in-progress",
+      attempts: 1,
+      tokenUsage: { input: 10, output: 2, total: 12 },
+    });
+    expect((await store.cases.getCaseAsync(caseRecord.id))?.status).toBe("in-progress");
+    expect(await store.runs.acquireLeaseAsync(caseRecord.id, "third", 60_000)).toBe(false);
+  });
+
+  it("adds a journaled charge of an interrupted attempt to the task totals once", async () => {
+    const { store, orchestrator } = createHarness({ "case-analysis": specialistStep() });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", { status: "in-progress", attempts: 1 });
+    await store.runs.recordChargeAsync(caseRecord.id, "interrupted", "task:a:1", {
+      taskId: "a",
+      inputTokens: 300,
+      outputTokens: 50,
+      totalTokens: 350,
+      costEstimate: 0.002,
+    });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(retry.status).toBe("completed");
+    expect(task).toMatchObject({ status: "completed", attempts: 2 });
+    expect(task?.tokenUsage).toEqual({
+      input: 300 + retry.usage.input,
+      output: 50 + retry.usage.output,
+      total: 350 + retry.usage.total,
+    });
+    expect(task?.costEstimate).toBeCloseTo(0.002 + retry.costEstimate, 10);
+    expect((await store.cases.getCaseAsync(caseRecord.id))?.usage?.inputTokens).toBe(
+      300 + retry.usage.input,
+    );
+    expect(await store.runs.reconcileUsageAsync(caseRecord.id)).toBe(0);
+    expect((await store.tasks.getTasksForCaseAsync(caseRecord.id))[0]).toEqual(task);
+  });
+
+  it("never streams a lower case cost after a higher one", async () => {
+    const handlers = createDefaultTaskHandlers();
+    let releaseSlowTask = () => {};
+
+    let slowTaskCompleted = () => {};
+
+    const slowTaskReleased = new Promise<void>((resolve) => {
+      releaseSlowTask = resolve;
+    });
+    const slowTaskDone = new Promise<void>((resolve) => {
+      slowTaskCompleted = resolve;
+    });
+
+    handlers.register({
+      role: "case-analysis",
+      async executeAsync() {
+        return { findings: [], usage: { input: 10, output: 1, total: 11 }, cost: 0.001 };
+      },
+    });
+    handlers.register({
+      role: "reconciliation",
+      async executeAsync() {
+        await slowTaskReleased;
+
+        return { findings: [], usage: { input: 20, output: 2, total: 22 }, cost: 0.002 };
+      },
+    });
+
+    const { store, orchestrator } = createHarness({}, { handlers });
+    const caseRecord = await createCaseAsync(store);
+    const appendEventAsync = store.events.appendEventAsync.bind(store.events);
+    const updateTaskAsync = store.tasks.updateTaskAsync.bind(store.tasks);
+
+    await seedTasksAsync(store, caseRecord.id, [
+      { id: "fast", role: "case-analysis" },
+      { id: "slow", role: "reconciliation" },
+    ]);
+    vi.spyOn(store.tasks, "updateTaskAsync").mockImplementation(async (...args) => {
+      const updated = await updateTaskAsync(...args);
+
+      if (args[1] === "slow" && args[2].status === "completed") {
+        slowTaskCompleted();
+      }
+
+      return updated;
+    });
+    // While the fast task's completion is being written, the slow task finishes and queues its own.
+    vi.spyOn(store.events, "appendEventAsync").mockImplementation(async (caseId, event) => {
+      if (event.type === "task-completed" && event.taskId === "fast") {
+        releaseSlowTask();
+        await slowTaskDone;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      return appendEventAsync(caseId, event);
+    });
+
+    const result = await orchestrator.runCaseAsync(caseRecord.id);
+    const events = await store.events.listEventsAsync(caseRecord.id);
+    const streamedTotals = events.flatMap((event) => {
+      if (event.type === "cost-updated") {
+        return [event.totalCostEstimate];
+      }
+
+      return event.type === "task-completed" ? [event.runningCostEstimate ?? 0] : [];
+    });
+
+    expect(result.status).toBe("completed");
+    expect(streamedTotals).toHaveLength(4);
+    expect(streamedTotals).toEqual([...streamedTotals].sort((left, right) => left - right));
+    expect(streamedTotals.at(-1)).toBeCloseTo(0.003, 10);
+  });
+
+  it("publishes accurate task totals when applying the task charge is deferred", async () => {
+    const { store, orchestrator } = createHarness({ "case-analysis": specialistStep() });
+    const caseRecord = await createCaseAsync(store);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+    let reconciles = 0;
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", {
+      status: "failed",
+      attempts: 1,
+      tokenUsage: { input: 40, output: 10, total: 50 },
+      costEstimate: 0.004,
+    });
+    vi.spyOn(store.runs, "reconcileUsageAsync").mockImplementation(async (caseId) => {
+      reconciles += 1;
+
+      if (reconciles === 2) {
+        throw new Error("Usage write failed");
+      }
+
+      return reconcileUsageAsync(caseId);
+    });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const events = await store.events.listEventsAsync(caseRecord.id);
+    const completed = events.find((event) => event.type === "task-completed");
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+    const expectedUsage = {
+      input: 40 + retry.usage.input,
+      output: 10 + retry.usage.output,
+      total: 50 + retry.usage.total,
+    };
+
+    expect(retry.status).toBe("completed");
+    expect(reconciles).toBe(3);
+    expect(completed).toMatchObject({ tokenUsage: expectedUsage });
+    expect(completed?.type === "task-completed" ? completed.costEstimate : 0).toBeCloseTo(
+      0.004 + retry.costEstimate,
+      10,
+    );
+    expect(task?.tokenUsage).toEqual(expectedUsage);
+    expect(task?.costEstimate).toBeCloseTo(0.004 + retry.costEstimate, 10);
+    expect(retry.caseUsage).toEqual(retry.usage);
+    expect(retry.caseCostEstimate).toBeCloseTo(retry.costEstimate, 10);
+    expect(events.filter((event) => event.type === "cost-updated").at(-1)).toMatchObject({
+      totalTokenUsage: retry.usage,
+    });
+  });
+
+  it("includes a late charge from a previous worker in the completion totals", async () => {
+    const handlers = createDefaultTaskHandlers();
+    const { store, orchestrator } = createHarness({}, { handlers });
+    const caseRecord = await createCaseAsync(store);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+    let reconciliations = 0;
+
+    handlers.register({
+      role: "case-analysis",
+      async executeAsync() {
+        // The worker that lost the lease journals its billed attempt while this one runs.
+        await store.runs.recordChargeAsync(caseRecord.id, "previous-run", "task:a:1", {
+          taskId: "a",
+          inputTokens: 100,
+          outputTokens: 0,
+          costEstimate: 0.01,
+        });
+
+        return { findings: [], usage: { input: 50, output: 0, total: 50 }, cost: 0.005 };
+      },
+    });
+    vi.spyOn(store.runs, "reconcileUsageAsync").mockImplementation(async (caseId) => {
+      reconciliations += 1;
+
+      if (reconciliations === 3) {
+        await store.runs.recordChargeAsync(caseId, "previous-run", "late-final", {
+          inputTokens: 25,
+          outputTokens: 0,
+          costEstimate: 0.0025,
+        });
+      }
+
+      return reconcileUsageAsync(caseId);
+    });
+    await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    await store.tasks.updateTaskAsync(caseRecord.id, "a", { status: "in-progress", attempts: 1 });
+
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id);
+    const events = await store.events.listEventsAsync(caseRecord.id);
+    const completed = events.find((event) => event.type === "task-completed");
+    const [task] = await store.tasks.getTasksForCaseAsync(caseRecord.id);
+
+    expect(retry.status).toBe("completed");
+    expect(reconciliations).toBe(3);
+    expect(task?.tokenUsage).toEqual({ input: 150, output: 0, total: 150 });
+    expect(task?.costEstimate).toBeCloseTo(0.015, 10);
+    expect(completed).toMatchObject({ tokenUsage: { input: 150, output: 0, total: 150 } });
+    expect(completed?.type === "task-completed" ? completed.costEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+
+    const caseAfter = await store.cases.getCaseAsync(caseRecord.id);
+    const costUpdated = events.filter((event) => event.type === "cost-updated").at(-1);
+    const terminal = events.at(-1);
+
+    expect(caseAfter?.usage).toMatchObject({ inputTokens: 175, outputTokens: 0 });
+    expect(caseAfter?.usage?.costEstimate).toBeCloseTo(0.0175, 10);
+    expect(retry.usage).toEqual({ input: 50, output: 0, total: 50 });
+    expect(retry.costEstimate).toBeCloseTo(0.005, 10);
+    expect(retry.caseUsage).toEqual({ input: 175, output: 0, total: 175 });
+    expect(retry.caseCostEstimate).toBeCloseTo(0.0175, 10);
+    expect(completed?.type === "task-completed" ? completed.runningCostEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+    expect(costUpdated).toMatchObject({ totalTokenUsage: { input: 150, output: 0, total: 150 } });
+    expect(costUpdated?.type === "cost-updated" ? costUpdated.totalCostEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+    expect(terminal).toMatchObject({
+      type: "run-completed",
+      totalTokenUsage: { input: 175, output: 0, total: 175 },
+    });
+    expect(terminal?.type === "run-completed" ? terminal.totalCostEstimate : 0).toBeCloseTo(
+      0.0175,
+      10,
+    );
+    expect(await store.runs.reconcileUsageAsync(caseRecord.id)).toBe(0);
   });
 });

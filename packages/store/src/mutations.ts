@@ -16,6 +16,7 @@ import {
   type RunEvent,
   type Task,
 } from "@evianta/core";
+import { z } from "zod";
 
 import { StoreNotFoundError } from "./errors.js";
 import type {
@@ -26,7 +27,21 @@ import type {
   OpenQuestionUpdate,
   SectionUpdate,
   TaskUpdate,
+  UsageAmounts,
+  UsageCharge,
 } from "./types.js";
+
+const tokenCountSchema = z.number().int().nonnegative().optional();
+
+export const usageChargeSchema = z.object({
+  taskId: z.string().min(1).optional(),
+  inputTokens: tokenCountSchema,
+  outputTokens: tokenCountSchema,
+  totalTokens: tokenCountSchema,
+  costEstimate: z.number().nonnegative().optional(),
+  runCount: z.number().int().nonnegative().optional(),
+  lastRunAt: z.string().optional(),
+});
 
 export const defaultCasePageSize = 50;
 
@@ -88,6 +103,14 @@ export function applyCaseApproval(current: Case, approval: ApprovalInput): Case 
     },
     updatedAt: now,
   });
+}
+
+export function clearCaseApproval(current: Case): Case {
+  const next = { ...current, updatedAt: nowIso() };
+
+  delete next.approval;
+
+  return caseSchema.parse(next);
 }
 
 export function buildCaseCopy(source: Case, visitorId: string): Case {
@@ -155,6 +178,50 @@ export function applyTaskUpdate(current: Task, update: TaskUpdate): Task {
   }
 
   return taskSchema.parse(next);
+}
+
+export function applyTaskCharge(current: Task, charge: UsageCharge): Task {
+  const input = charge.inputTokens ?? 0;
+  const output = charge.outputTokens ?? 0;
+  const usage = current.tokenUsage ?? { input: 0, output: 0, total: 0 };
+
+  return applyTaskUpdate(current, {
+    tokenUsage: {
+      input: usage.input + input,
+      output: usage.output + output,
+      total: usage.total + (charge.totalTokens ?? input + output),
+    },
+    costEstimate: (current.costEstimate ?? 0) + (charge.costEstimate ?? 0),
+  });
+}
+
+export function emptyUsageAmounts(): UsageAmounts {
+  return { inputTokens: 0, outputTokens: 0, costEstimate: 0 };
+}
+
+export function addChargeAmounts(total: UsageAmounts, charge: CaseUsageIncrement): UsageAmounts {
+  return {
+    inputTokens: total.inputTokens + (charge.inputTokens ?? 0),
+    outputTokens: total.outputTokens + (charge.outputTokens ?? 0),
+    costEstimate: total.costEstimate + (charge.costEstimate ?? 0),
+  };
+}
+
+export function caseUsageAmounts(current: Case): UsageAmounts {
+  return {
+    inputTokens: current.usage?.inputTokens ?? 0,
+    outputTokens: current.usage?.outputTokens ?? 0,
+    costEstimate: current.usage?.costEstimate ?? 0,
+  };
+}
+
+export interface StoredLease {
+  owner: string;
+  expiresAt: number;
+}
+
+export function isLeaseHeld(lease: StoredLease | undefined, owner: string): boolean {
+  return lease !== undefined && lease.owner === owner && lease.expiresAt > Date.now();
 }
 
 export function findingHasQuestion(finding: Finding, questionId: string): boolean {

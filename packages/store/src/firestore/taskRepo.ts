@@ -7,13 +7,13 @@ import type { TaskRepo } from "../types.js";
 import {
   caseSubcollection,
   createDocAsync,
-  isAlreadyExistsError,
   listInInsertionOrderAsync,
   mutateDocAsync,
   nextOrder,
   orderField,
   toFirestoreData,
 } from "./helpers.js";
+import { leaseGuard } from "./lease.js";
 
 export function createTaskRepo(db: Firestore): TaskRepo {
   return {
@@ -24,10 +24,9 @@ export function createTaskRepo(db: Firestore): TaskRepo {
 
       return task;
     },
-    async createTasksAsync(caseId, inputs) {
+    async createTasksAsync(caseId, inputs, fence) {
       const tasks = inputs.map((input) => taskSchema.parse(input));
       const ids = new Set<string>();
-      const batch = db.batch();
 
       for (const task of tasks) {
         if (task.caseId !== caseId) {
@@ -39,34 +38,42 @@ export function createTaskRepo(db: Firestore): TaskRepo {
         }
 
         ids.add(task.id);
-        batch.create(
-          caseSubcollection(db, caseId, "tasks").doc(task.id),
-          toFirestoreData({ ...task, [orderField]: nextOrder() }),
-        );
       }
 
-      try {
-        await batch.commit();
-      } catch (error) {
-        if (isAlreadyExistsError(error)) {
-          throw new StoreConflictError("task", tasks.map((task) => task.id).join(", "));
+      const entries = tasks.map((task) => ({
+        task,
+        ref: caseSubcollection(db, caseId, "tasks").doc(task.id),
+      }));
+      const guard = leaseGuard(db, caseId, fence);
+
+      await db.runTransaction(async (transaction) => {
+        await guard?.(transaction);
+        const refs = entries.map((entry) => entry.ref);
+        const existing = refs.length > 0 ? await transaction.getAll(...refs) : [];
+        const conflict = existing.find((snapshot) => snapshot.exists);
+
+        if (conflict) {
+          throw new StoreConflictError("task", conflict.id);
         }
 
-        throw error;
-      }
+        for (const { task, ref } of entries) {
+          transaction.create(ref, toFirestoreData({ ...task, [orderField]: nextOrder() }));
+        }
+      });
 
       return tasks;
     },
     async getTasksForCaseAsync(caseId) {
       return listInInsertionOrderAsync(caseSubcollection(db, caseId, "tasks"), taskSchema);
     },
-    async updateTaskAsync(caseId, taskId, update) {
+    async updateTaskAsync(caseId, taskId, update, fence) {
       return mutateDocAsync(
         db,
         caseSubcollection(db, caseId, "tasks").doc(taskId),
         taskSchema,
         "task",
         (current) => applyTaskUpdate(current, update),
+        leaseGuard(db, caseId, fence),
       );
     },
   };

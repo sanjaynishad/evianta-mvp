@@ -61,7 +61,9 @@ export function RunProgressPanel({
         {connection === "reconnecting" ? <Badge variant="warning">Reconnecting</Badge> : null}
         <div className="ml-auto flex items-baseline gap-3 text-sm">
           <span className="text-muted-foreground">Model cost</span>
-          <span className="figures font-medium">{formatUsd(progress.totalCost)}</span>
+          <span className="figures font-medium" data-testid="running-cost">
+            {formatUsd(progress.totalCost)}
+          </span>
           <span className="figures text-xs text-muted-foreground">
             {formatNumber(progress.totalTokens)} tokens
           </span>

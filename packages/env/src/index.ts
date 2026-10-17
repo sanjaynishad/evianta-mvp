@@ -34,3 +34,13 @@ export function getUsageViewPath(): string {
 export const firestoreEmulatorHost = process.env.FIRESTORE_EMULATOR_HOST?.trim() ?? "";
 
 export const storageEmulatorHost = process.env.STORAGE_EMULATOR_HOST?.trim() ?? "";
+
+/** Parses EVIANTA_WEB_ORIGIN: one origin or a comma-separated list, without trailing slashes. */
+export function parseWebOrigins(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/+$/, ""))
+    .filter((origin) => origin.length > 0);
+}
+
+export const webOrigins = parseWebOrigins(process.env.EVIANTA_WEB_ORIGIN);

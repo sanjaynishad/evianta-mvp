@@ -26,6 +26,7 @@
       "passThroughEnv": [
         "PORT",
         "EVIANTA_AI_PROVIDER",
+        "EVIANTA_WEB_ORIGIN",
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",
         "GOOGLE_CLOUD_PROJECT",

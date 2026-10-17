@@ -1,0 +1,417 @@
+import ExcelJS from "exceljs";
+import JSZip from "jszip";
+import request from "supertest";
+import { describe, expect, it } from "vitest";
+
+import { exportXlsxAsync, parseTable, toCellValue, worksheetName } from "./exports.js";
+import { createTestHarness, VISITOR_A } from "./testing/harness.js";
+
+function binary(test: request.Test): request.Test {
+  return test.buffer(true).parse((res, callback) => {
+    const chunks: Buffer[] = [];
+
+    res.on("data", (chunk: Buffer) => chunks.push(chunk));
+    res.on("end", () => callback(null, Buffer.concat(chunks)));
+  });
+}
+
+async function seedExportCaseAsync() {
+  const harness = createTestHarness();
+  const { store } = harness;
+  const caseRecord = await store.cases.createCaseAsync({
+    title: "MSME dispute with Acme Traders",
+    useCase: "msme-payment",
+    visitorId: VISITOR_A,
+    status: "completed",
+  });
+  const evidence = {
+    id: "e-invoice",
+    sourceRef: "invoices.xlsx Invoices!B4:F4",
+    description: "Invoice INV-104 for Rs. 2,40,000",
+    excerpt: "INV-104 | 2024-01-15 | 240000",
+    documentId: "doc-invoices",
+    location: { sheet: "Invoices", cellRange: "B4:F4" },
+    confidence: "high" as const,
+  };
+
+  await store.tasks.createTaskAsync({
+    id: "t1",
+    caseId: caseRecord.id,
+    title: "Reconcile invoices",
+    assignedRole: "payment-reconciliation",
+    status: "completed",
+    attempts: 1,
+  });
+  await store.evidence.addEvidenceAsync(caseRecord.id, evidence);
+  await store.evidence.addEvidenceAsync(caseRecord.id, {
+    id: "e-ledger",
+    sourceRef: "ledger.csv rows 12-14",
+    description: "Ledger shows no receipt against INV-109",
+    location: { rowRange: { start: 12, end: 14 } },
+  });
+  await store.findings.addFindingAsync(caseRecord.id, {
+    id: "f1",
+    taskId: "t1",
+    attempt: 1,
+    summary: "INV-104 is unpaid after 45 days",
+    severity: "high",
+    confidence: "high",
+    evidence: [evidence],
+  });
+  await store.deliverables.saveDeliverableAsync({
+    id: "deliverable-primary",
+    caseId: caseRecord.id,
+    title: "Payment dispute case pack",
+    format: "document",
+    content: "Prepared for the MSME Facilitation Council.",
+    sections: [
+      {
+        id: "t1-section-1",
+        title: "Statement of claim",
+        kind: "text",
+        content: "AI drafted claim paragraph.",
+        producedByRole: "case-preparation",
+        findingIds: ["f1"],
+      },
+      {
+        id: "t1-section-2",
+        title: "Outstanding invoices",
+        kind: "table",
+        content: [
+          "| Invoice | Date | Amount |",
+          "| --- | --- | ---: |",
+          "| INV-104 | 2024-01-15 | 2,40,000 |",
+          "| 00109 | 2024-02-02 | 75,500 |",
+          "| Acme \\| West | 2024-02-10 | Rs. 1,200.50 |",
+        ].join("\n"),
+        producedByRole: "payment-reconciliation",
+        evidenceIds: ["e-invoice", "e-ledger"],
+      },
+    ],
+  });
+
+  const base = `/cases/${caseRecord.id}/deliverables/deliverable-primary`;
+
+  await request(harness.app)
+    .patch(`${base}/sections/t1-section-1`)
+    .send({ editedContent: "Reviewer revised claim for **Rs. 2,40,000** plus interest." })
+    .expect(200);
+
+  return { ...harness, caseRecord, base };
+}
+
+describe("deliverable exports", () => {
+  it("exports a .docx with reviewer edits and the evidence appendix", async () => {
+    const { app, base } = await seedExportCaseAsync();
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "docx" }),
+    ).expect(200);
+
+    expect(response.headers["content-type"]).toBe(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    expect(response.headers["content-disposition"]).toContain(
+      'attachment; filename="payment-dispute-case-pack.docx"',
+    );
+
+    const zip = await JSZip.loadAsync(response.body as Buffer);
+    const xml = (await zip.file("word/document.xml")?.async("string")) ?? "";
+    const text = xml.replace(/<[^>]+>/g, "");
+
+    expect(text).toContain("Reviewer revised claim for ");
+    expect(text).toContain("Rs. 2,40,000");
+    expect(text).not.toContain("AI drafted claim paragraph.");
+    expect(text).toContain("edited by reviewer");
+    expect(text).toContain("Evidence: E1");
+    expect(text).toContain("Evidence appendix");
+    expect(text).toContain("invoices.xlsx Invoices!B4:F4");
+    expect(text).toContain("Invoices!B4:F4");
+    expect(text).toContain("Prepared for the MSME Facilitation Council.");
+    expect(text).toContain("Evidence: E1, E2");
+    expect(text).toContain("ledger.csv rows 12-14");
+    expect(text).toContain("Acme | West");
+  });
+
+  it("exports a .xlsx with sections, table sheets, and the evidence appendix", async () => {
+    const { app, base } = await seedExportCaseAsync();
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "xlsx" }),
+    ).expect(200);
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(response.body as Buffer);
+
+    const sections = workbook.getWorksheet("Sections");
+    const table = workbook.getWorksheet("Outstanding invoices");
+    const appendix = workbook.getWorksheet("Evidence");
+
+    expect(sections?.getRow(2).getCell(1).value).toBe("Payment dispute case pack");
+    expect(sections?.getRow(2).getCell(6).value).toBe(
+      "Prepared for the MSME Facilitation Council.",
+    );
+    expect(sections?.getRow(3).getCell(1).value).toBe("Statement of claim");
+    expect(sections?.getRow(3).getCell(5).value).toBe("yes");
+    expect(sections?.getRow(3).getCell(6).value).toBe(
+      "Reviewer revised claim for **Rs. 2,40,000** plus interest.",
+    );
+    expect(sections?.getRow(3).getCell(8).value).toBe("E1");
+    expect(sections?.getRow(4).getCell(8).value).toBe("E1, E2");
+    expect(table?.getRow(1).values).toEqual([undefined, "Invoice", "Date", "Amount"]);
+    expect(table?.getRow(2).values).toEqual([undefined, "INV-104", "2024-01-15", 240000]);
+    expect(table?.getRow(3).values).toEqual([undefined, "00109", "2024-02-02", 75500]);
+    expect(table?.getRow(4).values).toEqual([undefined, "Acme | West", "2024-02-10", 1200.5]);
+    expect(appendix?.getRow(3).getCell(2).value).toBe("ledger.csv rows 12-14");
+    expect(appendix?.getRow(2).values).toEqual([
+      undefined,
+      "E1",
+      "invoices.xlsx Invoices!B4:F4",
+      "Invoices!B4:F4",
+      "Invoice INV-104 for Rs. 2,40,000",
+      "INV-104 | 2024-01-15 | 240000",
+      "high",
+    ]);
+  });
+
+  it("exports JSON with effective content, findings, and the appendix", async () => {
+    const { app, base } = await seedExportCaseAsync();
+    const response = await request(app).get(`${base}/export`).query({ format: "json" }).expect(200);
+
+    expect(response.body.deliverable.sections[0]).toMatchObject({
+      effectiveContent: "Reviewer revised claim for **Rs. 2,40,000** plus interest.",
+      editedByReviewer: true,
+      evidenceRefs: ["E1"],
+    });
+    expect(response.body.findings.map((item: { id: string }) => item.id)).toEqual(["f1"]);
+    expect(response.body.evidenceAppendix).toEqual([
+      expect.objectContaining({ ref: "E1", id: "e-invoice" }),
+      expect.objectContaining({ ref: "E2", id: "e-ledger" }),
+    ]);
+  });
+
+  it("preserves long reviewed and top-level content in Excel continuation rows", async () => {
+    const { app, store, caseRecord, base } = await seedExportCaseAsync();
+    const deliverable = (await store.deliverables.getDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+    ))!;
+    const topLevel = `${"A".repeat(32_766)}\u{1f600}${"B".repeat(40_000)}`;
+    const edited = `${"C".repeat(32_766)}\u{1f600}${"D".repeat(167_232)}`;
+    const tableValue = "E".repeat(40_000);
+    const tableContent = `| Description |\n| --- |\n| ${tableValue} |`;
+
+    await store.deliverables.saveDeliverableAsync({ ...deliverable, content: topLevel });
+    await request(app)
+      .patch(`${base}/sections/t1-section-1`)
+      .send({ editedContent: edited })
+      .expect(200);
+    await request(app)
+      .patch(`${base}/sections/t1-section-2`)
+      .send({ editedContent: tableContent })
+      .expect(200);
+
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "xlsx" }),
+    ).expect(200);
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(response.body as Buffer);
+
+    const sections = workbook.getWorksheet("Sections")!;
+    const contents = new Map<string, string>();
+    let title = "";
+
+    sections.eachRow((row, index) => {
+      if (index === 1) {
+        return;
+      }
+
+      if (row.getCell(1).value) {
+        title = String(row.getCell(1).value);
+      }
+
+      contents.set(title, (contents.get(title) ?? "") + String(row.getCell(6).value ?? ""));
+    });
+
+    expect(contents.get(deliverable.title)).toBe(topLevel);
+    expect(contents.get("Statement of claim")).toBe(edited);
+    expect(contents.get("Outstanding invoices")).toBe(tableContent);
+
+    const table = workbook.getWorksheet("Outstanding invoices")!;
+    const tableParts: string[] = [];
+
+    table.eachRow((row, index) => {
+      if (index > 1) {
+        tableParts.push(String(row.getCell(1).value ?? ""));
+      }
+    });
+
+    expect(tableParts.join("")).toBe(tableValue);
+
+    for (const sheet of workbook.worksheets) {
+      sheet.eachRow((row) => {
+        row.eachCell((cell) => {
+          if (typeof cell.value === "string") {
+            expect(cell.value.length).toBeLessThanOrEqual(32_767);
+            expect(cell.value).not.toMatch(/[\ud800-\udbff]$/);
+            expect(cell.value).not.toMatch(/^[\udc00-\udfff]/);
+          }
+        });
+      });
+    }
+  });
+
+  it("preserves over-precision JSON table numbers as text in both table shapes", async () => {
+    const { app, store, caseRecord, base } = await seedExportCaseAsync();
+    const deliverable = (await store.deliverables.getDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+    ))!;
+    const id = "1234567890123456789";
+    const amount = "123456789012345.6789";
+    const structuredCellText =
+      '{"quantity":2,"prices":[1,3],"precise":1234567890123456789,"numericString":"2","identifier":"00104"}';
+    const objectRows = `[{"Details":${structuredCellText},"Invoice ID":${id},"Amount":${amount}}]`;
+    const columnRows = `{"columns":["Details","Invoice ID","Amount"],"rows":[[${structuredCellText},${id},${amount}]]}`;
+
+    await store.deliverables.saveDeliverableAsync({
+      ...deliverable,
+      sections: [
+        ...deliverable.sections,
+        {
+          id: "json-object-table",
+          title: "JSON objects",
+          kind: "table",
+          content: objectRows,
+          producedByRole: "payment-reconciliation",
+        },
+        {
+          id: "json-column-table",
+          title: "JSON columns",
+          kind: "table",
+          content: columnRows,
+          producedByRole: "payment-reconciliation",
+        },
+      ],
+    });
+
+    expect(parseTable(objectRows)?.rows).toEqual([[structuredCellText, id, amount]]);
+    expect(parseTable(columnRows)?.rows).toEqual([[structuredCellText, id, amount]]);
+
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "xlsx" }),
+    ).expect(200);
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(response.body as Buffer);
+
+    for (const name of ["JSON objects", "JSON columns"]) {
+      const row = workbook.getWorksheet(name)!.getRow(2);
+
+      expect(row.getCell(1).value).toBe(structuredCellText);
+      expect(row.getCell(2).value).toBe(id);
+      expect(row.getCell(3).value).toBe(amount);
+    }
+  });
+
+  it("parses markdown and JSON tables", () => {
+    expect(parseTable("Intro\n| A | B |\n|---|---|\n| 1 | 2 |\nOutro")).toEqual({
+      header: ["A", "B"],
+      rows: [["1", "2"]],
+    });
+    expect(parseTable('[{"month":"Jan","revenue":10}]')).toEqual({
+      header: ["month", "revenue"],
+      rows: [["Jan", "10"]],
+    });
+    expect(parseTable('{"columns":[{"name":"x"}],"rows":[[1],[2]]}')).toEqual({
+      header: ["x"],
+      rows: [["1"], ["2"]],
+    });
+    expect(parseTable("No table here.")).toBeUndefined();
+    expect(parseTable("[1,2,3]")).toBeUndefined();
+    expect(parseTable('[{"a":1},5]')).toBeUndefined();
+    expect(parseTable("| Party | Amount |\n|---|---|\n| Acme \\| West | 10 |")?.rows).toEqual([
+      ["Acme | West", "10"],
+    ]);
+  });
+
+  it("converts plain amounts but keeps identifiers as text", () => {
+    expect(toCellValue("2,40,000")).toBe(240000);
+    expect(toCellValue("Rs. 1,200.50")).toBe(1200.5);
+    expect(toCellValue("-75")).toBe(-75);
+    expect(toCellValue("0.5")).toBe(0.5);
+    expect(toCellValue("00104")).toBe("00104");
+    expect(toCellValue("123 456")).toBe("123 456");
+    expect(toCellValue("2024-01-15")).toBe("2024-01-15");
+    expect(toCellValue("1234567890123456789")).toBe("1234567890123456789");
+    expect(toCellValue("123456789012345.6789")).toBe("123456789012345.6789");
+    expect(toCellValue("12345678901234.5")).toBe(12345678901234.5);
+    expect(toCellValue("0.000123456789012345")).toBe(0.000123456789012345);
+    expect(toCellValue("0.0001234567890123456")).toBe("0.0001234567890123456");
+    expect(toCellValue("-0.1234567890123456")).toBe("-0.1234567890123456");
+    expect(toCellValue("Rs. 123,456,789,012,345.6789")).toBe("Rs. 123,456,789,012,345.6789");
+    expect(toCellValue("1.2345678901234500")).toBe("1.2345678901234500");
+  });
+
+  it("names worksheets that Excel accepts", () => {
+    const used = new Set<string>();
+
+    expect(worksheetName("History", used)).toBe("History table");
+    expect(worksheetName("'Revenue'", used)).toBe("Revenue");
+    expect(worksheetName("'Revenue'", used)).toBe("Revenue 2");
+    expect(worksheetName("  ''  ", used)).toBe("Table");
+    expect(worksheetName("Q1: costs/fees [draft]?", used)).toBe("Q1  costs fees  draft");
+    expect(worksheetName("x".repeat(40), used)).toHaveLength(28);
+  });
+
+  it("exports table sections titled History or wrapped in apostrophes", async () => {
+    const table = [
+      "| Month | Revenue |",
+      "| --- | --- |",
+      "| Jan | 123456789012345.6789 |",
+      "| Feb | 0.0001234567890123456 |",
+      "| Mar | 12345678901234.5 |",
+    ].join("\n");
+    const file = await exportXlsxAsync({
+      caseRecord: {
+        id: "case-1",
+        title: "Sales",
+        status: "completed",
+        isSample: false,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      },
+      deliverable: {
+        id: "deliverable-primary",
+        caseId: "case-1",
+        title: "Analysis report",
+        format: "report",
+        sections: ["History", "'Revenue'"].map((title, index) => ({
+          id: `t1-section-${index + 1}`,
+          title,
+          kind: "table" as const,
+          content: table,
+          producedByRole: "business-data-analyst" as const,
+          findingIds: [],
+          evidenceIds: [],
+          reviewStatus: "pending" as const,
+        })),
+      },
+      findings: [],
+      evidence: [],
+      generatedAt: new Date("2026-10-01T00:00:00.000Z"),
+    });
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(file.body);
+
+    expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
+      "Sections",
+      "History table",
+      "Revenue",
+      "Evidence",
+    ]);
+    expect(workbook.getWorksheet("Revenue")?.getCell("B2").value).toBe("123456789012345.6789");
+    expect(workbook.getWorksheet("Revenue")?.getCell("B3").value).toBe("0.0001234567890123456");
+    expect(workbook.getWorksheet("Revenue")?.getCell("B4").value).toBe(12345678901234.5);
+  });
+});

@@ -361,7 +361,12 @@ export function useCaseWorkspace(
         try {
           const document: CaseDocument = await dataSource.uploadDocumentAsync(caseId, file);
           setUploads((current) => current.filter((upload) => upload.id !== id));
-          mutate((current) => ({ ...current, documents: [...current.documents, document] }));
+          mutate((current) => ({
+            ...current,
+            documents: current.documents.some((existing) => existing.id === document.id)
+              ? current.documents
+              : [...current.documents, document],
+          }));
         } catch (error) {
           if (showReadOnlyToast(error)) {
             setUploads((current) => current.filter((upload) => upload.id !== id));

@@ -15,8 +15,8 @@ export function SampleBanner({ onTryCase, copying = false }: SampleBannerProps) 
     >
       <Lock aria-hidden className="size-4 shrink-0 text-info" />
       <p className="min-w-0 flex-1 text-sm text-foreground">
-        <span className="font-medium">This is a read-only sample.</span> Try this case to upload
-        documents, run it, and edit the results in your own copy.
+        <span className="font-medium">This is a read-only sample.</span> Try this case to run it and
+        edit the results in your own copy. Start a new case to use your own documents.
       </p>
       <Button size="sm" onClick={onTryCase} loading={copying}>
         {copying ? null : <Copy aria-hidden />}
