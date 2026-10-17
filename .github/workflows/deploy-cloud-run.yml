@@ -31,7 +31,6 @@ jobs:
       ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY || 'evianta' }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE || (github.event_name == 'push' && 'evianta-api-dev' || 'evianta-api') }}
       CLOUD_RUN_WEB_SERVICE: ${{ vars.CLOUD_RUN_WEB_SERVICE || (github.event_name == 'push' && 'evianta-web-dev' || 'evianta-web') }}
-      CLOUD_RUN_ALLOW_UNAUTHENTICATED: ${{ vars.CLOUD_RUN_ALLOW_UNAUTHENTICATED || 'false' }}
       GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION || 'asia-south2' }}
       FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || (github.event_name == 'push' && 'evianta-dev' || '(default)') }}
       GCS_BUCKET: ${{ vars.GCS_BUCKET }}
@@ -55,11 +54,6 @@ jobs:
               exit 1
             fi
           done
-
-          if [[ "$CLOUD_RUN_ALLOW_UNAUTHENTICATED" != "true" && "$CLOUD_RUN_ALLOW_UNAUTHENTICATED" != "false" ]]; then
-            echo "::error::CLOUD_RUN_ALLOW_UNAUTHENTICATED must be true or false."
-            exit 1
-          fi
 
           if [[ "$CLOUD_RUN_SERVICE" == "$CLOUD_RUN_WEB_SERVICE" ]]; then
             echo "::error::API and web service names must be different."
@@ -136,11 +130,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          access_flags=(--no-allow-unauthenticated)
-          if [[ "$CLOUD_RUN_ALLOW_UNAUTHENTICATED" == "true" ]]; then
-            access_flags=(--allow-unauthenticated)
-          fi
-
           secret_flags=(--clear-secrets)
           if [[ -n "$EVIANTA_USAGE_VIEW_SECRET" ]]; then
             secret_flags=("--set-secrets=EVIANTA_USAGE_VIEW_PATH=$EVIANTA_USAGE_VIEW_SECRET")
@@ -162,21 +151,8 @@ jobs:
             --ingress=all \
             --startup-probe="httpGet.path=/healthz,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=24" \
             --env-vars-file="$RUNNER_TEMP/cloud-run-env.json" \
-            "${access_flags[@]}" \
             "${secret_flags[@]}" \
             --quiet
-
-          if [[ "$CLOUD_RUN_ALLOW_UNAUTHENTICATED" == "true" ]]; then
-            if ! gcloud run services add-iam-policy-binding "$CLOUD_RUN_SERVICE" \
-              --project="$GCP_PROJECT_ID" \
-              --region="$GCP_REGION" \
-              --member=allUsers \
-              --role=roles/run.invoker \
-              --quiet; then
-              echo "::error::Could not enable public API access. Check the IAM error above; organization policy may prohibit allUsers. Deployment is incomplete."
-              exit 1
-            fi
-          fi
 
           url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
@@ -209,11 +185,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          access_flags=(--no-allow-unauthenticated)
-          if [[ "$CLOUD_RUN_ALLOW_UNAUTHENTICATED" == "true" ]]; then
-            access_flags=(--allow-unauthenticated)
-          fi
-
           secret_flags=(--clear-secrets)
           if [[ -n "$EVIANTA_USAGE_VIEW_SECRET" ]]; then
             secret_flags=("--set-secrets=EVIANTA_USAGE_VIEW_PATH=$EVIANTA_USAGE_VIEW_SECRET")
@@ -234,21 +205,8 @@ jobs:
             --ingress=all \
             --startup-probe="httpGet.path=/,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=24" \
             --set-env-vars=NODE_ENV=production \
-            "${access_flags[@]}" \
             "${secret_flags[@]}" \
             --quiet
-
-          if [[ "$CLOUD_RUN_ALLOW_UNAUTHENTICATED" == "true" ]]; then
-            if ! gcloud run services add-iam-policy-binding "$CLOUD_RUN_WEB_SERVICE" \
-              --project="$GCP_PROJECT_ID" \
-              --region="$GCP_REGION" \
-              --member=allUsers \
-              --role=roles/run.invoker \
-              --quiet; then
-              echo "::error::Could not enable public web access. Check the IAM error above; organization policy may prohibit allUsers. Deployment is incomplete."
-              exit 1
-            fi
-          fi
 
           url="$(gcloud run services describe "$CLOUD_RUN_WEB_SERVICE" \
             --project="$GCP_PROJECT_ID" \
@@ -289,29 +247,6 @@ jobs:
             --env-vars-file="$RUNNER_TEMP/cloud-run-env.json" \
             --quiet
 
-      - name: Check public app endpoints
-        if: env.CLOUD_RUN_ALLOW_UNAUTHENTICATED == 'true'
-        env:
-          API_URL: ${{ steps.deploy.outputs.url }}
-          WEB_URL: ${{ steps.web.outputs.url }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Checking API health: $API_URL/healthz"
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 "$API_URL/healthz"
-          echo "Checking web home: $WEB_URL/"
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 --output /dev/null "$WEB_URL/"
-          echo "Checking new-case page: $WEB_URL/cases/new"
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 --output /dev/null "$WEB_URL/cases/new"
-          echo "Checking dynamic case page: $WEB_URL/cases/deployment-smoke-test"
-          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 --max-time 30 --output /dev/null "$WEB_URL/cases/deployment-smoke-test"
-          headers="$(curl --fail --silent --show-error --max-time 30 --dump-header - --output /dev/null \
-            --header "Origin: $WEB_URL" "$API_URL/healthz")"
-          if ! printf '%s\n' "$headers" | tr -d '\r' | grep -Fxi "access-control-allow-origin: $WEB_URL"; then
-            echo "::error::API CORS does not allow the deployed web origin."
-            exit 1
-          fi
-
       - name: Summarize deployment
         env:
           API_URL: ${{ steps.deploy.outputs.url }}
@@ -326,5 +261,4 @@ jobs:
             echo "- Web image: $WEB_IMAGE"
             echo "- API image: $IMAGE"
             echo "- Commit: $DEPLOY_SHA"
-            echo "- Public access: $CLOUD_RUN_ALLOW_UNAUTHENTICATED"
           } >> "$GITHUB_STEP_SUMMARY"
