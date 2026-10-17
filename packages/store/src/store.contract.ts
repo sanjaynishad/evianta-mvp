@@ -329,6 +329,17 @@ export function describeStoreContract(
         expect(await store.cases.getCaseAsync(created.id)).toEqual(approved);
       });
 
+      it("clears case approval", async () => {
+        const created = await store.cases.createCaseAsync(caseInput());
+
+        await store.cases.recordApprovalAsync(created.id, { note: "Old approval" });
+
+        const cleared = await store.cases.clearApprovalAsync(created.id);
+
+        expect(cleared.approval).toBeUndefined();
+        expect(await store.cases.getCaseAsync(created.id)).toEqual(cleared);
+      });
+
       it("accumulates the usage summary from task usage", async () => {
         const created = await store.cases.createCaseAsync(caseInput());
 

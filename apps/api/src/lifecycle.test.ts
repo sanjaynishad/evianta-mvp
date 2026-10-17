@@ -495,7 +495,9 @@ describe("case lifecycle over HTTP", () => {
     expect(sseFramesOf(stream).at(-1)?.event).toBe("run-failed");
     expect(after.body.run).toMatchObject({ lastEventType: "run-failed" });
     expect(after.body.run.lastRunMode).toBeUndefined();
-    expect(after.body.run.lastRunError).toContain('"config.pdf"');
+    expect(after.body.run.lastRunError).toBe(
+      "One or more documents could not be read yet, so the run did not start. Start the run again to retry.",
+    );
 
     for (const body of [state.text, detail.text, stream.body as string, after.text]) {
       for (const secret of ["PERMISSION_DENIED", "AIzaSy", "evianta-prod-123", "googleapis"]) {
@@ -559,7 +561,10 @@ describe("case lifecycle over HTTP", () => {
         data: expect.objectContaining({ runId: blocked.body.runId }),
       }),
     ]);
-    expect((blockedFrames[0]?.data as { error: string }).error).toContain('"scan.pdf"');
+    expect((blockedFrames[0]?.data as { error: string }).error).toBe(
+      "One or more documents could not be read yet, so the run did not start. Start the run again to retry.",
+    );
+    expect((blockedFrames[0]?.data as { error: string }).error).not.toContain("scan.pdf");
     expect((blockedFrames[0]?.data as { error: string }).error).not.toContain("corrupt.xlsx");
 
     ocrAvailable = true;

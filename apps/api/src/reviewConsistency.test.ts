@@ -2,7 +2,7 @@ import JSZip from "jszip";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createTestHarness, waitForAsync } from "./testing/harness.js";
+import { createTestHarness, finding, waitForAsync } from "./testing/harness.js";
 
 function createGate() {
   let release: () => void = () => {};
@@ -173,5 +173,138 @@ describe("approval and editing consistency", () => {
     expect((await store.cases.getCaseAsync(caseId))?.approval?.note).toBe("New approval");
     expect(await exportResult).toContain("Replacement content");
     expect(await exportResult).not.toContain("Approved by the reviewer");
+  });
+
+  it("serializes question resolution behind an approval snapshot", async () => {
+    const { app, store, base, caseId } = await seedAsync();
+    const gate = createGate();
+    const recordApprovalAsync = store.cases.recordApprovalAsync.bind(store.cases);
+    const updateQuestionAsync = store.findings.updateOpenQuestionAsync.bind(store.findings);
+    let writingApproval = false;
+    let updatingQuestion = false;
+
+    await store.tasks.createTaskAsync({
+      id: "question-task",
+      caseId,
+      title: "Review question",
+      assignedRole: "case-analysis",
+      status: "completed",
+      attempts: 1,
+    });
+    await store.findings.addFindingAsync(caseId, {
+      ...finding("Needs a date check"),
+      id: "question-finding",
+      taskId: "question-task",
+      attempt: 1,
+      openQuestions: [{ id: "question-1", text: "Confirm the date", severity: "high" }],
+    });
+
+    store.cases.recordApprovalAsync = async (...args) => {
+      writingApproval = true;
+      await gate.opened;
+
+      return recordApprovalAsync(...args);
+    };
+
+    store.findings.updateOpenQuestionAsync = async (...args) => {
+      updatingQuestion = true;
+
+      return updateQuestionAsync(...args);
+    };
+
+    const approval = request(app)
+      .post(`${base}/approve`)
+      .send({})
+      .then((res) => res);
+
+    await waitForAsync(() => writingApproval);
+
+    const resolution = request(app)
+      .post(`${base}/open-questions/question-1/resolve`)
+      .send({})
+      .then((res) => res);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(updatingQuestion).toBe(false);
+      expect(
+        (await store.findings.getFindingsForCaseAsync(caseId))
+          .flatMap((item) => item.openQuestions)
+          .find((item) => item.id === "question-1")?.status,
+      ).toBe("open");
+    } finally {
+      gate.release();
+      await Promise.all([approval, resolution]);
+    }
+
+    expect((await approval).body.case.approval.unresolvedQuestionIds).toEqual(["question-1"]);
+    expect((await resolution).status).toBe(200);
+    expect(
+      (await store.findings.getFindingsForCaseAsync(caseId))
+        .flatMap((item) => item.openQuestions)
+        .find((item) => item.id === "question-1")?.status,
+    ).toBe("resolved");
+  });
+
+  it("clears approval before admitting a retry and serializes approvals with admission", async () => {
+    const { app, store, caseId, base, orchestrator } = await seedAsync();
+    const gate = createGate();
+    const executionGate = createGate();
+    const clearApprovalAsync = store.cases.clearApprovalAsync.bind(store.cases);
+    const retryFailedAsync = orchestrator.retryFailedAsync.bind(orchestrator);
+    let clearingApproval = false;
+
+    orchestrator.retryFailedAsync = async (...args) => {
+      await executionGate.opened;
+
+      return retryFailedAsync(...args);
+    };
+
+    await store.cases.updateCaseStatusAsync(caseId, "failed");
+    await store.tasks.createTaskAsync({
+      id: "retry-task",
+      caseId,
+      title: "Retry analysis",
+      assignedRole: "business-data-analyst",
+      status: "failed",
+      attempts: 1,
+    });
+    await store.cases.recordApprovalAsync(caseId, { note: "Approved before retry" });
+    store.cases.clearApprovalAsync = async (...args) => {
+      clearingApproval = true;
+      await gate.opened;
+
+      return clearApprovalAsync(...args);
+    };
+
+    const retry = request(app)
+      .post(`${base}/retry`)
+      .send({})
+      .then((res) => res);
+
+    await waitForAsync(() => clearingApproval);
+
+    const approvalDuringAdmission = request(app)
+      .post(`${base}/approve`)
+      .send({})
+      .then((res) => res);
+    let approvalResponse: Awaited<typeof approvalDuringAdmission> | undefined;
+
+    try {
+      expect(await store.events.listEventsAsync(caseId)).toEqual([]);
+      expect((await store.cases.getCaseAsync(caseId))?.approval?.note).toBe(
+        "Approved before retry",
+      );
+    } finally {
+      gate.release();
+      await retry;
+      approvalResponse = await approvalDuringAdmission;
+      executionGate.release();
+      await app.idleAsync();
+    }
+
+    expect((await retry).status).toBe(202);
+    expect(approvalResponse.status).toBe(409);
+    expect((await store.cases.getCaseAsync(caseId))?.approval).toBeUndefined();
   });
 });

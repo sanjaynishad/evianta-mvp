@@ -260,6 +260,56 @@ describe("deliverable exports", () => {
     }
   });
 
+  it("preserves over-precision JSON table numbers as text in both table shapes", async () => {
+    const { app, store, caseRecord, base } = await seedExportCaseAsync();
+    const deliverable = (await store.deliverables.getDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+    ))!;
+    const id = "1234567890123456789";
+    const amount = "123456789012345.6789";
+    const objectRows = `[{"Invoice ID":${id},"Amount":${amount}}]`;
+    const columnRows = `{"columns":["Invoice ID","Amount"],"rows":[[${id},${amount}]]}`;
+
+    await store.deliverables.saveDeliverableAsync({
+      ...deliverable,
+      sections: [
+        ...deliverable.sections,
+        {
+          id: "json-object-table",
+          title: "JSON objects",
+          kind: "table",
+          content: objectRows,
+          producedByRole: "payment-reconciliation",
+        },
+        {
+          id: "json-column-table",
+          title: "JSON columns",
+          kind: "table",
+          content: columnRows,
+          producedByRole: "payment-reconciliation",
+        },
+      ],
+    });
+
+    expect(parseTable(objectRows)?.rows).toEqual([[id, amount]]);
+    expect(parseTable(columnRows)?.rows).toEqual([[id, amount]]);
+
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "xlsx" }),
+    ).expect(200);
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(response.body as Buffer);
+
+    for (const name of ["JSON objects", "JSON columns"]) {
+      const row = workbook.getWorksheet(name)!.getRow(2);
+
+      expect(row.getCell(1).value).toBe(id);
+      expect(row.getCell(2).value).toBe(amount);
+    }
+  });
+
   it("parses markdown and JSON tables", () => {
     expect(parseTable("Intro\n| A | B |\n|---|---|\n| 1 | 2 |\nOutro")).toEqual({
       header: ["A", "B"],

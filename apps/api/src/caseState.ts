@@ -15,6 +15,7 @@ import { StoreNotFoundError, type Store } from "@evianta/store";
 
 import type { DocumentErrorCode, IngestionService } from "./ingestion.js";
 import { messageOf, silentApiLogger, type ApiLogger } from "./logger.js";
+import { publicRunError, publicTaskError } from "./runError.js";
 import type { RunLauncher } from "./runs.js";
 
 export type DocumentStatus = "pending" | "processing" | "ready" | "partial" | "failed";
@@ -201,7 +202,9 @@ export async function loadCaseStateAsync(
 
   return {
     case: caseRecord,
-    tasks: record.tasks,
+    tasks: record.tasks.map((task) =>
+      task.lastError ? { ...task, lastError: publicTaskError() } : task,
+    ),
     findings: record.findings,
     evidence: record.evidence,
     deliverables,
@@ -212,7 +215,9 @@ export async function loadCaseStateAsync(
       lastEventSeq: lastEvent?.seq ?? 0,
       ...(lastEvent ? { lastRunId: lastEvent.runId, lastEventType: lastEvent.type } : {}),
       ...(lastRunStart?.type === "run-started" ? { lastRunMode: lastRunStart.mode } : {}),
-      ...(lastEvent?.type === "run-failed" ? { lastRunError: lastEvent.error } : {}),
+      ...(lastEvent?.type === "run-failed"
+        ? { lastRunError: publicRunError(lastEvent.error) }
+        : {}),
     },
   };
 }

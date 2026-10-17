@@ -100,6 +100,7 @@ export interface CaseRepo {
   updateCaseStatusAsync(caseId: string, status: CaseStatus): Promise<Case>;
   updateCaseUsageAsync(caseId: string, increment: CaseUsageIncrement): Promise<Case>;
   recordApprovalAsync(caseId: string, approval: ApprovalInput): Promise<Case>;
+  clearApprovalAsync(caseId: string): Promise<Case>;
   copyCaseAsync(sourceCaseId: string, visitorId: string): Promise<Case>;
 }
 

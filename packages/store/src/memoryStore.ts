@@ -32,6 +32,7 @@ import {
   buildRunEvent,
   compareCasesNewestFirst,
   compareProfilesByRole,
+  clearCaseApproval,
   findingHasQuestion,
   resolvePageSize,
 } from "./mutations.js";
@@ -267,6 +268,9 @@ export function createInMemoryStore(): Store {
       },
       async recordApprovalAsync(caseId, approval) {
         return putCase(applyCaseApproval(getCaseOrThrow(caseId), approval));
+      },
+      async clearApprovalAsync(caseId) {
+        return putCase(clearCaseApproval(getCaseOrThrow(caseId)));
       },
       async copyCaseAsync(sourceCaseId, visitorId) {
         const copy = buildCaseCopy(getCaseOrThrow(sourceCaseId), visitorId);

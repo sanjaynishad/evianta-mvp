@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ApiError, notFoundError } from "./errors.js";
 import { messageOf, type ApiLogger } from "./logger.js";
+import { publicRunEvent } from "./runError.js";
 import type { RunLauncher } from "./runs.js";
 import { openEventStream } from "./sse.js";
 
@@ -80,16 +81,18 @@ export async function streamRunEventsAsync(
   const buffered: RunEvent[] = [];
 
   const send = (event: RunEvent) => {
-    if (latest === undefined || event.seq > latest.seq) {
-      latest = event;
+    const publicEvent = publicRunEvent(event);
+
+    if (latest === undefined || publicEvent.seq > latest.seq) {
+      latest = publicEvent;
     }
 
-    if (finished || event.seq <= lastSentSeq) {
+    if (finished || publicEvent.seq <= lastSentSeq) {
       return;
     }
 
-    writer.send(event.type, event, event.seq);
-    lastSentSeq = event.seq;
+    writer.send(publicEvent.type, publicEvent, publicEvent.seq);
+    lastSentSeq = publicEvent.seq;
   };
 
   const finishIfDone = () => {

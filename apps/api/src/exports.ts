@@ -174,11 +174,52 @@ function cellText(value: unknown): string {
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
+function parseJsonPreservingNumberLexemes(content: string): unknown {
+  const transformed: string[] = [];
+  let index = 0;
+
+  while (index < content.length) {
+    const character = content[index];
+
+    if (character === '"') {
+      const start = index++;
+
+      while (index < content.length) {
+        if (content[index] === "\\") {
+          index += 2;
+        } else if (content[index++] === '"') {
+          break;
+        }
+      }
+
+      transformed.push(content.slice(start, index));
+
+      continue;
+    }
+
+    if (character === "-" || (character !== undefined && /\d/.test(character))) {
+      const number = content.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+
+      if (number) {
+        transformed.push(JSON.stringify(number[0]));
+        index += number[0].length;
+
+        continue;
+      }
+    }
+
+    transformed.push(character ?? "");
+    index++;
+  }
+
+  return JSON.parse(transformed.join(""));
+}
+
 function parseJsonTable(content: string): ParsedTable | undefined {
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(content);
+    parsed = parseJsonPreservingNumberLexemes(content);
   } catch {
     return undefined;
   }
