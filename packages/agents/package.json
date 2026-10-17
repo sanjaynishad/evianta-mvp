@@ -27,6 +27,7 @@
   "devDependencies": {
     "@evianta/config": "workspace:*",
     "@types/node": "^22.0.0",
+    "pdf-lib": "^1.17.1",
     "typescript": "^5.6.3",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "vitest": "^2.1.3"

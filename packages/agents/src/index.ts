@@ -19,5 +19,6 @@ export * from "./record.js";
 export * from "./registry.js";
 export * from "./slices.js";
 export * from "./usecases/data-analysis/index.js";
+export * from "./usecases/tax-notice/index.js";
 export * from "./verification.js";
 export { estimateTokens, tokenize } from "./text.js";
