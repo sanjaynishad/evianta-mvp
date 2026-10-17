@@ -20,6 +20,7 @@ export type CaseStatus = z.infer<typeof caseStatusSchema>;
 export const caseApprovalSchema = z.object({
   approvedAt: z.string(),
   unresolvedQuestionIds: z.array(z.string()).default([]),
+  reviewFailureAcknowledged: z.boolean().default(false),
   note: z.string().optional(),
 });
 

@@ -230,11 +230,19 @@ function lowConfidenceQuestion(
 }
 
 function eventKindFor(kind: MsmeDocumentKind): DocumentEventKind | undefined {
-  if (kind === "purchase-order" || kind === "agreement") {
-    return kind;
+  switch (kind) {
+    case "purchase-order":
+    case "agreement":
+      return kind;
+    case "invoice":
+      return "invoice-copy";
+    case "delivery-record":
+      return "delivery";
+    case "correspondence":
+      return "correspondence";
+    default:
+      return undefined;
   }
-
-  return undefined;
 }
 
 export function documentFindings(
@@ -242,13 +250,25 @@ export function documentFindings(
   pages: readonly PaymentReviewPage[],
 ): AgentFindingInput[] {
   const findings: AgentFindingInput[] = [];
+  const structuredEventDocuments = new Set([
+    ...output.invoices.flatMap((invoice) => (invoice.source ? [invoice.source.documentId] : [])),
+    ...output.deliveries.flatMap((delivery) =>
+      delivery.source ? [delivery.source.documentId] : [],
+    ),
+    ...output.correspondence.flatMap((item) => (item.source ? [item.source.documentId] : [])),
+  ]);
 
   output.documents.forEach((document, index) => {
     const label = KIND_LABELS[document.kind];
     const title = [label, document.reference].filter(Boolean).join(" ");
     const date = toIsoDate(document.date);
     const eventKind = eventKindFor(document.kind);
-    const eventLabel = document.kind === "agreement" ? `${title} entered into` : `${title} issued`;
+    const eventLabel =
+      document.kind === "agreement"
+        ? `${title} entered into`
+        : document.kind === "purchase-order"
+          ? `${title} issued`
+          : `${title} dated`;
 
     findings.push({
       summary: `${title}${date ? ` dated ${date}` : ""}${document.summary ? `: ${truncate(document.summary, 160)}` : ""}`,
@@ -256,7 +276,7 @@ export function documentFindings(
       severity: "info",
       confidence: confidenceOf(document.source, pages),
       evidence: sourceEvidence(document.source ?? { documentId: document.documentId }, title),
-      ...(date && eventKind
+      ...(date && eventKind && !structuredEventDocuments.has(document.documentId)
         ? {
             dates: [
               {

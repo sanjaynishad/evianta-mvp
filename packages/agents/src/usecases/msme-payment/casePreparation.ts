@@ -144,6 +144,47 @@ export function findEscalationClaims(text: string): string[] {
     );
 }
 
+function conditionLegalClaimsInText(content: string): { content: string; changed: boolean } {
+  let changed = false;
+  const conditionedContent = content.replace(/[^.!?\n]+[.!?]?/g, (sentence) => {
+    const discussesInterest = /\b(?:interest|MSMED|statutory)\b/i.test(sentence);
+    const assertsEntitlement =
+      /\b(?:entitled|liable|payable|due|must\s+pay|shall\s+pay|will\s+pay|will\s+accrue|accrues|can\s+(?:claim|recover))\b/i.test(
+        sentence,
+      );
+
+    if (!discussesInterest || !assertsEntitlement) {
+      return sentence;
+    }
+
+    changed = true;
+    return "Any statutory interest remains subject to confirmation of the supplier's eligibility, the relevant dates, and current law. Confirm these points with an adviser before relying on this route.";
+  });
+
+  return { content: conditionedContent, changed };
+}
+
+function conditionLegalClaims(draft: FollowUpDraft): { draft: FollowUpDraft; changed: boolean } {
+  let changed = false;
+  const condition = (content: string) => {
+    const result = conditionLegalClaimsInText(content);
+    changed ||= result.changed;
+
+    return result.content;
+  };
+
+  return {
+    draft: {
+      ...draft,
+      subject: condition(draft.subject),
+      ...(draft.salutation ? { salutation: condition(draft.salutation) } : {}),
+      parts: draft.parts.map((part) => ({ ...part, content: condition(part.content) })),
+      ...(draft.closing ? { closing: condition(draft.closing) } : {}),
+    },
+    changed,
+  };
+}
+
 export interface MsmeComputedFigure {
   key: string;
   label: string;
@@ -195,7 +236,7 @@ function outstandingPosition(reconciliation: PaymentReconciliation) {
 }
 
 export const NO_PAYMENT_DATA_MESSAGE =
-  "The outstanding amount could not be computed because no readable invoice register was found. Upload the invoices or a sales register.";
+  "The outstanding balance could not be reconciled because no readable invoice register was found. Uploaded invoice copies may show individual amounts, but they do not establish the full balance or payments received. Confirm the complete invoice and payment records before relying on a total.";
 
 export function paymentSummaryFinding(reconciliation: PaymentReconciliation): AgentFindingInput {
   if (!hasPaymentData(reconciliation)) {
@@ -485,30 +526,19 @@ export function casePackQuestionsMarkdown(
   return parts.join("\n").trim();
 }
 
-function referencesLine(
-  findingIds: readonly string[],
-  knownIds: ReadonlySet<string>,
-): string | undefined {
-  const known = findingIds.filter((id) => knownIds.has(id));
-
-  return known.length > 0 ? `_Relies on: findings ${known.join(", ")}._` : undefined;
-}
-
-export function followUpDraftMarkdown(draft: FollowUpDraft, knownIds: ReadonlySet<string>): string {
-  const parts: string[] = [`_${MSME_PAYMENT_GUARDRAIL}_`, "", `**Subject:** ${draft.subject}`];
+export function followUpDraftMarkdown(
+  draft: FollowUpDraft,
+  _knownIds: ReadonlySet<string>,
+): string {
+  const parts: string[] = [MSME_PAYMENT_GUARDRAIL, "", `Subject: ${draft.subject}`];
 
   if (draft.salutation) {
     parts.push("", draft.salutation);
   }
 
   draft.parts.forEach((part, index) => {
-    const references = referencesLine(part.findingIds, knownIds);
-
-    parts.push("", `**${index + 1}. ${part.title}**`, part.content.trim());
-
-    if (references) {
-      parts.push(references);
-    }
+    const title = part.title.replace(/^\s*\d+[.)]\s*/, "");
+    parts.push("", `${index + 1}. ${title}`, part.content.trim());
   });
 
   if (draft.closing) {
@@ -532,7 +562,7 @@ function draftPartFinding(
     summary: `Draft point: ${part.title}`,
     ...(referenced.length > 0
       ? {
-          detail: `Relies on:\n- ${referenced.map((finding) => `${finding.id}: ${finding.summary}`).join("\n- ")}`,
+          detail: `Relies on:\n- ${referenced.map((finding) => finding.summary).join("\n- ")}`,
         }
       : {}),
     severity: "info",
@@ -548,7 +578,10 @@ export function casePreparationTaskOutput(
 ): TaskOutput {
   const base = specialistResultToTaskOutput(result, false);
   const { reconciliation, chronology } = prepared;
-  const { draft } = result.output;
+  const paymentDataAvailable = hasPaymentData(reconciliation);
+  const sourceDraft = paymentDataAvailable ? result.output.draft : undefined;
+  const conditionedDraft = sourceDraft ? conditionLegalClaims(sourceDraft) : undefined;
+  const draft = conditionedDraft?.draft;
   const documentNames = new Map(
     ctx.documentMetadata.map((metadata) => [metadata.id, metadata.name]),
   );
@@ -581,6 +614,27 @@ export function casePreparationTaskOutput(
     },
   ];
 
+  if (!paymentDataAvailable && result.output.draft) {
+    sections.push({
+      title: FOLLOW_UP_DRAFT_SECTION_TITLE,
+      kind: "text",
+      content:
+        "A follow-up draft has been withheld because the invoice and payment records are not sufficient to verify the outstanding balance. Reconcile those records before preparing a payment demand.",
+      findingIndexes: [],
+    });
+    openQuestions.push({
+      text: "A follow-up draft was withheld because no readable invoice register was found. Reconcile invoice and payment records before stating an outstanding balance or sending a payment demand.",
+      severity: "high",
+    });
+  }
+
+  if (conditionedDraft?.changed) {
+    openQuestions.push({
+      text: "A statutory-interest statement in the draft was changed to conditional wording. Confirm supplier eligibility, relevant dates, and current law with an adviser before relying on the route.",
+      severity: "high",
+    });
+  }
+
   if (draft) {
     const start = findings.length;
 
@@ -605,15 +659,25 @@ export function casePreparationTaskOutput(
         severity: "low",
       });
     }
-  } else {
-    sections.push(...(base.sections ?? []));
+  } else if (paymentDataAvailable) {
+    for (const section of base.sections ?? []) {
+      const conditioned = conditionLegalClaimsInText(section.content);
+      sections.push({ ...section, content: conditioned.content });
+
+      if (conditioned.changed) {
+        openQuestions.push({
+          text: "A statutory-interest statement in the draft was changed to conditional wording. Confirm supplier eligibility, relevant dates, and current law with an adviser before relying on the route.",
+          severity: "high",
+        });
+      }
+    }
   }
 
   const draftText = [
     draft?.subject,
     ...(draft ? draft.parts.map((part) => part.content) : []),
     draft?.closing,
-    ...(base.sections ?? []).map((section) => section.content),
+    ...(paymentDataAvailable ? sections.map((section) => section.content) : []),
   ]
     .filter(Boolean)
     .join("\n");

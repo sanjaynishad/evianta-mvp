@@ -178,9 +178,9 @@ describe("MSME delayed-payment use case end to end", () => {
 
     const draft = section(FOLLOW_UP_DRAFT_SECTION_TITLE);
 
-    expect(draft?.content.startsWith(`_${MSME_PAYMENT_GUARDRAIL}_`)).toBe(true);
+    expect(draft?.content.startsWith(MSME_PAYMENT_GUARDRAIL)).toBe(true);
     expect(draft?.content).toContain("Rs 1,87,000 remains outstanding");
-    expect(draft?.content).toContain(`findings ${totals?.id}`);
+    expect(draft?.content).not.toContain(`findings ${totals?.id}`);
     expect(draft?.evidenceIds.length).toBeGreaterThan(0);
 
     const questions = section(CASE_PACK_QUESTIONS_SECTION_TITLE)?.content ?? "";
@@ -229,6 +229,57 @@ describe("MSME delayed-payment use case end to end", () => {
     expect(verification?.detail).toBeDefined();
     expect(verification?.summary).toMatch(/^Deterministic checks passed/);
     expect(events.at(-1)?.type).toBe("run-completed");
+  });
+
+  it("withholds a payment demand when invoice records cannot be reconciled", async () => {
+    const harness = await createMsmeHarnessAsync({
+      uploads: { invoicesCsv: "No invoice register rows", paymentsCsv: false },
+    });
+    const result = await harness.orchestrator.runCaseAsync(harness.caseRecord.id);
+    const { deliverables, findings, tasks } = await harness.readAsync();
+    const draft = deliverables[0]?.sections.find(
+      (section) => section.title === FOLLOW_UP_DRAFT_SECTION_TITLE,
+    );
+    const preparationTask = tasks.find((task) => task.assignedRole === "case-preparation");
+    const questions = findings
+      .filter((finding) => finding.taskId === preparationTask?.id)
+      .flatMap((finding) => finding.openQuestions);
+
+    expect(result.status).toBe("completed");
+    expect(draft?.content).toContain("A follow-up draft has been withheld");
+    expect(draft?.content).not.toContain("Rs 1,87,000");
+    expect(questions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          text: expect.stringContaining("A follow-up draft was withheld"),
+        }),
+      ]),
+    );
+  });
+
+  it("conditions unsupported statutory-interest claims in the follow-up draft", async () => {
+    const { deliverables, findings, tasks } = await runMsmeCaseAsync({
+      statutoryInterestClaim: true,
+    });
+    const draft = deliverables[0]?.sections.find(
+      (section) => section.title === FOLLOW_UP_DRAFT_SECTION_TITLE,
+    );
+    const preparationTask = tasks.find((task) => task.assignedRole === "case-preparation");
+    const questions = findings
+      .filter((finding) => finding.taskId === preparationTask?.id)
+      .flatMap((finding) => finding.openQuestions);
+
+    expect(draft?.content).toContain("Any statutory interest remains subject to confirmation");
+    expect(draft?.content).not.toContain("We are entitled to statutory interest");
+    expect(questions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          text: expect.stringContaining("A statutory-interest statement"),
+        }),
+      ]),
+    );
   });
 
   it("catches a seeded wrong outstanding total during independent review", async () => {

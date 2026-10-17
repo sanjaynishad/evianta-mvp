@@ -692,6 +692,8 @@ export interface MsmeDraftOptions {
   wrongTotal?: boolean;
   /** Adds a sentence claiming a reference was filed. */
   escalationClaim?: boolean;
+  /** Adds a definitive statutory-interest claim for testing the legal wording guard. */
+  statutoryInterestClaim?: boolean;
 }
 
 function idsWhere(
@@ -740,8 +742,7 @@ export function followUpDraftOutput(
         },
         {
           title: "Requested action",
-          content:
-            "We request payment of the undisputed balance within 15 days of this letter, or a call to agree a payment schedule.",
+          content: `We request payment of the undisputed balance within 15 days of this letter, or a call to agree a payment schedule.${options.statutoryInterestClaim ? " We are entitled to statutory interest under the MSMED Act." : ""}`,
           findingIds: [],
         },
       ],

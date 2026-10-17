@@ -216,12 +216,37 @@ describe("createApiClient", () => {
 
   it("returns the approved case with the questions left open", async () => {
     const approved = { ...sampleCaseStates[0]!.case, status: "completed" };
-    const { client } = createClient(jsonResponse({ case: approved, unresolvedQuestions: [] }));
+    const { client, fetchMock } = createClient(
+      jsonResponse({ case: approved, unresolvedQuestions: [] }),
+    );
 
     const result = await client.approveCaseAsync("case-1", "  ");
 
     expect(result.case.status).toBe("completed");
     expect(result.unresolvedQuestions).toEqual([]);
+    expect(JSON.parse(String(requestOf(fetchMock).init?.body))).toEqual({});
+  });
+
+  it("sends an explicit incomplete-review acknowledgement with approval", async () => {
+    const approved = {
+      ...sampleCaseStates[0]!.case,
+      status: "completed",
+      approval: {
+        approvedAt: "2026-10-18T00:00:00.000Z",
+        unresolvedQuestionIds: [],
+        reviewFailureAcknowledged: true,
+      },
+    };
+    const { client, fetchMock } = createClient(
+      jsonResponse({ case: approved, unresolvedQuestions: [] }),
+    );
+
+    const result = await client.approveCaseAsync("case-1", undefined, true);
+
+    expect(result.case.approval?.reviewFailureAcknowledged).toBe(true);
+    expect(JSON.parse(String(requestOf(fetchMock).init?.body))).toEqual({
+      acknowledgeIncompleteReview: true,
+    });
   });
 
   it("streams an answer from the ask endpoint", async () => {

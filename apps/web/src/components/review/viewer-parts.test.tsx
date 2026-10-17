@@ -4,6 +4,7 @@ import type { Evidence, ExtractedTable } from "@evianta/core";
 import { evidenceNamingLabel, type EvidenceEntry } from "@/lib/evidence";
 import { scrollIntoPane } from "@/lib/scroll";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { SectionBody } from "./section-body";
 import { formatCell, SpreadsheetViewer } from "./spreadsheet-viewer";
 import { TextSourceViewer } from "./text-source-viewer";
 
@@ -33,6 +34,32 @@ describe("formatCell", () => {
     expect(formatCell(0.092)).toBe("0.092");
     expect(formatCell(1234567.5)).toBe("12,34,567.5");
     expect(formatCell(null)).toBe("");
+  });
+});
+
+describe("SectionBody text formatting", () => {
+  it("renders bold and italic labels without exposing Markdown markers", () => {
+    render(
+      <SectionBody
+        section={{
+          id: "draft",
+          title: "Draft",
+          kind: "text",
+          content: "",
+          producedByRole: "case-preparation",
+          findingIds: [],
+          evidenceIds: [],
+          reviewStatus: "pending",
+        }}
+        content="**Subject:** Follow up\n\n_Prepared for review._"
+        sources={[]}
+        onOpenEvidence={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Subject:", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("Prepared for review.", { selector: "em" })).toBeInTheDocument();
+    expect(screen.queryByText(/\*\*|_/)).not.toBeInTheDocument();
   });
 });
 

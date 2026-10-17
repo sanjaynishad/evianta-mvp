@@ -754,8 +754,19 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
       return wait(updateQuestion(caseId, questionId, "dismissed", note));
     },
 
-    async approveCaseAsync(caseId, note) {
+    async approveCaseAsync(caseId, note, acknowledgeIncompleteReview) {
       const state = requireEditable(caseId);
+      const incompleteReview = state.tasks.some(
+        (task) => task.assignedRole === "independent-review" && task.status !== "completed",
+      );
+      if (incompleteReview && !acknowledgeIncompleteReview) {
+        throw new ApiError(
+          "The independent review failed. Retry it before approving, or explicitly acknowledge the incomplete review.",
+          409,
+          { code: "review-incomplete" },
+        );
+      }
+
       const unresolvedQuestions = state.findings.flatMap((finding) =>
         finding.openQuestions.filter((question) => question.status === "open"),
       );
@@ -764,6 +775,7 @@ export function createFixtureDataSource(options: FixtureDataSourceOptions = {}):
         approval: {
           approvedAt: now().toISOString(),
           unresolvedQuestionIds: unresolvedQuestions.map((question) => question.id),
+          reviewFailureAcknowledged: incompleteReview,
           note,
         },
       });

@@ -89,6 +89,53 @@ export function parseTextTable(content: string): TextTable | undefined {
     return undefined;
   }
 
+  if (lines.every((line) => line.trim().startsWith("|") && line.trim().endsWith("|"))) {
+    const markdownRows = lines.map((line) =>
+      line
+        .trim()
+        .slice(1, -1)
+        .split("|")
+        .map((cell) => cell.trim()),
+    );
+    const headers = markdownRows[0]!;
+    const bodyRows = markdownRows
+      .slice(1)
+      .filter((row) => !row.every((cell) => /^:?-{3,}:?$/.test(cell)));
+
+    if (headers.length < 2 || bodyRows.some((row) => row.length !== headers.length)) {
+      return undefined;
+    }
+
+    const parsedRows = bodyRows.map((cells) => ({
+      cells,
+      values: cells.map(parseFigure),
+    }));
+    const numericColumns = headers.map(
+      (_, index) =>
+        index > 0 &&
+        parsedRows.some((row) => row.values[index] !== undefined) &&
+        parsedRows.every((row) => !row.cells[index] || row.values[index] !== undefined),
+    );
+    const differenceIndex = headers.findIndex(
+      (header, index) => numericColumns[index] && differencePattern.test(header),
+    );
+    const differenceColumn = differenceIndex >= 0 ? differenceIndex : undefined;
+    const rows: TextTableRow[] = parsedRows.map((row) => {
+      const difference = differenceColumn === undefined ? undefined : row.values[differenceColumn];
+      return { ...row, discrepancy: difference === undefined ? undefined : difference !== 0 };
+    });
+    const last = rows.at(-1);
+    const hasTotal = last !== undefined && /^(grand )?total\b/i.test(last.cells[0] ?? "");
+
+    return {
+      headers,
+      rows: hasTotal ? rows.slice(0, -1) : rows,
+      total: hasTotal ? last : undefined,
+      numericColumns,
+      differenceColumn,
+    };
+  }
+
   const headerTokens = tokenize(lines[0]!);
   if (headerTokens.length < 2) {
     return undefined;
