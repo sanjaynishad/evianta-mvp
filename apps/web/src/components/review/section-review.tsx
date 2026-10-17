@@ -124,6 +124,7 @@ export function SectionReview({
   const [comment, setComment] = useState("");
   const edited = section.editedContent !== undefined;
   const content = section.editedContent ?? section.content;
+  const showingBody = mode === "none" || mode === "comment" || (mode === "compare" && !edited);
   const editable = Boolean(onUpdate);
   const canEditText = editable && section.kind === "text";
   const sources = section.evidenceIds
@@ -135,8 +136,12 @@ export function SectionReview({
       return;
     }
 
+    const previousMode = mode;
     setMode("none");
-    await onUpdate(update);
+    const saved = await onUpdate(update);
+    if (!saved && (previousMode === "edit" || previousMode === "comment")) {
+      setMode(previousMode);
+    }
   }
 
   function handleSaveEdit(event: FormEvent) {
@@ -384,8 +389,12 @@ export function SectionReview({
         {badges}
       </div>
       {mode === "compare" && edited ? (
-        <BeforeAfter before={section.content} after={section.editedContent ?? ""} />
-      ) : mode === "edit" ? null : (
+        <div className="print:hidden">
+          <BeforeAfter before={section.content} after={section.editedContent ?? ""} />
+        </div>
+      ) : null}
+      {/* The saved content always prints, even while the editor or comparison is open. */}
+      <div className={cn(showingBody ? undefined : "hidden print:block")}>
         <SectionBody
           section={section}
           content={content}
@@ -393,7 +402,7 @@ export function SectionReview({
           onOpenEvidence={onOpenEvidence}
           isEvidenceHighlighted={review?.isEvidenceHighlighted}
         />
-      )}
+      </div>
       {editors}
       {comments}
       <InlineFindings

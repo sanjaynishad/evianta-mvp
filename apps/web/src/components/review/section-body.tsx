@@ -67,9 +67,32 @@ function ComparisonTable({
   isEvidenceHighlighted,
 }: ComparisonTableProps) {
   const compares = table.differenceColumn !== undefined;
-  const discrepancies = table.rows.filter((row) => row.discrepancy).length;
-  const matched = table.rows.length - discrepancies;
+  const discrepancies = table.rows.filter((row) => row.discrepancy === true).length;
+  const matched = table.rows.filter((row) => row.discrepancy === false).length;
+  const unstated = table.rows.length - discrepancies - matched;
   const showSources = sources.length > 0;
+
+  function statusBadge(discrepancy: boolean | undefined, total: boolean) {
+    if (discrepancy === undefined) {
+      return <Badge variant="neutral">Not stated</Badge>;
+    }
+
+    if (discrepancy) {
+      return (
+        <Badge variant="danger">
+          <TriangleAlert aria-hidden />
+          {total ? "Net difference" : "Discrepancy"}
+        </Badge>
+      );
+    }
+
+    return (
+      <Badge variant="success">
+        <CircleCheck aria-hidden />
+        {total ? "Balanced" : "Matched"}
+      </Badge>
+    );
+  }
 
   function renderCells(cells: string[]) {
     return table.headers.map((header, index) => (
@@ -88,7 +111,7 @@ function ComparisonTable({
       <Table data-comparison-table={compares || undefined}>
         <TableCaption className="pb-3 text-left">
           {compares
-            ? `${matched} matched, ${discrepancies} ${discrepancies === 1 ? "discrepancy" : "discrepancies"}. Each row links to the sources compared.`
+            ? `${matched} matched, ${discrepancies} ${discrepancies === 1 ? "discrepancy" : "discrepancies"}${unstated > 0 ? `, ${unstated} without a stated difference` : ""}. Each row links to the sources compared.`
             : `${title}. Sources are linked on each row.`}
         </TableCaption>
         <TableHeader>
@@ -122,21 +145,7 @@ function ComparisonTable({
               )}
             >
               {renderCells(row.cells)}
-              {compares ? (
-                <TableCell>
-                  {row.discrepancy ? (
-                    <Badge variant="danger">
-                      <TriangleAlert aria-hidden />
-                      Discrepancy
-                    </Badge>
-                  ) : (
-                    <Badge variant="success">
-                      <CircleCheck aria-hidden />
-                      Matched
-                    </Badge>
-                  )}
-                </TableCell>
-              ) : null}
+              {compares ? <TableCell>{statusBadge(row.discrepancy, false)}</TableCell> : null}
               {showSources ? (
                 <TableCell className="print:hidden">
                   <ul
@@ -164,13 +173,7 @@ function ComparisonTable({
             <TableRow className="hover:bg-transparent">
               {renderCells(table.total.cells)}
               {compares ? (
-                <TableCell>
-                  {table.total.discrepancy ? (
-                    <Badge variant="danger">Net difference</Badge>
-                  ) : (
-                    <Badge variant="success">Balanced</Badge>
-                  )}
-                </TableCell>
+                <TableCell>{statusBadge(table.total.discrepancy, true)}</TableCell>
               ) : null}
               {showSources ? <TableCell className="print:hidden" /> : null}
             </TableRow>

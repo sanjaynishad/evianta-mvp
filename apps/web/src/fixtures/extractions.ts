@@ -136,14 +136,20 @@ function statementExtraction(): ExtractedDocumentInput {
     ["2026-08-28", "Receipt NEFT 4902", null, null, 165000, null],
     ["2026-09-15", "Receipt NEFT 4960", null, null, 220000, null],
   ];
+  // Acceptance dates of the unpaid invoices match the claim's chronology and interest table.
+  const acceptedOn: Record<number, string> = {
+    104: "2026-05-05",
+    107: "2026-06-12",
+    111: "2026-07-10",
+    115: "2026-07-31",
+  };
   const open: TableCell[][] = [];
   for (let number = 104; number <= 118; number += 1) {
     const offset = (number - 104) * 7;
     const amount = unpaid[number] ?? 150000 + ((number * 7919) % 9) * 10000;
     const paid = unpaid[number] ? 0 : amount;
-    open.push(
-      invoiceRow(number, isoDay("2026-05-02", offset), isoDay("2026-05-05", offset), amount, paid),
-    );
+    const accepted = acceptedOn[number] ?? isoDay("2026-05-05", offset);
+    open.push(invoiceRow(number, isoDay(accepted, -3), accepted, amount, paid));
   }
 
   const balance = Object.values(unpaid).reduce((sum, value) => sum + value, 0);
@@ -177,40 +183,122 @@ function statementExtraction(): ExtractedDocumentInput {
   };
 }
 
-function salesExtraction(): ExtractedDocumentInput {
-  const random = createRandom(2026);
-  const customers = [
-    ["Deccan Distributors, Pune", "West"],
-    ["Konkan Retail, Mumbai", "West"],
-    ["Ganga Traders, Lucknow", "North"],
-    ["Capital Stores, Delhi", "North"],
-    ["Cauvery Mart, Mysuru", "South"],
-    ["Bay Supplies, Chennai", "South"],
-  ] as const;
-  const products = ["Steel tumbler set", "Pressure cooker 5L", "Non-stick tawa", "Mixer jar"];
-  const rows: TableCell[][] = [];
-  for (let index = 0; index < 1840; index += 1) {
-    const row = index + 2;
-    const month = row < 615 ? 0 : row < 1230 ? 1 : 2;
-    const isPuneReturn = row >= 812 && row <= 868;
-    const [customer, region] = isPuneReturn
-      ? customers[0]
-      : customers[Math.floor(random() * customers.length)]!;
-    const blankRegion = !isPuneReturn && index % 13 === 5;
-    const gross = Math.round((8000 + random() * 22000) / 10) * 10;
-    const returns = isPuneReturn ? Math.round(gross * 0.6) : random() < 0.05 ? gross : 0;
-    rows.push([
-      isPuneReturn ? `RTN-${String(row).padStart(4, "0")}` : `INV-${String(row).padStart(4, "0")}`,
-      isoDay(["2025-07-01", "2025-08-01", "2025-09-01"][month]!, Math.floor(random() * 28)),
-      customer,
-      products[Math.floor(random() * products.length)]!,
-      blankRegion ? null : region,
-      gross,
-      returns,
-      gross - returns,
-    ]);
+// Integer shares of total in proportion to weights, summing exactly to total.
+function splitTotal(total: number, weights: number[]): number[] {
+  const sum = weights.reduce((acc, weight) => acc + weight, 0);
+  const shares = weights.map((weight) => Math.floor((total * weight) / sum));
+  let remainder = total - shares.reduce((acc, share) => acc + share, 0);
+  for (let index = 0; remainder > 0; index = (index + 1) % shares.length) {
+    shares[index]! += 1;
+    remainder -= 1;
   }
 
+  return shares;
+}
+
+type SalesRegion = "West" | "North" | "South" | "Unassigned";
+
+const salesRegions: SalesRegion[] = ["West", "North", "South", "Unassigned"];
+
+// Net sales and returns per month (July, August, September) and region. These reconcile with the
+// data-analysis sample: monthly totals, the regional split, 142 rows without a region worth 9.45
+// lakh, and West returns at 9.2% of gross in August.
+export const salesFixtureTargets: Record<SalesRegion, { net: number[]; returns: number[] }> = {
+  West: { net: [1580000, 1750000, 1990000], returns: [67550, 177310, 80760] },
+  North: { net: [1230000, 1300000, 1380000], returns: [48590, 54170, 51540] },
+  South: { net: [1085000, 1260000, 1295000], returns: [49940, 56610, 55370] },
+  Unassigned: { net: [315000, 315000, 315000], returns: [13130, 13130, 13130] },
+};
+
+// Return notes RTN-0812 to RTN-0868 from the Pune distributor: 71% of West's August returns.
+export const puneReturnRows = { start: 812, end: 868, returns: 125890 };
+
+export const missingRegionRowCount = 142;
+
+function salesExtraction(): ExtractedDocumentInput {
+  const random = createRandom(2026);
+  const customers: Record<Exclude<SalesRegion, "Unassigned">, string[]> = {
+    West: ["Konkan Retail, Mumbai", "Sahyadri Stores, Nashik"],
+    North: ["Ganga Traders, Lucknow", "Capital Stores, Delhi"],
+    South: ["Cauvery Mart, Mysuru", "Bay Supplies, Chennai"],
+  };
+  const products = ["Steel tumbler set", "Pressure cooker 5L", "Non-stick tawa", "Mixer jar"];
+  const rowCount = 1840;
+  const monthOf = (row: number) => (row < 615 ? 0 : row < 1230 ? 1 : 2);
+  const isPune = (row: number) => row >= puneReturnRows.start && row <= puneReturnRows.end;
+  const blank = new Set<number>();
+  for (const step of [5, 9]) {
+    for (let index = step; index < rowCount && blank.size < missingRegionRowCount; index += 13) {
+      if (!isPune(index + 2)) {
+        blank.add(index);
+      }
+    }
+  }
+
+  const regions: SalesRegion[] = Array.from({ length: rowCount }, (_, index) =>
+    isPune(index + 2)
+      ? "West"
+      : blank.has(index)
+        ? "Unassigned"
+        : (["West", "North", "South"] as const)[Math.floor(random() * 3)]!,
+  );
+  const net = new Array<number>(rowCount).fill(0);
+  const returns = new Array<number>(rowCount).fill(0);
+  for (const region of salesRegions) {
+    for (let month = 0; month < 3; month += 1) {
+      const indexes = regions
+        .map((candidate, index) => ({ candidate, index }))
+        .filter(({ candidate, index }) => candidate === region && monthOf(index + 2) === month)
+        .map(({ index }) => index);
+      const netShares = splitTotal(
+        salesFixtureTargets[region].net[month]!,
+        indexes.map((index) => (isPune(index + 2) ? 0.3 : 0.6 + random())),
+      );
+      indexes.forEach((index, position) => {
+        net[index] = netShares[position]!;
+      });
+
+      const pune = indexes.filter((index) => isPune(index + 2));
+      const others = indexes.filter((index) => !isPune(index + 2) && random() < 0.07);
+      const returnRows = others.length > 0 ? others : indexes.slice(0, 3);
+      const otherReturns =
+        salesFixtureTargets[region].returns[month]! -
+        (pune.length > 0 ? puneReturnRows.returns : 0);
+      splitTotal(
+        puneReturnRows.returns,
+        pune.map(() => 1),
+      ).forEach((value, position) => {
+        returns[pune[position]!] = value;
+      });
+      splitTotal(
+        otherReturns,
+        returnRows.map(() => 0.5 + random()),
+      ).forEach((value, position) => {
+        const target = returnRows[position]!;
+        returns[target] = (returns[target] ?? 0) + value;
+      });
+    }
+  }
+
+  const rows: TableCell[][] = regions.map((region, index) => {
+    const row = index + 2;
+    const customer = isPune(row)
+      ? "Deccan Distributors, Pune"
+      : region === "Unassigned"
+        ? "Counter sale"
+        : customers[region][Math.floor(random() * 2)]!;
+    const gross = net[index]! + returns[index]!;
+    return [
+      isPune(row) ? `RTN-${String(row).padStart(4, "0")}` : `INV-${String(row).padStart(4, "0")}`,
+      isoDay(["2025-07-01", "2025-08-01", "2025-09-01"][monthOf(row)]!, Math.floor(random() * 28)),
+      customer,
+      products[Math.floor(random() * products.length)]!,
+      region === "Unassigned" ? null : region,
+      gross,
+      returns[index]!,
+      net[index]!,
+    ];
+  });
   return {
     documentId: "a-doc-sales",
     kind: "tabular",

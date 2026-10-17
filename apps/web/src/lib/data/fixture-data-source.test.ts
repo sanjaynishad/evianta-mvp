@@ -5,7 +5,11 @@ import {
   getSampleStateForUseCase,
   sampleCaseStates,
 } from "@/fixtures";
-import { getFixtureExtraction } from "@/fixtures/extractions";
+import {
+  getFixtureExtraction,
+  missingRegionRowCount,
+  puneReturnRows,
+} from "@/fixtures/extractions";
 import { createTestDataSource } from "@/test/render-with-data";
 
 describe("fixture documents", () => {
@@ -38,6 +42,65 @@ describe("fixture documents", () => {
         expect(page?.text.replace(/\s+/g, " "), evidence.id).toContain(quote);
       }
     }
+  });
+});
+
+describe("sales fixture", () => {
+  const table = getFixtureExtraction("a-doc-sales")!.tables[0]!;
+  const rows = table.rows.map((cells, index) => ({
+    row: index + 2,
+    month: String(cells[1]).slice(0, 7),
+    customer: String(cells[2]),
+    region: cells[4] as string | null,
+    gross: Number(cells[5]),
+    returns: Number(cells[6]),
+    net: Number(cells[7]),
+  }));
+  const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
+  const dataAnalysis = sampleCaseStates.find((state) => state.case.id === "sample-data-analysis")!;
+  const chartData = (chartId: string) =>
+    JSON.parse(
+      dataAnalysis.deliverables
+        .flatMap((deliverable) => deliverable.sections)
+        .find((section) => section.id === `a-section-${chartId}`)!.content,
+    ).data as Record<string, number | string>[];
+
+  it("reconciles monthly net sales and returns with the dashboard", () => {
+    const months = ["2025-07", "2025-08", "2025-09"];
+    const chart = chartData("chart-net-sales-by-month");
+
+    expect(rows).toHaveLength(1840);
+    expect(rows.every((row) => row.gross === row.net + row.returns)).toBe(true);
+    months.forEach((month, index) => {
+      const inMonth = rows.filter((row) => row.month === month);
+      expect(sum(inMonth.map((row) => row.net))).toBe(chart[index]!.netSales);
+      expect(sum(inMonth.map((row) => row.returns))).toBe(chart[index]!.returns);
+    });
+  });
+
+  it("reconciles the regional split, missing regions, and West returns", () => {
+    const share = Object.fromEntries(
+      chartData("chart-region-share").map((item) => [item.region, item.netSales]),
+    );
+    for (const region of ["West", "North", "South"]) {
+      expect(sum(rows.filter((row) => row.region === region).map((row) => row.net))).toBe(
+        share[region],
+      );
+    }
+
+    const missing = rows.filter((row) => row.region === null);
+    expect(missing).toHaveLength(missingRegionRowCount);
+    expect(sum(missing.map((row) => row.net))).toBe(945000);
+
+    const westAugust = rows.filter((row) => row.region === "West" && row.month === "2025-08");
+    const westAugustReturns = sum(westAugust.map((row) => row.returns));
+    expect(westAugustReturns / sum(westAugust.map((row) => row.gross))).toBeCloseTo(0.092, 3);
+    const pune = rows.filter(
+      (row) => row.row >= puneReturnRows.start && row.row <= puneReturnRows.end,
+    );
+    expect(pune.every((row) => row.customer === "Deccan Distributors, Pune")).toBe(true);
+    expect(pune.every((row) => row.month === "2025-08" && row.region === "West")).toBe(true);
+    expect(sum(pune.map((row) => row.returns)) / westAugustReturns).toBeCloseTo(0.71, 2);
   });
 });
 

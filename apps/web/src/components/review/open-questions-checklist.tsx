@@ -232,9 +232,11 @@ export function OpenQuestionsChecklist({
   onDismiss,
   onFocusFinding,
 }: OpenQuestionsChecklistProps) {
-  const openCount = items.filter((item) => item.question.status === "open").length;
-  const groups = groupBySeverity(items);
   const notes: LocalReviewNote[] = localNotes.notes;
+  const openCount =
+    items.filter((item) => item.question.status === "open").length +
+    notes.filter((note) => note.status === "open").length;
+  const groups = groupBySeverity(items);
   return (
     <section
       id={openQuestionsDomId}

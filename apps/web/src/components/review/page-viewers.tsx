@@ -13,6 +13,7 @@ import { regionForEntry, regionsForPage, type EvidenceRegion } from "@/lib/evide
 import { scrollIntoPane } from "@/lib/scroll";
 import { findQuoteInTextLayer } from "@/lib/text-layer";
 import { HighlightOverlay, type OverlayRegion } from "./highlight-overlay";
+import { TextSourceViewer } from "./text-source-viewer";
 import { ViewerToolbar } from "./viewer-toolbar";
 
 const PdfPageView = dynamic(() => import("./pdf-page-view"), {
@@ -151,10 +152,27 @@ export function PdfViewer({
   );
 
   if (error) {
+    if (extraction && extraction.pages.length > 0) {
+      return (
+        <div className="flex flex-col gap-2">
+          <p role="status" className="text-xs text-warning">
+            The PDF could not be displayed, so the extracted text is shown instead.
+          </p>
+          <TextSourceViewer
+            documentName={document.name}
+            extraction={extraction}
+            page={focusPage}
+            quote={quote}
+            requestId={requestId}
+          />
+        </div>
+      );
+    }
+
     return (
       <ViewerError
         title="The PDF could not be shown"
-        description="Use View original to open the file, or check the extracted text."
+        description="Use View original to open the file."
       />
     );
   }

@@ -21,9 +21,9 @@ const monthlyNetSales: ChartSpecInput = {
     { key: "returns", label: "Returns" },
   ],
   data: [
-    { month: "Jul 2025", netSales: 4210000, returns: 182000 },
-    { month: "Aug 2025", netSales: 4625000, returns: 391000 },
-    { month: "Sep 2025", netSales: 4980000, returns: 176000 },
+    { month: "Jul 2025", netSales: 4210000, returns: 179210 },
+    { month: "Aug 2025", netSales: 4625000, returns: 301220 },
+    { month: "Sep 2025", netSales: 4980000, returns: 200800 },
   ],
   xAxis: { label: "Month" },
   yAxis: { label: "Amount", format: "currency-inr" },
@@ -207,7 +207,7 @@ export const dataAnalysisCaseState: CaseStateInput = {
       taskId: "a-task-metrics",
       summary: "West region returns more than doubled in August",
       detail:
-        "Returns in West reached 9.2% of gross sales in August against about 4% in other months. 71% of the August returns come from one distributor in Pune.",
+        "Returns in West reached 9.2% of gross sales in August against about 4% in other months. 71% of West's August returns come from one distributor in Pune.",
       severity: "medium",
       confidence: "medium",
       evidence: [

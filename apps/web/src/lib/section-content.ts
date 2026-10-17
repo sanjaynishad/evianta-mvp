@@ -1,7 +1,8 @@
 export interface TextTableRow {
   cells: string[];
   values: (number | undefined)[];
-  // Set when the table has a difference column and this row's difference is not zero.
+  // Set when the table has a difference column and this row states a difference; true when it is
+  // not zero. Undefined when there is no difference column or the cell is blank.
   discrepancy?: boolean;
 }
 
@@ -107,11 +108,10 @@ export function parseTextTable(content: string): TextTable | undefined {
     (header, index) => numericColumns[index] && differencePattern.test(header),
   );
   const differenceColumn = differenceIndex >= 0 ? differenceIndex : undefined;
-  const rows: TextTableRow[] = parsedRows.map((row) => ({
-    ...row,
-    discrepancy:
-      differenceColumn === undefined ? undefined : (row.values[differenceColumn] ?? 0) !== 0,
-  }));
+  const rows: TextTableRow[] = parsedRows.map((row) => {
+    const difference = differenceColumn === undefined ? undefined : row.values[differenceColumn];
+    return { ...row, discrepancy: difference === undefined ? undefined : difference !== 0 };
+  });
   const last = rows.at(-1);
   const hasTotal = last !== undefined && /^(grand )?total\b/i.test(last.cells[0] ?? "");
   return {

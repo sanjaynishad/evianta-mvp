@@ -17,6 +17,15 @@ describe("parseTextTable", () => {
     expect(table?.numericColumns).toEqual([false, true, true, true]);
   });
 
+  it("treats a blank difference as unknown rather than a match", () => {
+    const table = parseTextTable(
+      "Party        Ledger   Statement   Difference\nAlpha         1,000       1,000            0\nBeta          2,000       1,500\nTotal         3,000       2,500",
+    );
+
+    expect(table?.rows.map((row) => row.discrepancy)).toEqual([false, undefined]);
+    expect(table?.total?.discrepancy).toBeUndefined();
+  });
+
   it("aligns sparse rows under their headers", () => {
     const table = parseTextTable(
       "Invoice        Amount   Days overdue   Interest\nKF-2025-104  2,40,000            148     28,410\nTotal        8,42,000                    61,870",

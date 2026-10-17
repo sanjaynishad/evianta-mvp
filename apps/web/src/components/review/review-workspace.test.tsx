@@ -277,6 +277,14 @@ describe("review workspace", { timeout }, () => {
     renderWithDataSource(<CaseWorkspace caseId="sample-tax-notice" />, dataSource);
 
     fireEvent.mouseDown(await screen.findByRole("tab", { name: /Ask/ }));
+    const loadState = dataSource.getCaseStateAsync.bind(dataSource);
+    const stateSpy = vi.spyOn(dataSource, "getCaseStateAsync").mockImplementation(async (id) => {
+      const state = await loadState(id);
+      return {
+        ...state,
+        case: { ...state.case, usage: { ...state.case.usage!, costEstimate: 0.0701 } },
+      };
+    });
     fireEvent.click(await screen.findByRole("button", { name: "Why is the TDS mismatch 12,400?" }));
 
     const answer = await screen.findByTestId("answer-text", {}, slow);
@@ -304,6 +312,8 @@ describe("review workspace", { timeout }, () => {
     const used = within(log).getByRole("list", { name: "Findings used" });
     expect(within(used).getByRole("button", { name: /12,400 gap is TDS/ })).toBeInTheDocument();
     expect(screen.getByTestId("ask-announcer")).toHaveTextContent("Answer ready");
+    await waitFor(() => expect(screen.getByTestId("running-cost")).toHaveTextContent("$0.0701"));
+    expect(stateSpy).toHaveBeenCalled();
 
     fireEvent.click(
       within(log).getByRole("button", {
@@ -335,6 +345,7 @@ describe("review workspace", { timeout }, () => {
 
     const flagged = await screen.findByRole("list", { name: "Flagged questions" });
     expect(flagged).toHaveTextContent("Answer needed: What is the weather in Pune?");
+    expect(screen.getByTestId("open-question-count")).toHaveTextContent("3 open");
     expect(
       JSON.parse(window.localStorage.getItem("evianta.review-notes.sample-tax-notice") ?? "[]"),
     ).toHaveLength(1);
@@ -365,6 +376,53 @@ describe("review workspace", { timeout }, () => {
     expect(within(draft).getByTestId("after-content")).toHaveTextContent(
       "We request that the credit of 12,400 be allowed under section 154.",
     );
+  });
+
+  it("keeps the edit open with the reviewer's text when saving fails", async () => {
+    const copy = visitorCopy(taxSample, "case-edit-failure");
+    const dataSource = createTestDataSource({ seedStates: [copy] });
+    vi.spyOn(dataSource, "updateSectionAsync").mockRejectedValue(
+      new ApiError("The server is busy.", 503),
+    );
+    renderWithDataSource(<CaseWorkspace caseId={copy.case.id} />, dataSource);
+
+    const draft = await screen.findByRole("region", { name: "Draft response" });
+    fireEvent.click(within(draft).getByRole("button", { name: "Edit" }));
+    fireEvent.change(within(draft).getByRole("textbox", { name: /Edit the text/ }), {
+      target: { value: "Unsaved reviewer text" },
+    });
+    fireEvent.click(within(draft).getByRole("button", { name: "Save edit" }));
+
+    await waitFor(() =>
+      expect(within(draft).getByRole("textbox", { name: /Edit the text/ })).toHaveValue(
+        "Unsaved reviewer text",
+      ),
+    );
+    expect(within(draft).queryByText("Edited by reviewer")).not.toBeInTheDocument();
+  });
+
+  it("keeps the Ask conversation when the side sheet closes on a narrow screen", async () => {
+    stubMatchMedia(true, { viewportWidth: 800 });
+    try {
+      renderWithDataSource(<CaseWorkspace caseId="sample-tax-notice" />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Evidence and Ask" }));
+      fireEvent.mouseDown(await screen.findByRole("tab", { name: /Ask/ }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Why is the TDS mismatch 12,400?" }),
+      );
+      await screen.findByRole("list", { name: "Findings used" }, slow);
+      fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: "Evidence and Ask" }));
+      fireEvent.mouseDown(await screen.findByRole("tab", { name: /Ask/ }));
+      expect(await screen.findByRole("log", { name: "Conversation" })).toHaveTextContent(
+        "Why is the TDS mismatch 12,400?",
+      );
+    } finally {
+      stubMatchMedia(true, { viewportWidth: 1440 });
+    }
   });
 
   it("lists unresolved high-severity items first in the approval gate", async () => {

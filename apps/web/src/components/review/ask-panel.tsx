@@ -1,61 +1,42 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, type FormEvent } from "react";
 import { CircleAlert, Flag, FlaskConical, ListPlus, SendHorizontal, Square } from "lucide-react";
 import type { AskResult, CaseDocument, UseCase } from "@evianta/core";
 import { ChatBubble } from "@/components/patterns/chat-bubble";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { LocalReviewNotes } from "@/hooks/use-local-review-notes";
+import type { AskConversation } from "@/hooks/use-ask-conversation";
 import { genericSuggestedQuestions, suggestedQuestions } from "@/lib/ask";
-import { describeError } from "@/lib/api/errors";
 import { useDataSource } from "@/lib/data/data-source-context";
 import type { EvidenceEntry } from "@/lib/evidence";
 import { openQuestionsDomId } from "@/lib/review";
 import { EvidenceHoverChip } from "./evidence-hover-chip";
 import { useReview } from "./review-context";
 
-type AnswerStatus = "streaming" | "answered" | "not-supported" | "error";
-
-interface AskExchange {
-  id: string;
-  question: string;
-  askedAt: string;
-  text: string;
-  status: AnswerStatus;
-  result?: AskResult;
-  error?: string;
-  flaggedNoteId?: string;
-}
-
 export interface AskPanelProps {
   useCase?: UseCase;
   documents: CaseDocument[];
-  localNotes: LocalReviewNotes;
+  conversation: AskConversation;
 }
 
-let exchangeCounter = 0;
-
-function nextExchangeId(): string {
-  exchangeCounter += 1;
-  return `ask-${exchangeCounter}`;
-}
-
-export function AskPanel({ useCase, documents, localNotes }: AskPanelProps) {
+export function AskPanel({ useCase, documents, conversation }: AskPanelProps) {
   const dataSource = useDataSource();
   const review = useReview();
   const inputId = useId();
-  const [question, setQuestion] = useState("");
-  const [exchanges, setExchanges] = useState<AskExchange[]>([]);
-  const [announcement, setAnnouncement] = useState("");
-  const abortRef = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const streaming = exchanges.some((exchange) => exchange.status === "streaming");
+  const {
+    exchanges,
+    draft: question,
+    setDraft: setQuestion,
+    announcement,
+    streaming,
+  } = conversation;
   const suggestions = useCase ? suggestedQuestions[useCase] : genericSuggestedQuestions;
   const fixtureMode = dataSource.mode === "fixtures";
-
-  useEffect(() => () => abortRef.current?.abort(), []);
+  const askAsync = conversation.askAsync;
+  const flagForReview = conversation.flagForReview;
 
   useEffect(() => {
     const list = listRef.current;
@@ -64,78 +45,9 @@ export function AskPanel({ useCase, documents, localNotes }: AskPanelProps) {
     }
   }, [exchanges]);
 
-  function update(id: string, change: (exchange: AskExchange) => AskExchange) {
-    setExchanges((current) =>
-      current.map((exchange) => (exchange.id === id ? change(exchange) : exchange)),
-    );
-  }
-
-  async function askAsync(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || streaming) {
-      return;
-    }
-
-    const id = nextExchangeId();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setQuestion("");
-    setAnnouncement("");
-    setExchanges((current) => [
-      ...current,
-      {
-        id,
-        question: trimmed,
-        askedAt: new Date().toISOString(),
-        text: "",
-        status: "streaming",
-      },
-    ]);
-    try {
-      const result = await dataSource.askAsync(review.caseId, trimmed, {
-        signal: controller.signal,
-        onDelta: (delta) =>
-          update(id, (exchange) => ({ ...exchange, text: exchange.text + delta })),
-      });
-      update(id, (exchange) => ({
-        ...exchange,
-        result,
-        status: result.status,
-        text: result.status === "answered" ? result.answer : result.message,
-      }));
-      setAnnouncement(
-        result.status === "answered"
-          ? `Answer ready, citing ${result.evidenceIds.length} sources.`
-          : "The work record does not support an answer to this question.",
-      );
-    } catch (error) {
-      const cancelled = error instanceof DOMException && error.name === "AbortError";
-      update(id, (exchange) => ({
-        ...exchange,
-        status: "error",
-        error: cancelled ? "You stopped this answer." : describeError(error),
-      }));
-      setAnnouncement(cancelled ? "Answer stopped." : "The answer failed.");
-    } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
-      }
-    }
-  }
-
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     void askAsync(question);
-  }
-
-  function flagForReview(exchange: AskExchange) {
-    const note = localNotes.addNote({
-      text: `Answer needed: ${exchange.question}`,
-      question: exchange.question,
-      severity: "medium",
-    });
-    update(exchange.id, (current) => ({ ...current, flaggedNoteId: note.id }));
-    setAnnouncement("Added to the open questions as a note in this browser.");
   }
 
   function citationEntries(result: AskResult): EvidenceEntry[] {
@@ -362,12 +274,7 @@ export function AskPanel({ useCase, documents, localNotes }: AskPanelProps) {
           />
           <div className="flex justify-end gap-2">
             {streaming ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => abortRef.current?.abort()}
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={conversation.stop}>
                 <Square aria-hidden />
                 Stop
               </Button>

@@ -17,7 +17,9 @@ import { ReviewSidePanel } from "@/components/review/review-side-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAskConversation } from "@/hooks/use-ask-conversation";
 import { useCaseWorkspace, type CaseWorkspaceController } from "@/hooks/use-case-workspace";
+import { useLatestCallback } from "@/hooks/use-latest-callback";
 import { useLocalReviewNotes, type LocalReviewNotes } from "@/hooks/use-local-review-notes";
 import {
   approveActionKey,
@@ -235,6 +237,23 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
     onTryCase: () => void tryCaseAsync(caseId),
   });
   const layoutRef = useRef<ReviewLayoutHandle>(null);
+  const refreshUsage = useLatestCallback(async () => {
+    try {
+      const fresh = await dataSource.getCaseStateAsync(caseId);
+      workspace.mutate((current) => ({
+        ...current,
+        case: { ...current.case, usage: fresh.case.usage },
+        cost: fresh.cost,
+      }));
+    } catch {
+      // Keeping the previous totals is fine; the next load picks up the recorded usage.
+    }
+  });
+  const conversation = useAskConversation({
+    caseId,
+    localNotes,
+    onSettled: () => void refreshUsage(),
+  });
   const [gateOpen, setGateOpen] = useState(false);
   const uploadWaitId = useId();
 
@@ -412,7 +431,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
                 <AskPanel
                   useCase={caseItem.useCase}
                   documents={state.documents}
-                  localNotes={localNotes}
+                  conversation={conversation}
                 />
               }
             />
