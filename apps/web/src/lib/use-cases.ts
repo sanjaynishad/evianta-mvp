@@ -30,6 +30,7 @@ export const supportedUploadMimeTypes = [
   "application/x-ndjson",
   "text/plain",
   "text/markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-excel",
   "application/pdf",
@@ -47,6 +48,7 @@ export const supportedUploadExtensions = [
   "txt",
   "md",
   "markdown",
+  "docx",
   "xlsx",
   "xls",
   "pdf",
@@ -57,10 +59,10 @@ export const supportedUploadExtensions = [
 ] as const;
 
 export const unsupportedUploadMessage =
-  "This file type is not supported. Upload CSV, TSV, Excel (.xlsx, .xls), JSON (.json, .jsonl), text (.txt, .md), PDF, PNG, JPEG, or WebP files.";
+  "This file type is not supported. Upload CSV, TSV, Excel (.xlsx, .xls), JSON (.json, .jsonl), text (.txt, .md), Word (.docx), PDF, PNG, JPEG, or WebP files.";
 
 const spreadsheetAccept = ".xlsx,.xls,.csv,.tsv,.json,.jsonl,.ndjson";
-const documentAccept = ".pdf,.png,.jpg,.jpeg,.webp";
+const documentAccept = ".pdf,.docx,.png,.jpg,.jpeg,.webp";
 const anyAccept = [
   ...supportedUploadExtensions.map((extension) => `.${extension}`),
   ...supportedUploadMimeTypes,

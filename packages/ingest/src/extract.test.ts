@@ -10,6 +10,7 @@ import { PDFDocument } from "pdf-lib";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createDocx,
   createPdfAsync,
   createPng,
   createWorkbook,
@@ -317,6 +318,47 @@ describe("extractDocumentAsync: deterministic paths", () => {
     expect(outcome.extraction.pages.map((page) => page.index)).toEqual(
       outcome.extraction.pages.map((_page, offset) => offset + 1),
     );
+  });
+
+  it("reads Word documents into pages and tables without calling the model", async () => {
+    const ai = createMockAi();
+    const cell = (text: string) => `<w:tc><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:tc>`;
+    const docx = createDocx(
+      [
+        "<w:p><w:r><w:t>Statement of account</w:t></w:r></w:p>",
+        `<w:tbl><w:tr>${cell("Invoice")}${cell("Outstanding")}</w:tr><w:tr>${cell("KF-104")}${cell("48,000")}</w:tr></w:tbl>`,
+        '<w:p><w:r><w:br w:type="page"/><w:t>Signed</w:t></w:r></w:p>',
+      ].join(""),
+    );
+    const outcome = await extractDocumentAsync(
+      docx,
+      documentMetadata({ name: "statement.docx", mimeType: "application/octet-stream" }),
+      { ai },
+    );
+
+    expect(ai.calls).toEqual([]);
+    expect(outcome.extraction).toMatchObject({
+      kind: "text",
+      method: "parse",
+      confidence: 1,
+      warnings: [],
+    });
+    expect(outcome.extraction.pages.map((page) => page.text)).toEqual([
+      "Statement of account\nInvoice\tOutstanding\nKF-104\t48,000\n",
+      "Signed\n",
+    ]);
+    expect(outcome.extraction.tables).toEqual([
+      {
+        name: "Table 1",
+        pageIndex: 1,
+        range: "A1:B2",
+        columns: [
+          { name: "Invoice", type: "string" },
+          { name: "Outstanding", type: "number" },
+        ],
+        rows: [["KF-104", 48000]],
+      },
+    ]);
   });
 
   it("parses every xlsx sheet with typed columns and cell references", async () => {
@@ -847,6 +889,16 @@ describe("extractDocumentAsync: errors", () => {
       ),
     ).rejects.toBeInstanceOf(DocumentExtractionError);
     expect(ai.calls).toEqual([]);
+  });
+
+  it("wraps unreadable Word documents in a DocumentExtractionError", async () => {
+    await expect(
+      extractDocumentAsync(
+        Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("word/document.xml")]),
+        documentMetadata({ name: "broken.docx", mimeType: "" }),
+        { ai: createMockAi() },
+      ),
+    ).rejects.toThrow(/"broken\.docx" could not be read as a Word document: /);
   });
 
   it("reports oversized delimited text as a DocumentExtractionError", async () => {

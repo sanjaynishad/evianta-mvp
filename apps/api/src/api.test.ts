@@ -1,5 +1,15 @@
 import { seedAgentDirectoryAsync } from "@evianta/agents";
 import type { Store } from "@evianta/store";
+import {
+  Document,
+  HeadingLevel,
+  Packer,
+  Paragraph,
+  Table,
+  TableCell,
+  TableRow,
+  TextRun,
+} from "docx";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
@@ -290,6 +300,82 @@ describe("request validation", () => {
         }),
       }),
     ]);
+  });
+
+  it("accepts Word documents, reads their text and tables, and explains legacy .doc files", async () => {
+    const { app, store } = createTestHarness();
+    const caseRecord = await store.cases.createCaseAsync({
+      title: "Word uploads",
+      useCase: "msme-payment",
+      visitorId: VISITOR_A,
+    });
+    const url = `/cases/${caseRecord.id}/documents`;
+    const cell = (text: string) => new TableCell({ children: [new Paragraph(text)] });
+    const docx = await Packer.toBuffer(
+      new Document({
+        sections: [
+          {
+            children: [
+              new Paragraph({ text: "Outstanding invoices", heading: HeadingLevel.HEADING_1 }),
+              new Table({
+                rows: [
+                  new TableRow({ children: [cell("Invoice"), cell("Amount")] }),
+                  new TableRow({ children: [cell("KF-2025-104"), cell("48,000")] }),
+                ],
+              }),
+              new Paragraph({ children: [new TextRun("Payment terms: 30 days from acceptance.")] }),
+            ],
+          },
+        ],
+      }),
+    );
+
+    const upload = await request(app)
+      .post(url)
+      .attach("files", docx, {
+        filename: "statement.docx",
+        contentType: "application/octet-stream",
+      })
+      .expect(201);
+    const [uploaded] = upload.body.documents;
+
+    expect(uploaded).toMatchObject({
+      name: "statement.docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+
+    await app.idleAsync();
+
+    const detail = await request(app).get(`${url}/${uploaded.id}`).expect(200);
+
+    expect(detail.body.document).toMatchObject({
+      status: "ready",
+      extraction: { kind: "text", method: "parse", tableCount: 1 },
+    });
+    expect(detail.body.extraction.pages[0].text).toContain(
+      "Payment terms: 30 days from acceptance.",
+    );
+    expect(detail.body.extraction.tables).toEqual([
+      expect.objectContaining({
+        name: "Outstanding invoices",
+        pageIndex: 1,
+        columns: [
+          { name: "Invoice", type: "string" },
+          { name: "Amount", type: "number" },
+        ],
+        rows: [["KF-2025-104", 48000]],
+      }),
+    ]);
+
+    const legacy = await request(app)
+      .post(url)
+      .attach("files", Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), {
+        filename: "letter.doc",
+        contentType: "application/msword",
+      })
+      .expect(415);
+
+    expect(legacy.body.error).toBe("unsupported-media-type");
   });
 
   it("returns 404 without details for unknown cases and routes", async () => {

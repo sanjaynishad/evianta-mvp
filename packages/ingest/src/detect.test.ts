@@ -139,18 +139,48 @@ describe("detectDocumentFormat", () => {
     expect(detectDocumentFormat(ole, { name: "old.xls", mimeType: "" }).format).toBe("xls");
   });
 
+  it("detects Word documents by content before the declared type", () => {
+    const zipHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+    const docx = Buffer.concat([zipHeader, Buffer.from("word/document.xml")]);
+    const bare = Buffer.concat([zipHeader, Buffer.from("other.xml")]);
+    const detected = {
+      format: "docx",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    };
+
+    expect(detectDocumentFormat(docx, { name: "letter", mimeType: "application/zip" })).toEqual(
+      detected,
+    );
+    expect(detectDocumentFormat(docx, { name: "letter.xlsx", mimeType: "" })).toEqual(detected);
+    expect(detectDocumentFormat(bare, { name: "letter.docx", mimeType: "" })).toEqual(detected);
+    expect(detectDocumentFormat(bare, { name: "book.xlsx", mimeType: "" }).format).toBe("xlsx");
+  });
+
+  it("explains how to upload legacy .doc files", () => {
+    const ole = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+    for (const metadata of [
+      { name: "letter.doc", mimeType: "" },
+      { name: "letter", mimeType: "application/msword" },
+    ]) {
+      expect(() => detectDocumentFormat(ole, metadata)).toThrow(
+        /Save Word 97-2003 \(\.doc\) files as \.docx or PDF/,
+      );
+    }
+  });
+
   it("rejects unsupported content with a typed error", () => {
-    const docx = Buffer.concat([
+    const pptx = Buffer.concat([
       Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-      Buffer.from("word/document.xml"),
+      Buffer.from("ppt/presentation.xml"),
     ]);
 
     for (const [buffer, metadata] of [
       [
-        docx,
+        pptx,
         {
-          name: "letter.docx",
-          mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          name: "slides.pptx",
+          mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         },
       ],
       [Buffer.from("<html></html>"), { name: "page.html", mimeType: "text/html" }],

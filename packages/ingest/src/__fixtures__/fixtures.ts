@@ -1,4 +1,4 @@
-import { crc32, deflateSync } from "node:zlib";
+import { crc32, deflateRawSync, deflateSync } from "node:zlib";
 
 import type { DocumentMetadata } from "@evianta/core";
 import { PDFDocument, StandardFonts } from "pdf-lib";
@@ -89,6 +89,83 @@ export function createWorkbook(
   }
 
   return write(workbook, { type: "buffer", bookType }) as Buffer;
+}
+
+export interface ZipFixtureEntry {
+  name: string;
+  data: string | Buffer;
+  /** Store without compression instead of deflating. */
+  store?: boolean;
+}
+
+/** Writes a minimal zip archive with stored or deflated entries. */
+export function createZip(entries: readonly ZipFixtureEntry[]): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const raw = typeof entry.data === "string" ? Buffer.from(entry.data, "utf8") : entry.data;
+    const body = entry.store ? raw : deflateRawSync(raw);
+    const name = Buffer.from(entry.name, "utf8");
+    const method = entry.store ? 0 : 8;
+    const checksum = crc32(raw);
+    const local = Buffer.alloc(30);
+    const central = Buffer.alloc(46);
+
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(method, 8);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(raw.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(method, 10);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(raw.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(offset, 42);
+    localParts.push(local, name, body);
+    centralParts.push(central, name);
+    offset += local.length + name.length + body.length;
+  }
+
+  const directory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+
+  return Buffer.concat([...localParts, directory, end]);
+}
+
+const WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const OFFICE_DOCUMENT_RELATIONSHIPS = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+
+export function wordDocumentXml(bodyXml: string): string {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${WORD_NAMESPACE}"><w:body>${bodyXml}<w:sectPr/></w:body></w:document>`;
+}
+
+/** A .docx package whose main document body is `bodyXml`. */
+export function createDocx(bodyXml: string, extraEntries: readonly ZipFixtureEntry[] = []): Buffer {
+  return createZip([
+    {
+      name: "[Content_Types].xml",
+      data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+    },
+    { name: "_rels/.rels", data: OFFICE_DOCUMENT_RELATIONSHIPS },
+    { name: "word/document.xml", data: wordDocumentXml(bodyXml) },
+    ...extraEntries,
+  ]);
 }
 
 export function documentMetadata(

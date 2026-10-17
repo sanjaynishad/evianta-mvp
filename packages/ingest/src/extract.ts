@@ -21,6 +21,7 @@ import {
 } from "@evianta/ai";
 
 import { detectDocumentFormat } from "./detect.js";
+import { parseDocx } from "./docx.js";
 import {
   DocumentExtractionError,
   OcrConfigurationError,
@@ -643,6 +644,22 @@ export async function extractDocumentAsync(
     case "text":
     case "markdown":
       return textFormatOutcome(buffer, metadata, detected.format, settings);
+    case "docx": {
+      let parsed: TextParseResult;
+
+      try {
+        parsed = parseDocx(buffer, { dateOrder: settings.dateOrder });
+      } catch (error) {
+        throw new DocumentExtractionError(
+          metadata.id,
+          `"${metadata.name}" could not be read as a Word document: ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+
+      return parsedTextOutcome(metadata, parsed);
+    }
+
     case "xlsx":
     case "xls": {
       let parsed: TabularParseResult;

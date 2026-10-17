@@ -65,10 +65,15 @@ describe("JSON document kinds", () => {
 });
 
 describe("text document kinds", () => {
-  it("shows plain text and Markdown in the text viewer", () => {
+  it("shows plain text, Markdown, and Word documents in the text viewer", () => {
     for (const document of [
       caseDocument("notes.txt", "text/plain", "text"),
       caseDocument("dues.md", "text/markdown", "text"),
+      caseDocument(
+        "statement.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "text",
+      ),
     ]) {
       expect(getDocumentKind(document)).toBe("text");
       expect(getEvidenceKind(evidence, document)).toBe("document");

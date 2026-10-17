@@ -160,7 +160,8 @@ function linesWithOffsets(text: string): Line[] {
   return lines;
 }
 
-function pageIndexAt(pages: readonly TextPage[], offset: number): number {
+/** 1-based index of the page holding `offset`. */
+export function pageIndexAt(pages: readonly TextPage[], offset: number): number {
   let low = 0;
   let high = pages.length - 1;
 

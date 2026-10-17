@@ -24,6 +24,7 @@ describe("upload allow list", () => {
     "notes.txt",
     "notes.md",
     "notes.markdown",
+    "letter.docx",
     "notice.pdf",
     "scan.png",
     "scan.jpg",
@@ -33,7 +34,7 @@ describe("upload allow list", () => {
     expect(isSupportedUploadFile(file(name))).toBe(true);
   });
 
-  it.each(["notes.docx", "archive.zip", "photo.heic", "README"])("rejects %s", (name) => {
+  it.each(["slides.pptx", "archive.zip", "photo.heic", "README"])("rejects %s", (name) => {
     expect(isSupportedUploadFile(file(name))).toBe(false);
   });
 
@@ -62,14 +63,24 @@ describe("upload allow list", () => {
     ).toBe("sales-data");
   });
 
+  it("accepts Word documents in document checklist slots", () => {
+    const notice = useCaseDefinitions["tax-notice"].checklist.find((item) => item.id === "notice");
+    const contract = useCaseDefinitions["msme-payment"].checklist.find(
+      (item) => item.id === "purchase-orders",
+    );
+
+    expect(notice?.accept?.split(",")).toContain(".docx");
+    expect(contract?.accept?.split(",")).toContain(".docx");
+  });
+
   it("splits a drop into supported and unsupported files", () => {
     const { supported, unsupported } = partitionUploadFiles([
       file("sales.csv"),
-      file("notes.docx"),
+      file("slides.pptx"),
     ]);
 
     expect(supported.map((entry) => entry.name)).toEqual(["sales.csv"]);
-    expect(unsupported.map((entry) => entry.name)).toEqual(["notes.docx"]);
+    expect(unsupported.map((entry) => entry.name)).toEqual(["slides.pptx"]);
   });
 });
 
