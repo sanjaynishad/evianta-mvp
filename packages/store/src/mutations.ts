@@ -105,6 +105,14 @@ export function applyCaseApproval(current: Case, approval: ApprovalInput): Case 
   });
 }
 
+export function clearCaseApproval(current: Case): Case {
+  const next = { ...current, updatedAt: nowIso() };
+
+  delete next.approval;
+
+  return caseSchema.parse(next);
+}
+
 export function buildCaseCopy(source: Case, visitorId: string): Case {
   const now = nowIso();
 

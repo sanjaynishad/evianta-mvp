@@ -112,6 +112,7 @@ export interface CaseRepo {
   updateCaseStatusAsync(caseId: string, status: CaseStatus, fence?: LeaseFence): Promise<Case>;
   updateCaseUsageAsync(caseId: string, increment: CaseUsageIncrement): Promise<Case>;
   recordApprovalAsync(caseId: string, approval: ApprovalInput): Promise<Case>;
+  clearApprovalAsync(caseId: string): Promise<Case>;
   copyCaseAsync(sourceCaseId: string, visitorId: string): Promise<Case>;
 }
 
@@ -161,6 +162,7 @@ export interface DeliverableRepo {
   ): Promise<Deliverable | undefined>;
   getDeliverablesForCaseAsync(caseId: string): Promise<Deliverable[]>;
   getDeliverableAsync(caseId: string, deliverableId: string): Promise<Deliverable | undefined>;
+  /** Content edits clear the case approval in the same operation. */
   updateSectionAsync(
     caseId: string,
     deliverableId: string,

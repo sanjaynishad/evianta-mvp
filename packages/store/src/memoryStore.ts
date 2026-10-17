@@ -40,6 +40,7 @@ import {
   caseUsageAmounts,
   compareCasesNewestFirst,
   compareProfilesByRole,
+  clearCaseApproval,
   emptyUsageAmounts,
   findingHasQuestion,
   isLeaseHeld,
@@ -315,6 +316,9 @@ export function createInMemoryStore(): Store {
       async recordApprovalAsync(caseId, approval) {
         return putCase(applyCaseApproval(getCaseOrThrow(caseId), approval));
       },
+      async clearApprovalAsync(caseId) {
+        return putCase(clearCaseApproval(getCaseOrThrow(caseId)));
+      },
       async copyCaseAsync(sourceCaseId, visitorId) {
         const copy = buildCaseCopy(getCaseOrThrow(sourceCaseId), visitorId);
         const withCaseId = <T extends { caseId: string }>(item: T): T => ({
@@ -439,6 +443,15 @@ export function createInMemoryStore(): Store {
           sectionId,
           update,
         );
+
+        const caseRecord = cases.get(caseId);
+
+        if (update.editedContent !== undefined && caseRecord?.approval) {
+          const nextCase = { ...caseRecord, updatedAt: new Date().toISOString() };
+
+          delete nextCase.approval;
+          putCase(nextCase);
+        }
 
         return deliverables.put(caseId, deliverableId, next);
       },

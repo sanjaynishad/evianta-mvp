@@ -232,6 +232,28 @@ describe("orchestrator", () => {
     });
   });
 
+  it("stamps a caller-supplied run id on the run and retry events", async () => {
+    const { store, orchestrator } = createHarness({
+      "case-analysis": [{ error: "non-transient", message: "Notice unreadable" }, specialistStep()],
+    });
+    const caseRecord = await createCaseAsync(store);
+
+    await seedTasksAsync(store, caseRecord.id, [{ id: "analyze", role: "case-analysis" }]);
+
+    const first = await orchestrator.runCaseAsync(caseRecord.id, { runId: "run-from-api" });
+    const retry = await orchestrator.retryFailedAsync(caseRecord.id, { runId: "retry-from-api" });
+    const events = await store.events.listEventsAsync(caseRecord.id);
+
+    expect(first).toMatchObject({ runId: "run-from-api", status: "failed" });
+    expect(retry).toMatchObject({ runId: "retry-from-api", status: "completed" });
+    expect(new Set(events.map((event) => event.runId))).toEqual(
+      new Set(["run-from-api", "retry-from-api"]),
+    );
+    expect(events.filter((event) => event.runId === "retry-from-api").at(-1)?.type).toBe(
+      "run-completed",
+    );
+  });
+
   it("fails fast on a dependency cycle", async () => {
     const { store, ai, orchestrator } = createHarness({});
     const caseRecord = await createCaseAsync(store);
@@ -659,9 +681,11 @@ describe("orchestrator", () => {
     const caseRecord = await createCaseAsync(store);
 
     await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+
     vi.spyOn(store.runs, "reconcileUsageAsync")
       .mockResolvedValueOnce(0)
-      .mockResolvedValueOnce(0)
+      .mockImplementationOnce(reconcileUsageAsync)
       .mockRejectedValueOnce(new Error("Usage write failed"));
 
     const result = await orchestrator.runCaseAsync(caseRecord.id);

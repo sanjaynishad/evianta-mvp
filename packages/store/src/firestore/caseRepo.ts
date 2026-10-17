@@ -17,6 +17,7 @@ import {
   buildCaseCopy,
   buildNewCase,
   compareCasesNewestFirst,
+  clearCaseApproval,
   resolvePageSize,
 } from "../mutations.js";
 import type { CaseRepo } from "../types.js";
@@ -122,6 +123,9 @@ export function createCaseRepo(db: Firestore): CaseRepo {
       return mutateDocAsync(db, cases.doc(caseId), caseSchema, "case", (current) =>
         applyCaseApproval(current, approval),
       );
+    },
+    async clearApprovalAsync(caseId) {
+      return mutateDocAsync(db, cases.doc(caseId), caseSchema, "case", clearCaseApproval);
     },
     async copyCaseAsync(sourceCaseId, visitorId) {
       const source = await getDocAsync(cases.doc(sourceCaseId), caseSchema);
