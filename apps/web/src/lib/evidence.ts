@@ -40,12 +40,20 @@ export function isWebEvidence(evidence: Pick<Evidence, "sourceRef">): boolean {
   return /^https?:\/\//i.test(evidence.sourceRef);
 }
 
+const JSON_MIME_TYPES = new Set(["application/json", "application/x-ndjson"]);
+
+// Stored MIME types come from content detection, so a PDF or image named *.json keeps its
+// own viewer; the file name decides only when no specific type is known.
 function isJsonDocument(name: string, mimeType: string): boolean {
-  return (
-    /\.(json|jsonl|ndjson)$/.test(name) ||
-    mimeType === "application/json" ||
-    mimeType === "application/x-ndjson"
-  );
+  if (JSON_MIME_TYPES.has(mimeType)) {
+    return true;
+  }
+
+  if (mimeType !== "" && mimeType !== "application/octet-stream") {
+    return false;
+  }
+
+  return /\.(json|jsonl|ndjson)$/.test(name);
 }
 
 export function getEvidenceKind(evidence: Evidence, document?: CaseDocument): EvidenceSourceKind {

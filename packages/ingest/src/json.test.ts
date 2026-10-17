@@ -99,6 +99,33 @@ describe("parseJsonDocument", () => {
     ]);
   });
 
+  it("keeps a literal dotted key separate from the same nested path", () => {
+    const result = tabular(
+      parseJsonDocument('[{"a.b":1,"a":{"b":2}},{"a":{"b":4},"a.b":3}]', options),
+    );
+
+    expect(result.tables[0]?.columns.map((column) => column.name)).toEqual(["a.b", "a.b (2)"]);
+    expect(result.tables[0]?.rows).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  });
+
+  it("keeps a record's value key separate from loose items", () => {
+    expect(
+      tabular(parseJsonDocument('[{"value":"kept"}, "loose"]', options)).tables[0],
+    ).toMatchObject({
+      columns: [
+        { name: "value", type: "string" },
+        { name: "value (2)", type: "string" },
+      ],
+      rows: [
+        ["kept", null],
+        [null, "loose"],
+      ],
+    });
+  });
+
   it("reads an array of arrays like a sheet with a header row", () => {
     expect(
       tabular(parseJsonDocument('[["Item","Qty"],["Bolt",4],["Nut",9]]', options)).tables[0],
@@ -176,6 +203,13 @@ describe("parseJsonLines", () => {
 
   it("throws when no line is valid JSON", () => {
     expect(() => parseJsonLines("{bad\n[oops\n", options)).toThrow(SyntaxError);
+  });
+
+  it("keeps array lines as data instead of reading the first one as a header", () => {
+    expect(tabular(parseJsonLines("[1,2]\n[3,4]\n", options)).tables[0]).toMatchObject({
+      columns: [{ name: "value", type: "string" }],
+      rows: [["[1,2]"], ["[3,4]"]],
+    });
   });
 
   it("reports an empty file as having no data", () => {

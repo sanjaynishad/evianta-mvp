@@ -51,19 +51,31 @@ function toRawCell(value: unknown): RawCell {
   return { kind: "string", text: JSON.stringify(value) };
 }
 
+interface FlatValue {
+  name: string;
+  value: unknown;
+}
+
+// Columns are keyed by their path segments so a literal "a.b" key and a nested a -> b path
+// stay separate columns; buildTable then gives the duplicate header a suffix.
+function columnKey(segments: readonly string[]): string {
+  return JSON.stringify(segments);
+}
+
+const VALUE_COLUMN_KEY = columnKey([]);
+
 function flattenRecord(
   record: JsonObject,
-  prefix: string,
-  depth: number,
-  into: Map<string, unknown>,
+  segments: readonly string[],
+  into: Map<string, FlatValue>,
 ): void {
   for (const [key, value] of Object.entries(record)) {
-    const column = prefix ? `${prefix}.${key}` : key;
+    const path = [...segments, key];
 
-    if (isJsonObject(value) && depth < MAX_FLATTEN_DEPTH && Object.keys(value).length > 0) {
-      flattenRecord(value, column, depth + 1, into);
+    if (isJsonObject(value) && path.length <= MAX_FLATTEN_DEPTH && Object.keys(value).length > 0) {
+      flattenRecord(value, path, into);
     } else {
-      into.set(column, value);
+      into.set(columnKey(path), { name: path.join("."), value });
     }
   }
 }
@@ -90,31 +102,31 @@ function header(names: readonly string[]): RawCell[] {
 
 /** Records become rows under the union of their flattened keys; non-object items fill a value column. */
 function recordsGrid(items: readonly unknown[], budget: CellBudget): RawCell[][] {
-  const columns = new Map<string, number>();
+  const columns = new Map<string, string>();
   const flattened = items.map((item) => {
-    const values = new Map<string, unknown>();
+    const values = new Map<string, FlatValue>();
 
     if (isJsonObject(item)) {
-      flattenRecord(item, "", 0, values);
+      flattenRecord(item, [], values);
     } else if (item !== null && item !== undefined) {
-      values.set(VALUE_COLUMN, item);
+      values.set(VALUE_COLUMN_KEY, { name: VALUE_COLUMN, value: item });
     }
 
-    for (const column of values.keys()) {
-      if (!columns.has(column)) {
-        columns.set(column, columns.size);
+    for (const [key, { name }] of values) {
+      if (!columns.has(key)) {
+        columns.set(key, name);
       }
     }
 
     return values;
   });
-  const names = [...columns.keys()];
+  const keys = [...columns.keys()];
 
-  budget.spend(items.length + 1, names.length);
+  budget.spend(items.length + 1, keys.length);
 
   return [
-    header(names),
-    ...flattened.map((values) => names.map((name) => toRawCell(values.get(name)))),
+    header([...columns.values()]),
+    ...flattened.map((values) => keys.map((key) => toRawCell(values.get(key)?.value))),
   ];
 }
 
@@ -170,11 +182,8 @@ function uniqueName(base: string, used: Set<string>): string {
 
 type TabularJsonResult = Extract<JsonParseResult, { kind: "tabular" }>;
 
-function tablesFromArray(items: readonly unknown[], options: JsonParseOptions): TabularJsonResult {
-  const table = buildTable(arrayGrid(items, new CellBudget()), {
-    name: options.name,
-    dateOrder: options.dateOrder,
-  });
+function singleTable(grid: RawCell[][], options: JsonParseOptions): TabularJsonResult {
+  const table = buildTable(grid, { name: options.name, dateOrder: options.dateOrder });
 
   return table
     ? { kind: "tabular", tables: [table], warnings: [] }
@@ -247,7 +256,7 @@ export function parseJsonDocument(text: string, options: JsonParseOptions): Json
   const value: unknown = JSON.parse(stripBom(text));
 
   if (Array.isArray(value)) {
-    return tablesFromArray(value, options);
+    return singleTable(arrayGrid(value, new CellBudget()), options);
   }
 
   if (isJsonObject(value)) {
@@ -284,7 +293,8 @@ export function parseJsonLines(text: string, options: JsonParseOptions): JsonPar
     throw new SyntaxError(`No line is valid JSON. ${issues[0] ?? ""}`.trim());
   }
 
-  const result = tablesFromArray(items, options);
+  // Lines are always records, so an array on the first line is data rather than a header row.
+  const result = singleTable(recordsGrid(items, new CellBudget()), options);
 
   return { ...result, warnings: [...capWarnings(issues), ...result.warnings] };
 }

@@ -49,4 +49,17 @@ describe("JSON document kinds", () => {
     expect(getDocumentKind(document)).toBe("text");
     expect(getEvidenceKind(evidence, document)).toBe("document");
   });
+
+  it("trusts a detected PDF or image type over a .json file name", () => {
+    const pdf = jsonDocument("export.json", "application/pdf");
+    const png = jsonDocument("export.json", "image/png");
+
+    expect(getDocumentKind(pdf)).toBe("pdf");
+    expect(getEvidenceKind(evidence, pdf)).toBe("document");
+    expect(getDocumentKind(png)).toBe("image");
+    expect(getEvidenceKind(evidence, png)).toBe("image");
+    expect(getDocumentKind(jsonDocument("events.ndjson", "application/octet-stream"))).toBe(
+      "spreadsheet",
+    );
+  });
 });
