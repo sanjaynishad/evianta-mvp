@@ -63,10 +63,7 @@ export function createReviewRoutes(ctx: ApiContext): Router {
       await getMutableCaseAsync(ctx, caseId);
 
       const { note } = noteBodySchema.parse(req.body ?? {});
-      // Held through the approval write; run admission rejects the case while it is active.
-      const endApproval = ctx.approvals.begin(caseId);
-
-      try {
+      await ctx.approvals.runAsync(caseId, async () => {
         if (ctx.runs.isActive(caseId)) {
           throw new ApiError(
             409,
@@ -88,9 +85,7 @@ export function createReviewRoutes(ctx: ApiContext): Router {
         });
 
         res.json({ case: approved, unresolvedQuestions });
-      } finally {
-        endApproval();
-      }
+      });
     }),
   );
 

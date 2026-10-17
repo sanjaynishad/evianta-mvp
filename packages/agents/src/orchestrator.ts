@@ -6,6 +6,7 @@ import type {
   DocumentMetadata,
   ExtractedDocument,
   Finding,
+  NewRunEvent,
   Task,
   TaskStatus,
   TokenUsage,
@@ -363,13 +364,27 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
     const runId = runOptions.runId ?? newId();
     const emitAsync = createRunEventEmitter(store, events, caseId);
-    const baseline = toTotals(caseRecord);
     let runUsage = emptyUsage();
     let runCost = 0;
-    const caseTotals = () => ({
-      usage: addUsage(baseline.usage, runUsage),
-      cost: roundCost(baseline.cost + runCost),
-    });
+    let totals = toTotals(caseRecord);
+    let totalsChain: Promise<void> = Promise.resolve();
+    const emitTotalsAsync = (
+      buildEvents: (current: typeof totals) => NewRunEvent[],
+    ): Promise<void> => {
+      const next = totalsChain.then(async () => {
+        await store.runs.reconcileUsageAsync(caseId);
+        totals = toTotals(await getCaseOrThrowAsync(caseId));
+
+        for (const event of buildEvents(totals)) {
+          await emitAsync(event);
+        }
+      });
+
+      totalsChain = next.catch(() => undefined);
+
+      return next;
+    };
+
     const addRunUsage = (usage: TokenUsage, cost: Cost) => {
       runUsage = addUsage(runUsage, usage);
       runCost = roundCost(runCost + cost);
@@ -435,14 +450,14 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       }
 
       if (plan && plan.costEstimate > 0) {
-        const totals = caseTotals();
-
-        await emitAsync({
-          type: "cost-updated",
-          runId,
-          totalTokenUsage: totals.usage,
-          totalCostEstimate: totals.cost,
-        });
+        await emitTotalsAsync((totals) => [
+          {
+            type: "cost-updated",
+            runId,
+            totalTokenUsage: totals.usage,
+            totalCostEstimate: totals.cost,
+          },
+        ]);
       }
 
       const orderedTasks = topologicalOrder(tasks);
@@ -735,15 +750,15 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             });
 
             if (attemptCost > 0) {
-              const totals = caseTotals();
-
-              await emitAsync({
-                type: "cost-updated",
-                runId,
-                taskId: task.id,
-                totalTokenUsage: totals.usage,
-                totalCostEstimate: totals.cost,
-              });
+              await emitTotalsAsync((totals) => [
+                {
+                  type: "cost-updated",
+                  runId,
+                  taskId: task.id,
+                  totalTokenUsage: totals.usage,
+                  totalCostEstimate: totals.cost,
+                },
+              ]);
             }
           } catch (persistError) {
             logger.warn("Could not record a task failure.", {
@@ -768,24 +783,24 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             });
           }
 
-          const totals = caseTotals();
-
-          await emitAsync({
-            type: "task-completed",
-            runId,
-            taskId: task.id,
-            findingIds: record.findings.map((finding) => finding.id),
-            tokenUsage,
-            costEstimate,
-            runningCostEstimate: totals.cost,
-          });
-          await emitAsync({
-            type: "cost-updated",
-            runId,
-            taskId: task.id,
-            totalTokenUsage: totals.usage,
-            totalCostEstimate: totals.cost,
-          });
+          await emitTotalsAsync((totals) => [
+            {
+              type: "task-completed",
+              runId,
+              taskId: task.id,
+              findingIds: record.findings.map((finding) => finding.id),
+              tokenUsage,
+              costEstimate,
+              runningCostEstimate: totals.cost,
+            },
+            {
+              type: "cost-updated",
+              runId,
+              taskId: task.id,
+              totalTokenUsage: totals.usage,
+              totalCostEstimate: totals.cost,
+            },
+          ]);
         } catch (error) {
           logger.warn("Could not publish task completion.", {
             taskId: task.id,
@@ -853,7 +868,6 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       logger.warn("Run failed.", { caseId, runId, error: runError });
     }
 
-    const totals = caseTotals();
     const finishedAt = now().toISOString();
     const recordingErrors: string[] = [];
     const recordAsync = async (step: string, workAsync: () => Promise<unknown>) => {
@@ -876,7 +890,10 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         .join(" ") || undefined;
 
     await ensureLeaseAsync();
-    await recordAsync("case usage", () => store.runs.reconcileUsageAsync(caseId));
+    await recordAsync("case usage", async () => {
+      await store.runs.reconcileUsageAsync(caseId);
+      totals = toTotals(await getCaseOrThrowAsync(caseId));
+    });
     await recordAsync("case status", () =>
       store.cases.updateCaseStatusAsync(caseId, finalError() ? "failed" : "completed"),
     );
@@ -884,7 +901,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     const statusError = finalError();
 
     await recordAsync("the terminal event", () =>
-      emitAsync(
+      emitTotalsAsync((totals) => [
         statusError
           ? {
               type: "run-failed",
@@ -903,7 +920,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
               totalCostEstimate: totals.cost,
               timestamp: finishedAt,
             },
-      ),
+      ]),
     );
 
     const error = finalError();

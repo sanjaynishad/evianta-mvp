@@ -617,8 +617,8 @@ describe("case lifecycle over HTTP", () => {
       event: "run-failed",
       data: { runId: run.body.runId },
     });
-    expect((frames.at(-1)?.data as { error: string }).error).toContain(
-      "Could not record the terminal event",
+    expect((frames.at(-1)?.data as { error: string }).error).toBe(
+      "The run could not finish. Try again.",
     );
   });
 });

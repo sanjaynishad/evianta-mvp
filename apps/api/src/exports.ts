@@ -469,7 +469,9 @@ export function toCellValue(text: string): string | number {
     .replace(/^(Rs\.?|INR|\u20b9)\s*/i, "")
     .replace(/,/g, "");
 
-  if (/^-?(0|[1-9]\d{0,14})(\.\d+)?$/.test(amount)) {
+  const significantDigits = amount.replace(/^-/, "").replace(".", "").replace(/^0+/, "");
+
+  if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(amount) && significantDigits.length <= 15) {
     return Number(amount);
   }
 

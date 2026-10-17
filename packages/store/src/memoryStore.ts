@@ -388,6 +388,15 @@ export function createInMemoryStore(): Store {
           update,
         );
 
+        const caseRecord = cases.get(caseId);
+
+        if (update.editedContent !== undefined && caseRecord?.approval) {
+          const nextCase = { ...caseRecord, updatedAt: new Date().toISOString() };
+
+          delete nextCase.approval;
+          putCase(nextCase);
+        }
+
         return deliverables.put(caseId, deliverableId, next);
       },
     },

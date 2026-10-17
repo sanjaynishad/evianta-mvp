@@ -55,19 +55,23 @@ export function createDeliverableRoutes(ctx: ApiContext): Router {
     asyncRoute(async (req, res) => {
       const { caseId, deliverableId } = deliverableParamsSchema.parse(req.params);
       const { format } = exportQuerySchema.parse(req.query);
-      const caseRecord = await getCaseOrThrowAsync(ctx, caseId);
-      const [deliverable, record, evidence] = await Promise.all([
-        getDeliverableOrThrowAsync(caseId, deliverableId),
-        loadActiveRecordAsync(store, caseId),
-        store.evidence.getEvidenceForCaseAsync(caseId),
-      ]);
-      const file = await exportDeliverableAsync(format, {
-        caseRecord,
-        deliverable,
-        findings: record.findings,
-        evidence,
-        generatedAt: ctx.now(),
+      const input = await ctx.approvals.runAsync(caseId, async () => {
+        const caseRecord = await getCaseOrThrowAsync(ctx, caseId);
+        const [deliverable, record, evidence] = await Promise.all([
+          getDeliverableOrThrowAsync(caseId, deliverableId),
+          loadActiveRecordAsync(store, caseId),
+          store.evidence.getEvidenceForCaseAsync(caseId),
+        ]);
+
+        return {
+          caseRecord,
+          deliverable,
+          findings: record.findings,
+          evidence,
+          generatedAt: ctx.now(),
+        };
       });
+      const file = await exportDeliverableAsync(format, input);
 
       res.setHeader("Content-Type", file.contentType);
       res.setHeader("Content-Disposition", contentDisposition("attachment", file.fileName));
@@ -85,10 +89,12 @@ export function createDeliverableRoutes(ctx: ApiContext): Router {
 
       const update = sectionUpdateSchema.parse(req.body);
 
-      await getDeliverableOrThrowAsync(caseId, deliverableId);
-      res.json(
-        await store.deliverables.updateSectionAsync(caseId, deliverableId, sectionId, update),
-      );
+      await ctx.approvals.runAsync(caseId, async () => {
+        await getDeliverableOrThrowAsync(caseId, deliverableId);
+        res.json(
+          await store.deliverables.updateSectionAsync(caseId, deliverableId, sectionId, update),
+        );
+      });
     }),
   );
 

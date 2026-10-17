@@ -1,6 +1,5 @@
 import {
   createRunEventEmitter,
-  describeTaskError,
   type Orchestrator,
   type RunEventBus,
   type RunMode,
@@ -10,7 +9,7 @@ import { isTerminalRunEvent } from "@evianta/core";
 import type { Store } from "@evianta/store";
 
 import { ApiError } from "./errors.js";
-import type { IngestionService } from "./ingestion.js";
+import { DocumentsUnavailableError, type IngestionService } from "./ingestion.js";
 import { messageOf, type ApiLogger } from "./logger.js";
 
 export interface StartedRun {
@@ -62,7 +61,10 @@ export function createRunLauncher(options: RunLauncherOptions): RunLauncher {
       )({
         type: "run-failed",
         runId,
-        error: describeTaskError(error),
+        error:
+          error instanceof DocumentsUnavailableError
+            ? error.message
+            : "The run could not finish. Try again.",
         failedTaskIds: [],
       });
     } catch (recordError) {

@@ -59,6 +59,37 @@ export function createCaseActivityTracker(): CaseActivityTracker {
   };
 }
 
+export interface CaseReviewGuard {
+  runAsync<T>(caseId: string, workAsync: () => Promise<T>): Promise<T>;
+  isActive(caseId: string): boolean;
+}
+
+export function createCaseReviewGuard(): CaseReviewGuard {
+  const activity = createCaseActivityTracker();
+  const pending = new Map<string, Promise<unknown>>();
+
+  return {
+    async runAsync(caseId, workAsync) {
+      const end = activity.begin(caseId);
+      const previous = pending.get(caseId) ?? Promise.resolve();
+      const next = previous.catch(() => undefined).then(workAsync);
+
+      pending.set(caseId, next);
+
+      try {
+        return await next;
+      } finally {
+        if (pending.get(caseId) === next) {
+          pending.delete(caseId);
+        }
+
+        end();
+      }
+    },
+    isActive: activity.isActive,
+  };
+}
+
 export interface ApiContext {
   store: Store;
   documentStore: DocumentStore;
@@ -68,7 +99,7 @@ export interface ApiContext {
   ingestion: IngestionService;
   runs: RunLauncher;
   uploads: CaseActivityTracker;
-  approvals: CaseActivityTracker;
+  approvals: CaseReviewGuard;
   logger: ApiLogger;
   config: ApiConfig;
   newId: () => string;

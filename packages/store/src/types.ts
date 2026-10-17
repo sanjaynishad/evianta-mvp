@@ -139,6 +139,7 @@ export interface DeliverableRepo {
   ): Promise<Deliverable | undefined>;
   getDeliverablesForCaseAsync(caseId: string): Promise<Deliverable[]>;
   getDeliverableAsync(caseId: string, deliverableId: string): Promise<Deliverable | undefined>;
+  /** Content edits clear the case approval in the same operation. */
   updateSectionAsync(
     caseId: string,
     deliverableId: string,

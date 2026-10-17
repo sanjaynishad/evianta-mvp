@@ -10,9 +10,11 @@ import { silentApiLogger } from "./logger.js";
 import type { RunLauncher } from "./runs.js";
 import {
   createTestHarness,
+  asText,
   finding,
   SALES_CSV,
   specialistStep,
+  sseFramesOf,
   VISITOR_A,
   waitForAsync,
 } from "./testing/harness.js";
@@ -44,6 +46,138 @@ function gatedHandler(role: AgentRole, gate: Promise<void>): TaskHandler {
 }
 
 describe("case state consistency", () => {
+  it.each([false, true])(
+    "includes concurrent Ask charges in streamed totals (failed: %s)",
+    async (failedAsk) => {
+      const gate = createGate();
+      let waiting = false;
+      const handlers = createDefaultTaskHandlers()
+        .register({
+          role: "business-data-analyst",
+          async executeAsync() {
+            return {
+              findings: [finding("Revenue grew")],
+              usage: { input: 100, output: 20, total: 120 },
+              cost: 0.0001,
+              modelTier: "mid",
+            };
+          },
+        })
+        .register({
+          role: "reconciliation",
+          async executeAsync() {
+            waiting = true;
+            await gate.opened;
+
+            return {
+              findings: [finding("Revenue reconciled")],
+              usage: { input: 200, output: 30, total: 230 },
+              cost: 0.0002,
+              modelTier: "mid",
+            };
+          },
+        });
+      const { app, store, orchestrator } = createTestHarness({
+        handlers,
+        script: {
+          "case-assistant": failedAsk
+            ? { error: "non-transient", usage: { input: 700, output: 60 } }
+            : {
+                output: {
+                  supported: true,
+                  answer: "Revenue grew.",
+                  evidenceIds: [],
+                  findingIds: [],
+                },
+                usage: { input: 700, output: 60 },
+              },
+        },
+      });
+      const caseRecord = await store.cases.createCaseAsync({
+        title: "Revenue",
+        useCase: "data-analysis",
+      });
+
+      await store.cases.updateCaseUsageAsync(caseRecord.id, {
+        inputTokens: 11,
+        outputTokens: 3,
+        costEstimate: 0.001,
+      });
+      await store.tasks.createTasksAsync(caseRecord.id, [
+        {
+          id: "analyze",
+          caseId: caseRecord.id,
+          title: "Analyze",
+          assignedRole: "business-data-analyst",
+        },
+        {
+          id: "reconcile",
+          caseId: caseRecord.id,
+          title: "Reconcile",
+          assignedRole: "reconciliation",
+          dependsOn: ["analyze"],
+        },
+      ]);
+
+      const running = orchestrator.runCaseAsync(caseRecord.id);
+      let cursor = 0;
+      let askCost = 0;
+
+      try {
+        await waitForAsync(() => waiting);
+        cursor = (await store.events.listEventsAsync(caseRecord.id)).at(-1)?.seq ?? 0;
+
+        const before = (await store.cases.getCaseAsync(caseRecord.id))!.usage!;
+        const asked = await asText(
+          request(app)
+            .post(`/cases/${caseRecord.id}/ask`)
+            .send({ question: "Why did revenue grow?" }),
+        ).expect(200);
+
+        expect(sseFramesOf(asked).at(-1)?.event).toBe(failedAsk ? "error" : "answer");
+
+        const after = (await store.cases.getCaseAsync(caseRecord.id))!.usage!;
+
+        expect(after.inputTokens - before.inputTokens).toBe(700);
+        expect(after.outputTokens - before.outputTokens).toBe(60);
+        askCost = after.costEstimate - before.costEstimate;
+        expect(askCost).toBeGreaterThan(0);
+      } finally {
+        gate.release();
+        await running;
+      }
+
+      const result = await running;
+      const stream = await asText(
+        request(app).get(`/cases/${caseRecord.id}/stream?after=${cursor}`),
+      ).expect(200);
+      const frames = sseFramesOf(stream);
+      const expectedCost = 0.001 + 0.0003 + askCost;
+      const expectedUsage = { input: 1011, output: 113, total: 1124 };
+      const costs = frames.filter(
+        (frame) => frame.event === "cost-updated" || frame.event === "run-completed",
+      );
+
+      expect(costs).toHaveLength(2);
+
+      for (const frame of costs) {
+        expect(frame.data).toMatchObject({ totalTokenUsage: expectedUsage });
+        expect((frame.data as { totalCostEstimate: number }).totalCostEstimate).toBeCloseTo(
+          expectedCost,
+          10,
+        );
+      }
+
+      expect(result.usage).toEqual({ input: 300, output: 50, total: 350 });
+      expect(result.costEstimate).toBeCloseTo(0.0003, 10);
+      expect(result.caseUsage).toEqual(expectedUsage);
+      expect(result.caseCostEstimate).toBeCloseTo(expectedCost, 10);
+      expect(frames.find((frame) => frame.event === "task-completed")?.data).toMatchObject({
+        runningCostEstimate: expect.closeTo(expectedCost, 10),
+      });
+    },
+  );
+
   it("reports totals that include every cost event before the cursor during a run", async () => {
     const gate = createGate();
     const handlers = createDefaultTaskHandlers()

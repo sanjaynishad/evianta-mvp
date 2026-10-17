@@ -91,9 +91,13 @@ Errors are JSON `{ error, message }` with a stable `error` code: `invalid-reques
 
 `GET /cases/:id/stream` sends each `RunEvent` as an SSE frame with `id:` set to the event's per-case `seq`, `event:` set to its `type` (`run-started`, `task-started`, `task-completed`, `task-failed`, `finding-added`, `cost-updated`, `run-completed`, `run-failed`), and `data:` holding the event JSON. It replays persisted events after the cursor, then tails live ones without gaps or duplicates. The cursor is the larger of the `Last-Event-ID` header (sent by `EventSource` on reconnect) and `?after=<seq>`; `GET /cases/:id` returns `run.lastEventSeq` for a fresh subscription, plus `run.lastRunMode` and, after a failure, `run.lastRunError`. Comment frames keep the connection alive every 15 seconds. The server closes the stream after a terminal event (`run-completed` or `run-failed`) once no run is active, so clients should close their `EventSource` on a terminal event to stop automatic reconnects. Every accepted run ends with a terminal event, including runs that fail before they start.
 
+Section content edits, including restoring the original content, clear case approval in the same store operation. Approval requests, section edits, and export snapshot reads share a per-case guard, so an export cannot combine replacement content with an earlier approval. XLSX amounts with more than 15 significant digits across the integer and fractional parts remain text.
+
 ### Ask stream
 
 `POST /cases/:id/ask` answers with `text/event-stream`: one or more `answer-delta` frames with `{ text }` chunks, then one `answer` frame with the full `AskCaseResult` from `@evianta/agents` (`status` `answered` with `answer`, `evidenceIds`, `findingIds`, and `evidence`, or `not-supported` with `message` and `canFlagForReview`). A failure sends a single `error` frame `{ error: "ask-failed", message }`. Validation and not-found errors are returned as JSON before the stream starts.
+
+Run cost updates and terminal events read reconciled case totals, including Ask charges recorded during the run. Run-only usage and cost remain separate. Unexpected run preflight failures use a generic message in SSE and `run.lastRunError`; internal diagnostics are logged, while document-unavailable errors retain their retry guidance.
 
 ### Usage view
 

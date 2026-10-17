@@ -216,6 +216,13 @@ describe("deliverable exports", () => {
     expect(toCellValue("123 456")).toBe("123 456");
     expect(toCellValue("2024-01-15")).toBe("2024-01-15");
     expect(toCellValue("1234567890123456789")).toBe("1234567890123456789");
+    expect(toCellValue("123456789012345.6789")).toBe("123456789012345.6789");
+    expect(toCellValue("12345678901234.5")).toBe(12345678901234.5);
+    expect(toCellValue("0.000123456789012345")).toBe(0.000123456789012345);
+    expect(toCellValue("0.0001234567890123456")).toBe("0.0001234567890123456");
+    expect(toCellValue("-0.1234567890123456")).toBe("-0.1234567890123456");
+    expect(toCellValue("Rs. 123,456,789,012,345.6789")).toBe("Rs. 123,456,789,012,345.6789");
+    expect(toCellValue("1.2345678901234500")).toBe("1.2345678901234500");
   });
 
   it("names worksheets that Excel accepts", () => {
@@ -230,7 +237,13 @@ describe("deliverable exports", () => {
   });
 
   it("exports table sections titled History or wrapped in apostrophes", async () => {
-    const table = "| Month | Revenue |\n| --- | --- |\n| Jan | 10 |";
+    const table = [
+      "| Month | Revenue |",
+      "| --- | --- |",
+      "| Jan | 123456789012345.6789 |",
+      "| Feb | 0.0001234567890123456 |",
+      "| Mar | 12345678901234.5 |",
+    ].join("\n");
     const file = await exportXlsxAsync({
       caseRecord: {
         id: "case-1",
@@ -270,5 +283,8 @@ describe("deliverable exports", () => {
       "Revenue",
       "Evidence",
     ]);
+    expect(workbook.getWorksheet("Revenue")?.getCell("B2").value).toBe("123456789012345.6789");
+    expect(workbook.getWorksheet("Revenue")?.getCell("B3").value).toBe("0.0001234567890123456");
+    expect(workbook.getWorksheet("Revenue")?.getCell("B4").value).toBe(12345678901234.5);
   });
 });

@@ -1,13 +1,14 @@
 import { deliverableSchema } from "@evianta/core";
-import type { Firestore } from "firebase-admin/firestore";
+import { FieldValue, type Firestore } from "firebase-admin/firestore";
 
+import { StoreNotFoundError } from "../errors.js";
 import { applySectionUpdate, assertDeliverableIdentity } from "../mutations.js";
 import type { DeliverableRepo } from "../types.js";
 import {
   caseSubcollection,
+  casesCollection,
   getDocAsync,
   listInInsertionOrderAsync,
-  mutateDocAsync,
   nextOrder,
   orderField,
   toFirestoreData,
@@ -64,13 +65,36 @@ export function createDeliverableRepo(db: Firestore): DeliverableRepo {
       );
     },
     async updateSectionAsync(caseId, deliverableId, sectionId, update) {
-      return mutateDocAsync(
-        db,
-        caseSubcollection(db, caseId, "deliverables").doc(deliverableId),
-        deliverableSchema,
-        "deliverable",
-        (current) => applySectionUpdate(current, sectionId, update),
-      );
+      const ref = caseSubcollection(db, caseId, "deliverables").doc(deliverableId);
+      const caseRef = casesCollection(db).doc(caseId);
+
+      return db.runTransaction(async (transaction) => {
+        const [snapshot, caseSnapshot] = await Promise.all([
+          transaction.get(ref),
+          transaction.get(caseRef),
+        ]);
+
+        if (!snapshot.exists) {
+          throw new StoreNotFoundError("deliverable", deliverableId);
+        }
+
+        const next = applySectionUpdate(
+          deliverableSchema.parse(snapshot.data()),
+          sectionId,
+          update,
+        );
+
+        transaction.update(ref, toFirestoreData(next));
+
+        if (update.editedContent !== undefined && caseSnapshot.exists) {
+          transaction.update(caseRef, {
+            approval: FieldValue.delete(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+
+        return next;
+      });
     },
   };
 }

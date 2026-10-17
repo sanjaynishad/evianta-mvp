@@ -681,8 +681,11 @@ describe("orchestrator", () => {
     const caseRecord = await createCaseAsync(store);
 
     await seedTasksAsync(store, caseRecord.id, [{ id: "a", role: "case-analysis" }]);
+    const reconcileUsageAsync = store.runs.reconcileUsageAsync.bind(store.runs);
+
     vi.spyOn(store.runs, "reconcileUsageAsync")
       .mockResolvedValueOnce(0)
+      .mockImplementationOnce(reconcileUsageAsync)
       .mockRejectedValueOnce(new Error("Usage write failed"));
 
     const result = await orchestrator.runCaseAsync(caseRecord.id);

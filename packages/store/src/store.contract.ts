@@ -796,6 +796,29 @@ export function describeStoreContract(
         expect(await store.deliverables.getDeliverableAsync("case-1", "missing")).toBeUndefined();
       });
 
+      it("clears case approval when section content is edited or restored", async () => {
+        await store.cases.createCaseAsync({ id: "case-1", title: "Review" });
+        await store.cases.recordApprovalAsync("case-1", { note: "Original approved" });
+        await store.deliverables.updateSectionAsync("case-1", "del-1", "sec-1", {
+          reviewComment: "A comment does not change content",
+        });
+
+        expect((await store.cases.getCaseAsync("case-1"))?.approval).toBeDefined();
+
+        await store.deliverables.updateSectionAsync("case-1", "del-1", "sec-1", {
+          editedContent: "Replacement",
+        });
+
+        expect((await store.cases.getCaseAsync("case-1"))?.approval).toBeUndefined();
+
+        await store.cases.recordApprovalAsync("case-1", { note: "Replacement approved" });
+        await store.deliverables.updateSectionAsync("case-1", "del-1", "sec-1", {
+          editedContent: null,
+        });
+
+        expect((await store.cases.getCaseAsync("case-1"))?.approval).toBeUndefined();
+      });
+
       it("updates a deliverable atomically from its latest state", async () => {
         await store.deliverables.updateSectionAsync("case-1", "del-1", "sec-1", {
           editedContent: "Reviewer summary",
