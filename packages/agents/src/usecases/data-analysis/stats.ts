@@ -19,6 +19,36 @@ export function sum(values: readonly number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
+/** Inputs with more decimal places than this are summed in binary floating point. */
+export const MAX_EXACT_DECIMAL_PLACES = 12;
+
+function decimalPlaces(value: number): number {
+  const [mantissa = "", exponent = "0"] = value.toExponential().split("e");
+  const fraction = mantissa.split(".")[1] ?? "";
+
+  return Math.max(0, fraction.length - Number(exponent));
+}
+
+/**
+ * Sums decimal inputs exactly by scaling them to integers, so 1.13 + 1.14 gives 2.27 rather than
+ * 2.2699999999999996 and derived averages round as a person would expect.
+ */
+export function decimalSum(values: readonly number[]): number {
+  const finite = values.filter((value) => Number.isFinite(value));
+  const places = Math.max(0, ...finite.map(decimalPlaces));
+
+  if (finite.length !== values.length || places > MAX_EXACT_DECIMAL_PLACES) {
+    return sum(values);
+  }
+
+  const total = finite.reduce(
+    (accumulated, value) => accumulated + BigInt(Math.round(shiftDecimal(value, places))),
+    BigInt(0),
+  );
+
+  return shiftDecimal(Number(total), -places);
+}
+
 export function median(values: readonly number[]): number {
   if (values.length === 0) {
     return Number.NaN;

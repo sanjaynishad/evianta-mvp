@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { detectPeriodAnomalies, screenPeriodAnomalies } from "./anomalies.js";
 import { isMissingCell, parseNumericCell, resolveDateColumn } from "./cells.js";
-import { robustZScores, roundTo, theilSenFit } from "./stats.js";
+import { decimalSum, robustZScores, roundTo, theilSenFit } from "./stats.js";
 
 function series(values: readonly number[]) {
   return values.map((total, index) => ({
@@ -100,6 +100,13 @@ describe("robust statistics", () => {
     expect(roundTo(1.005)).toBe(1.01);
     expect(roundTo(-1.005)).toBe(-1.01);
     expect(roundTo(130.7692307)).toBe(130.77);
+  });
+
+  it("sums decimals exactly", () => {
+    expect(decimalSum([1.13, 1.14])).toBe(2.27);
+    expect(decimalSum([-1.13, -1.14])).toBe(-2.27);
+    expect(decimalSum([0.1, 0.2, 0.3])).toBe(0.6);
+    expect(decimalSum([1e-15, 1])).toBe(1 + 1e-15);
   });
 
   it("rounds on the decimal value, not the binary approximation", () => {

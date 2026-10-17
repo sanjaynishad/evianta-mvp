@@ -393,6 +393,22 @@ describe("analyzeTable", () => {
     ]);
   });
 
+  it("averages decimal amounts without binary summation error", async () => {
+    const positive = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n1.13\n1.14"),
+    });
+    const negative = analyzeTable({
+      documentId: "doc",
+      documentName: "small.csv",
+      table: await csvTableAsync("Amount\n-1.13\n-1.14"),
+    });
+
+    expect(metricValue(positive, "total-amount")).toBe(2.27);
+    expect(metricValue(positive, "average-amount")).toBe(1.14);
+    expect(metricValue(negative, "average-amount")).toBe(-1.14);
+  });
   it("averages the unrounded total", async () => {
     const analysis = analyzeTable({
       documentId: "doc",

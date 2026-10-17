@@ -1,6 +1,6 @@
 import type { ParsedDate } from "./cells.js";
 import { shortLabel, slugify } from "./ids.js";
-import { percentChange, roundTo, sum, theilSenFit } from "./stats.js";
+import { decimalSum, percentChange, roundTo, sum, theilSenFit } from "./stats.js";
 
 export interface SalesRecord {
   /** Index into `table.rows`. */
@@ -137,7 +137,7 @@ export function monthlyTotals(records: readonly SalesRecord[]): MonthlyTotal[] {
   for (let period = first; period <= last; period = nextMonth(period)) {
     const monthRecords = byMonth.get(period) ?? [];
 
-    const exactTotal = sum(monthRecords.map((record) => record.amount as number));
+    const exactTotal = decimalSum(monthRecords.map((record) => record.amount as number));
 
     totals.push({
       period,
@@ -175,7 +175,7 @@ export function computeSalesMetrics(
 
   const withAmount = records.filter((record) => record.amount !== undefined);
   const amounts = withAmount.map((record) => record.amount as number);
-  const exactTotal = sum(amounts);
+  const exactTotal = decimalSum(amounts);
   const total = roundTo(exactTotal);
 
   addMetric(
@@ -234,7 +234,7 @@ export function computeSalesMetrics(
         "total-quantity",
         {
           label: `Total ${columns.quantity}`,
-          value: roundTo(sum(quantities)),
+          value: roundTo(decimalSum(quantities)),
           unit: "number",
           basis: `Sum of ${columns.quantity} over ${quantities.length} rows`,
         },
@@ -385,7 +385,7 @@ export function computeSalesMetrics(
           key,
           label,
           unassigned: key === "",
-          exactTotal: sum(group.records.map((record) => record.amount as number)),
+          exactTotal: decimalSum(group.records.map((record) => record.amount as number)),
           rows: group.records.map((record) => record.row),
         };
       })
