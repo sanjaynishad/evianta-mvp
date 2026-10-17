@@ -228,7 +228,8 @@ export function quotedDatesCheck(
     const known = new Set([
       ...recordDates(reconciliation),
       ...findings
-        .filter((finding) => !checkedTaskIds.has(finding.taskId))
+        // Dates from findings without any source cannot vouch for a quoted date.
+        .filter((finding) => !checkedTaskIds.has(finding.taskId) && finding.evidence.length > 0)
         .flatMap((finding) => (finding.dates ?? []).map((entry) => entry.date.slice(0, 10))),
     ]);
     const issues: VerificationIssue[] = [];

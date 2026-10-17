@@ -239,7 +239,7 @@ export function reconcilePayments(
       left = round2(left - allocate(line, payment, left, method));
     }
 
-    if (left > tolerance) {
+    if (left > 0) {
       unallocated.push({
         payment,
         amount: left,
@@ -252,7 +252,7 @@ export function reconcilePayments(
     const amount = payment.amount ?? 0;
     const open = lines.filter(
       (line) =>
-        line.remaining > tolerance &&
+        line.remaining > 0 &&
         (!line.invoice.invoiceDate || !payment.date || line.invoice.invoiceDate <= payment.date),
     );
     const exact = open.filter((line) => Math.abs(line.remaining - amount) <= tolerance);
@@ -274,8 +274,9 @@ export function reconcilePayments(
   const result: InvoiceLine[] = lines.map((line) => {
     const { invoice } = line;
     const paid = round2(line.allocations.reduce((sum, item) => sum + item.amount, 0));
-    const outstanding = round2(line.amount - paid);
-    const open = outstanding > tolerance;
+    // The tolerance only decides matches; any positive balance stays outstanding.
+    const outstanding = Math.max(0, round2(line.amount - paid));
+    const open = outstanding > 0;
     const computedDue =
       terms && invoice.invoiceDate ? addDays(invoice.invoiceDate, terms.creditDays) : undefined;
     const dueDate = computedDue ?? invoice.dueDate;
@@ -296,7 +297,7 @@ export function reconcilePayments(
       amount: line.amount,
       allocations: line.allocations,
       paid,
-      outstanding: open ? outstanding : 0,
+      outstanding,
       status: !open ? "paid" : paid > 0 ? "partly-paid" : "unpaid",
       ...(dueDate ? { dueDate, dueDateBasis: computedDue ? "agreed-terms" : "register" } : {}),
       ...(computedDue && invoice.dueDate && invoice.dueDate !== computedDue
@@ -343,8 +344,9 @@ export function reconcilePayments(
   };
 }
 
+/** True when a readable invoice register exists, even if none of its invoices fall before the cutoff. */
 export function hasPaymentData(reconciliation: PaymentReconciliation): boolean {
-  return reconciliation.lines.length > 0;
+  return reconciliation.records.invoices.length > 0;
 }
 
 export function openLines(reconciliation: PaymentReconciliation): InvoiceLine[] {
@@ -353,16 +355,11 @@ export function openLines(reconciliation: PaymentReconciliation): InvoiceLine[] 
 
 /** The components that make up an invoice's outstanding balance: its amount less each payment. */
 export function outstandingComponents(line: InvoiceLine) {
-  const components = [
+  return [
     { label: `${line.invoice.invoiceNumber} invoice amount`, value: line.amount },
     ...line.allocations.map((allocation) => ({
       label: `${allocation.payment.label} on ${allocation.payment.date ?? "unknown date"}`,
       value: -allocation.amount,
     })),
   ];
-  const residual = round2(line.outstanding - (line.amount - line.paid));
-
-  return residual === 0
-    ? components
-    : [...components, { label: "Difference within the matching tolerance", value: residual }];
 }

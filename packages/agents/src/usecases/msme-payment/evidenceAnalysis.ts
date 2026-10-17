@@ -124,7 +124,7 @@ export async function prepareEvidenceAnalysisAsync(
 function evidenceKey(reference: EvidenceReference): string {
   return (
     reference.evidenceId ??
-    `${reference.documentId}|${reference.page ?? ""}|${reference.cellRange ?? ""}|${reference.textQuote ?? ""}`
+    `${reference.documentId}|${reference.sheet ?? ""}|${reference.page ?? ""}|${reference.cellRange ?? ""}|${reference.rowStart ?? ""}|${reference.textQuote ?? ""}`
   );
 }
 
@@ -171,7 +171,7 @@ export function gapFinding(gap: EvidenceGap): AgentFindingInput {
     severity: gap.severity,
     confidence: "high",
     evidence: gap.evidence,
-    openQuestions: [{ text: gap.question, severity: gap.severity }],
+    openQuestions: [{ text: gap.question, severity: gap.questionSeverity ?? gap.severity }],
   };
 }
 
@@ -240,7 +240,8 @@ export function evidenceAnalysisMarkdown(
   if (
     prepared.missingDocuments.length === 0 &&
     prepared.inconsistencies.length === 0 &&
-    output.disputedItems.length === 0
+    output.disputedItems.length === 0 &&
+    output.findings.length === 0
   ) {
     parts.push("", "No missing documents, inconsistencies, or disputed items were found.");
   }

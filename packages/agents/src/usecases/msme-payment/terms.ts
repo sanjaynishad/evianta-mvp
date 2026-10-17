@@ -84,8 +84,8 @@ export function creditTermsInDocuments(
           const quote = sentenceAround(page.text, match.index, match[0].length);
           const days = Number(match[1]);
           const qualifies =
-            patternIndex > 0 ||
-            (/\bpay|payment|credit/i.test(quote) && !CORRESPONDENCE_DEADLINE.test(quote));
+            !CORRESPONDENCE_DEADLINE.test(quote) &&
+            (patternIndex > 0 || /\bpay|payment|credit/i.test(quote));
           const key = `${days}|${quote}`;
 
           if (!qualifies || !Number.isInteger(days) || days <= 0 || seen.has(key)) {

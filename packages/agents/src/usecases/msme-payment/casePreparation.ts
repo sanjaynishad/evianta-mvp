@@ -117,16 +117,31 @@ export function createCasePreparationAgent(): CasePreparationAgent {
   });
 }
 
-// Claims that the platform sent, filed, or escalated something, not facts such as "reminders were sent on".
-const ACTION_CLAIM =
-  /\b(claim|reference|complaint|application|case|petition|notice|letter|this\s+(?:draft|letter))\b[^.\n]{0,60}\b(has|have)\s+been\s+(sent|filed|submitted|lodged|registered|escalated|referred)\b|\bwe\s+have\s+(filed|lodged|registered|escalated|referred)\b|\bhereby\s+(file|submit|refer|escalate)\b|\b(has|have)\s+been\s+escalated\b/i;
+// Claims that the platform sent, filed, or escalated something. Historical facts such as "reminders
+// were sent on" or "we sent reminders" are not claims; sending or submitting this letter, a
+// complaint, a claim, or a reference is.
+const CLAIM_OBJECT =
+  "(?:this|the|a|an|our)\\s+(?:letter|notice|complaint|claim|reference|application|petition|case|draft|escalation)";
+const ACTION_CLAIMS: readonly RegExp[] = [
+  /\b(claim|reference|complaint|application|case|petition|notice|letter|this\s+(?:draft|letter))\b[^.\n]{0,60}\b(has|have)\s+been\s+(sent|filed|submitted|lodged|registered|escalated|referred)\b/i,
+  new RegExp(
+    `\\bwe\\s+(?:have\\s+)?(?:sent|submitted|filed|lodged|registered|referred|escalated)\\s+${CLAIM_OBJECT}\\b`,
+    "i",
+  ),
+  /\bwe\s+(?:have\s+)?(?:escalated|lodged)\b/i,
+  /\bwe\s+have\s+(?:filed|registered|referred)\b/i,
+  /\bhereby\s+(file|submit|refer|escalate)\b/i,
+  /\b(has|have)\s+been\s+escalated\b/i,
+];
 
 /** Sentences that claim an escalation, filing, or sending happened, which the platform never does. */
 export function findEscalationClaims(text: string): string[] {
   return text
     .split(/(?<=[.!?])\s+|\n+/)
     .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length > 0 && ACTION_CLAIM.test(sentence));
+    .filter(
+      (sentence) => sentence.length > 0 && ACTION_CLAIMS.some((pattern) => pattern.test(sentence)),
+    );
 }
 
 export interface MsmeComputedFigure {
@@ -199,8 +214,8 @@ export function paymentSummaryFinding(reconciliation: PaymentReconciliation): Ag
     summary: `Verified payment position: ${formatInrAmount(reconciliation.totals.outstanding)} outstanding across ${open.length} invoice(s) as of ${reconciliation.asOfDate}`,
     severity: reconciliation.totals.outstanding > 0 ? "high" : "info",
     confidence: reconciliation.lines.some((line) => line.inferred) ? "medium" : "high",
-    evidence: dedupeEvidenceReferences(
-      reconciliation.lines.flatMap((line) => [
+    evidence: dedupeEvidenceReferences([
+      ...reconciliation.lines.flatMap((line) => [
         recordRowEvidence(line.invoice, `${line.invoice.invoiceNumber} invoice row`),
         ...line.allocations.map((allocation) =>
           recordRowEvidence(
@@ -209,7 +224,18 @@ export function paymentSummaryFinding(reconciliation: PaymentReconciliation): Ag
           ),
         ),
       ]),
-    ),
+      // A register whose invoices all fall after the cutoff still supports the zero result.
+      ...(reconciliation.lines.length === 0
+        ? reconciliation.records.tables
+            .filter((table) => table.kind === "invoices")
+            .map((table) => ({
+              documentId: table.documentId,
+              description: "Invoice register with no invoices dated on or before the as-of date",
+              ...(table.location.sheet ? { sheet: table.location.sheet } : {}),
+              ...(table.location.cellRange ? { cellRange: table.location.cellRange } : {}),
+            }))
+        : []),
+    ]),
     figures: [
       {
         key: MSME_FIGURE_KEYS.outstandingTotal,

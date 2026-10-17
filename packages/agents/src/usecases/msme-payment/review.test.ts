@@ -148,18 +148,37 @@ describe("MSME review checks", () => {
     expect(issues.map((issue) => issue.key)).toEqual(["amount:-187000"]);
   });
 
-  it("flags dates that are not in the records or findings", async () => {
+  it("flags dates that are not in the records or in sourced findings", async () => {
     const reconciliation = await reconcileMsmeFixtureAsync();
     const check = quotedDatesCheck(
-      [section("Chronology", "2024-10-15  Invoice raised\n2025-02-05  Email\n2025-02-06  Call")],
+      [
+        section(
+          "Chronology",
+          "2024-10-15  Invoice raised\n2025-02-05  Email\n2025-02-06  Call\n2025-02-07  Visit",
+        ),
+      ],
       reconciliation,
     );
+    const sourced = {
+      id: "ev-1",
+      sourceRef: "correspondence.pdf p.1",
+      description: "Email",
+      documentId: "doc-correspondence",
+    };
     const issues = check([
-      finding({ dates: [{ key: "event:correspondence:-:1", label: "Email", date: "2025-02-05" }] }),
+      finding({
+        dates: [{ key: "event:correspondence:-:1", label: "Email", date: "2025-02-05" }],
+        evidence: [sourced],
+      }),
+      finding({
+        id: "finding-2",
+        dates: [{ key: "event:other:-:2", label: "Visit", date: "2025-02-07" }],
+      }),
     ]);
 
     expect(issues.map((issue) => [issue.check, issue.key])).toEqual([
       ["quoted-date", "date:2025-02-06"],
+      ["quoted-date", "date:2025-02-07"],
     ]);
   });
 

@@ -91,7 +91,14 @@ export function parseDocumentEventKey(
 
 const STATED_AMOUNT_PREFIX = "stated-invoice-amount:";
 
-/** Maps invoice keys read from documents ("1002") onto register keys ("INV1002") where unambiguous. */
+function isDocumentBacked(fact: { evidence: readonly Evidence[] }): boolean {
+  return fact.evidence.some((item) => item.documentId !== undefined);
+}
+
+/**
+ * Maps invoice keys read from documents ("1002") onto register keys ("INV1002") where unambiguous,
+ * and keeps only facts backed by a source document; a bare model assertion is never relied on.
+ */
 function alignToRegister(
   reconciliation: PaymentReconciliation,
   facts: DocumentFacts,
@@ -100,12 +107,37 @@ function alignToRegister(
   const align = (key: string) => resolveInvoiceKey(key, registerKeys) ?? key;
 
   return {
-    events: facts.events.map((event) => ({ ...event, invoiceKeys: event.invoiceKeys.map(align) })),
-    statedAmounts: facts.statedAmounts.map((stated) => ({
+    events: facts.events
+      .filter(isDocumentBacked)
+      .map((event) => ({ ...event, invoiceKeys: event.invoiceKeys.map(align) })),
+    statedAmounts: facts.statedAmounts.filter(isDocumentBacked).map((stated) => ({
       ...stated,
       invoiceKey: align(stated.invoiceKey),
     })),
   };
+}
+
+/** Facts the document analysis reported without any source document. */
+function unsupportedFacts(facts: DocumentFacts): EvidenceGap[] {
+  const events = facts.events
+    .filter((event) => !isDocumentBacked(event))
+    .map((event) => ({ what: `"${event.label}" on ${event.date}`, where: event.label }));
+  const amounts = facts.statedAmounts
+    .filter((stated) => !isDocumentBacked(stated))
+    .map((stated) => ({
+      what: `${stated.label} of ${formatInrAmount(stated.amount)}`,
+      where: stated.label,
+    }));
+
+  return [...events, ...amounts].map(({ what }) => ({
+    kind: "missing-document" as const,
+    severity: "low" as const,
+    questionSeverity: "medium" as const,
+    summary: `${what} was reported by the document analysis without a source document, so it is not used`,
+    question: `Find the document that records ${what}, or confirm it should be ignored.`,
+    invoiceNumbers: [],
+    evidence: [],
+  }));
 }
 
 /** Events and stated invoice amounts recorded by the document analysis findings. */
@@ -388,6 +420,8 @@ export type GapSeverity = "high" | "medium" | "low";
 export interface EvidenceGap {
   kind: "missing-document" | "inconsistency";
   severity: GapSeverity;
+  /** Severity of the open question when it differs from the finding's. */
+  questionSeverity?: GapSeverity;
   summary: string;
   question: string;
   invoiceNumbers: string[];
@@ -466,7 +500,7 @@ export function findMissingDocuments(
   }
 
   for (const [key, item] of unregistered) {
-    if (reconciliation.lines.length === 0) {
+    if (reconciliation.records.invoices.length === 0) {
       break;
     }
 
@@ -479,6 +513,8 @@ export function findMissingDocuments(
       evidence: upstreamEvidence(item.evidence, `Mention of ${key}`),
     });
   }
+
+  gaps.push(...unsupportedFacts(documentFacts));
 
   return gaps;
 }
