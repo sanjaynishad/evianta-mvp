@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import type { ReactNode } from "react";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
@@ -36,6 +37,18 @@ export default function RootLayout({ children, caseContext }: RootLayoutProps) {
       className={cn(GeistSans.variable, GeistMono.variable)}
     >
       <body>
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-Z4PMQFXB3L"
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-Z4PMQFXB3L');
+          `}
+        </Script>
         <Providers>
           <AppShell caseContext={caseContext}>{children}</AppShell>
         </Providers>

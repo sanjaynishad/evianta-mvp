@@ -31,11 +31,11 @@ jobs:
       ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY || 'evianta' }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE || (github.event_name == 'push' && 'evianta-api-dev' || 'evianta-api') }}
       CLOUD_RUN_WEB_SERVICE: ${{ vars.CLOUD_RUN_WEB_SERVICE || (github.event_name == 'push' && 'evianta-web-dev' || 'evianta-web') }}
-      GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION || 'asia-south2' }}
+      GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION || 'global' }}
       FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || (github.event_name == 'push' && 'evianta-dev' || '(default)') }}
       GCS_BUCKET: ${{ vars.GCS_BUCKET }}
       EVIANTA_WEB_ORIGIN: ${{ vars.EVIANTA_WEB_ORIGIN }}
-      EVIANTA_USAGE_VIEW_SECRET: ${{ vars.EVIANTA_USAGE_VIEW_SECRET }}
+      EVIANTA_USAGE_VIEW_PATH: ${{ secrets.EVIANTA_USAGE_VIEW_PATH }}
       DEPLOY_SHA: ${{ github.sha }}
 
     steps:
@@ -122,6 +122,9 @@ jobs:
               "GCS_BUCKET": os.environ["GCS_BUCKET"],
               "EVIANTA_WEB_ORIGIN": ",".join(dict.fromkeys(origins)),
           }
+          if os.environ["EVIANTA_USAGE_VIEW_PATH"]:
+              config["EVIANTA_USAGE_VIEW_PATH"] = os.environ["EVIANTA_USAGE_VIEW_PATH"]
+
           config_path = Path(os.environ["RUNNER_TEMP"]) / "cloud-run-env.json"
           config_path.write_text(json.dumps(config), encoding="utf-8")
 
@@ -130,11 +133,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          secret_flags=(--clear-secrets)
-          if [[ -n "$EVIANTA_USAGE_VIEW_SECRET" ]]; then
-            secret_flags=("--set-secrets=EVIANTA_USAGE_VIEW_PATH=$EVIANTA_USAGE_VIEW_SECRET")
-          fi
-
           gcloud run deploy "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
@@ -151,7 +149,7 @@ jobs:
             --ingress=all \
             --startup-probe="httpGet.path=/healthz,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=24" \
             --env-vars-file="$RUNNER_TEMP/cloud-run-env.json" \
-            "${secret_flags[@]}" \
+            --clear-secrets \
             --quiet
 
           url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
@@ -185,9 +183,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          secret_flags=(--clear-secrets)
-          if [[ -n "$EVIANTA_USAGE_VIEW_SECRET" ]]; then
-            secret_flags=("--set-secrets=EVIANTA_USAGE_VIEW_PATH=$EVIANTA_USAGE_VIEW_SECRET")
+          web_env="NODE_ENV=production"
+          if [[ -n "$EVIANTA_USAGE_VIEW_PATH" ]]; then
+            web_env+=",EVIANTA_USAGE_VIEW_PATH=$EVIANTA_USAGE_VIEW_PATH"
           fi
 
           gcloud run deploy "$CLOUD_RUN_WEB_SERVICE" \
@@ -204,8 +202,8 @@ jobs:
             --max-instances=3 \
             --ingress=all \
             --startup-probe="httpGet.path=/,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=24" \
-            --set-env-vars=NODE_ENV=production \
-            "${secret_flags[@]}" \
+            --set-env-vars="$web_env" \
+            --clear-secrets \
             --quiet
 
           url="$(gcloud run services describe "$CLOUD_RUN_WEB_SERVICE" \
