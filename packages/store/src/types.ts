@@ -201,6 +201,22 @@ export interface RunRepo {
    * names one, atomically with its applied marker. Returns the count applied.
    */
   reconcileUsageAsync(caseId: string): Promise<number>;
+  /**
+   * Reads, in one consistent snapshot, the case usage including journaled charges not yet
+   * applied, and the sum of every charge journaled under `runId`, applied or not.
+   */
+  getUsageTotalsAsync(caseId: string, runId: string): Promise<UsageTotals>;
+}
+
+export interface UsageAmounts {
+  inputTokens: number;
+  outputTokens: number;
+  costEstimate: number;
+}
+
+export interface UsageTotals {
+  case: UsageAmounts;
+  run: UsageAmounts;
 }
 
 export interface Store {

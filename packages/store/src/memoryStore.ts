@@ -25,6 +25,7 @@ import {
   type StoreEntity,
 } from "./errors.js";
 import {
+  addChargeAmounts,
   applyCaseApproval,
   assertDeliverableIdentity,
   applyCaseStatus,
@@ -36,8 +37,10 @@ import {
   buildCaseCopy,
   buildNewCase,
   buildRunEvent,
+  caseUsageAmounts,
   compareCasesNewestFirst,
   compareProfilesByRole,
+  emptyUsageAmounts,
   findingHasQuestion,
   isLeaseHeld,
   resolvePageSize,
@@ -120,7 +123,10 @@ export function createInMemoryStore(): Store {
   const extractions = new CaseScopedCollection<ExtractedDocument>("extraction");
   const events = new CaseScopedCollection<RunEvent>("event");
   const leases = new Map<string, StoredLease>();
-  const charges = new Map<string, Map<string, { charge: UsageCharge; applied: boolean }>>();
+  const charges = new Map<
+    string,
+    Map<string, { runId: string; charge: UsageCharge; applied: boolean }>
+  >();
 
   function assertFence(caseId: string, fence: LeaseFence | undefined): void {
     if (fence && !isLeaseHeld(leases.get(caseId), fence.leaseOwner)) {
@@ -186,7 +192,7 @@ export function createInMemoryStore(): Store {
         const key = JSON.stringify([runId, chargeId]);
 
         if (!journal.has(key)) {
-          journal.set(key, { charge: parsed, applied: false });
+          journal.set(key, { runId, charge: parsed, applied: false });
         }
       },
       async reconcileUsageAsync(caseId) {
@@ -214,6 +220,22 @@ export function createInMemoryStore(): Store {
         }
 
         return applied;
+      },
+      async getUsageTotalsAsync(caseId, runId) {
+        let caseTotals = caseUsageAmounts(getCaseOrThrow(caseId));
+        let runTotals = emptyUsageAmounts();
+
+        for (const entry of charges.get(caseId)?.values() ?? []) {
+          if (!entry.applied) {
+            caseTotals = addChargeAmounts(caseTotals, entry.charge);
+          }
+
+          if (entry.runId === runId) {
+            runTotals = addChargeAmounts(runTotals, entry.charge);
+          }
+        }
+
+        return { case: caseTotals, run: runTotals };
       },
     },
     agents: {

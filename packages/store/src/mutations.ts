@@ -27,6 +27,7 @@ import type {
   OpenQuestionUpdate,
   SectionUpdate,
   TaskUpdate,
+  UsageAmounts,
   UsageCharge,
 } from "./types.js";
 
@@ -184,6 +185,26 @@ export function applyTaskCharge(current: Task, charge: UsageCharge): Task {
     },
     costEstimate: (current.costEstimate ?? 0) + (charge.costEstimate ?? 0),
   });
+}
+
+export function emptyUsageAmounts(): UsageAmounts {
+  return { inputTokens: 0, outputTokens: 0, costEstimate: 0 };
+}
+
+export function addChargeAmounts(total: UsageAmounts, charge: CaseUsageIncrement): UsageAmounts {
+  return {
+    inputTokens: total.inputTokens + (charge.inputTokens ?? 0),
+    outputTokens: total.outputTokens + (charge.outputTokens ?? 0),
+    costEstimate: total.costEstimate + (charge.costEstimate ?? 0),
+  };
+}
+
+export function caseUsageAmounts(current: Case): UsageAmounts {
+  return {
+    inputTokens: current.usage?.inputTokens ?? 0,
+    outputTokens: current.usage?.outputTokens ?? 0,
+    costEstimate: current.usage?.costEstimate ?? 0,
+  };
 }
 
 export interface StoredLease {

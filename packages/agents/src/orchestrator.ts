@@ -375,12 +375,41 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     const fence = fenceFor(caseId);
     const emitAsync = createRunEventEmitter(store, events, caseId);
     const baseline = toTotals(caseRecord);
+    let otherUsage = baseline.usage;
+    let otherCost = baseline.cost;
     let runUsage = emptyUsage();
     let runCost = 0;
     const caseTotals = () => ({
-      usage: addUsage(baseline.usage, runUsage),
-      cost: roundCost(baseline.cost + runCost),
+      usage: addUsage(otherUsage, runUsage),
+      cost: roundCost(otherCost + runCost),
     });
+
+    // Other workers' charges, such as a late charge from a worker that lost the lease, can land
+    // during this run. The store's case usage minus this run's own charges counts each charge
+    // once; taking the maximum keeps totals from going down when reads finish out of order.
+    const refreshCaseTotalsAsync = async () => {
+      try {
+        const totals = await store.runs.getUsageTotalsAsync(caseId, runId);
+        const input = Math.max(otherUsage.input, totals.case.inputTokens - totals.run.inputTokens);
+        const output = Math.max(
+          otherUsage.output,
+          totals.case.outputTokens - totals.run.outputTokens,
+        );
+
+        otherUsage = { input, output, total: Math.max(otherUsage.total, input + output) };
+        otherCost = Math.max(
+          otherCost,
+          roundCost(totals.case.costEstimate - totals.run.costEstimate),
+        );
+      } catch (error) {
+        logger.warn("Could not read the case usage totals.", {
+          caseId,
+          runId,
+          error: messageOf(error),
+        });
+      }
+    };
+
     const addRunUsage = (usage: TokenUsage, cost: Cost) => {
       runUsage = addUsage(runUsage, usage);
       runCost = roundCost(runCost + cost);
@@ -477,6 +506,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       }
 
       if (plan && plan.costEstimate > 0) {
+        await refreshCaseTotalsAsync();
         const totals = caseTotals();
 
         await emitAsync({
@@ -780,6 +810,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
 
             const blocked = await blockDependentsAsync(task);
 
+            await refreshCaseTotalsAsync();
+
             await emitAsync({
               type: "task-failed",
               runId,
@@ -810,6 +842,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
         }
 
         // The task is durably completed; a failed event write must not turn it into a failure.
+        await refreshCaseTotalsAsync();
+
         try {
           for (const finding of record.findings) {
             await emitAsync({
@@ -918,6 +952,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       logger.warn("Run failed.", { caseId, runId, error: runError });
     }
 
+    await refreshCaseTotalsAsync();
     const totals = caseTotals();
     const finishedAt = now().toISOString();
     const recordingErrors: string[] = [];

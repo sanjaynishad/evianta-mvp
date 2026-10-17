@@ -1251,6 +1251,11 @@ describe("orchestrator", () => {
     );
     expect(task?.tokenUsage).toEqual(expectedUsage);
     expect(task?.costEstimate).toBeCloseTo(0.004 + retry.costEstimate, 10);
+    expect(retry.caseUsage).toEqual(retry.usage);
+    expect(retry.caseCostEstimate).toBeCloseTo(retry.costEstimate, 10);
+    expect(events.filter((event) => event.type === "cost-updated").at(-1)).toMatchObject({
+      totalTokenUsage: retry.usage,
+    });
   });
 
   it("includes a late charge from a previous worker in the completion totals", async () => {
@@ -1285,6 +1290,34 @@ describe("orchestrator", () => {
     expect(task?.costEstimate).toBeCloseTo(0.015, 10);
     expect(completed).toMatchObject({ tokenUsage: { input: 150, output: 0, total: 150 } });
     expect(completed?.type === "task-completed" ? completed.costEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+
+    const caseAfter = await store.cases.getCaseAsync(caseRecord.id);
+    const costUpdated = events.filter((event) => event.type === "cost-updated").at(-1);
+    const terminal = events.at(-1);
+
+    expect(caseAfter?.usage).toMatchObject({ inputTokens: 150, outputTokens: 0 });
+    expect(caseAfter?.usage?.costEstimate).toBeCloseTo(0.015, 10);
+    expect(retry.usage).toEqual({ input: 50, output: 0, total: 50 });
+    expect(retry.costEstimate).toBeCloseTo(0.005, 10);
+    expect(retry.caseUsage).toEqual({ input: 150, output: 0, total: 150 });
+    expect(retry.caseCostEstimate).toBeCloseTo(0.015, 10);
+    expect(completed?.type === "task-completed" ? completed.runningCostEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+    expect(costUpdated).toMatchObject({ totalTokenUsage: { input: 150, output: 0, total: 150 } });
+    expect(costUpdated?.type === "cost-updated" ? costUpdated.totalCostEstimate : 0).toBeCloseTo(
+      0.015,
+      10,
+    );
+    expect(terminal).toMatchObject({
+      type: "run-completed",
+      totalTokenUsage: { input: 150, output: 0, total: 150 },
+    });
+    expect(terminal?.type === "run-completed" ? terminal.totalCostEstimate : 0).toBeCloseTo(
       0.015,
       10,
     );

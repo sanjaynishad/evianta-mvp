@@ -189,6 +189,50 @@ export function describeStoreContract(
       expect(await store.runs.reconcileUsageAsync(created.id)).toBe(0);
     });
 
+    it("reports case usage with unapplied charges and every charge of one run", async () => {
+      const created = await store.cases.createCaseAsync(caseInput());
+
+      await store.runs.recordChargeAsync(created.id, "run-1", "task:a:1", {
+        taskId: "a",
+        inputTokens: 100,
+        outputTokens: 10,
+        costEstimate: 0.01,
+      });
+      await store.runs.recordChargeAsync(created.id, "run-0", "task:a:0", {
+        inputTokens: 40,
+        outputTokens: 4,
+        costEstimate: 0.004,
+      });
+      await store.runs.reconcileUsageAsync(created.id);
+      await store.runs.recordChargeAsync(created.id, "run-1", "task:b:1", {
+        inputTokens: 20,
+        outputTokens: 2,
+        costEstimate: 0.002,
+      });
+      await store.runs.recordChargeAsync(created.id, "run-2", "task:c:1", {
+        inputTokens: 7,
+        outputTokens: 1,
+        costEstimate: 0.001,
+      });
+
+      const before = await store.runs.getUsageTotalsAsync(created.id, "run-1");
+
+      await store.runs.reconcileUsageAsync(created.id);
+
+      const after = await store.runs.getUsageTotalsAsync(created.id, "run-1");
+
+      for (const totals of [before, after]) {
+        expect(totals.case).toMatchObject({ inputTokens: 167, outputTokens: 17 });
+        expect(totals.case.costEstimate).toBeCloseTo(0.017, 10);
+        expect(totals.run).toMatchObject({ inputTokens: 120, outputTokens: 12 });
+        expect(totals.run.costEstimate).toBeCloseTo(0.012, 10);
+      }
+
+      await expect(store.runs.getUsageTotalsAsync("missing", "run-1")).rejects.toThrow(
+        StoreNotFoundError,
+      );
+    });
+
     it("commits fenced writes only while the fence owner holds the run lease", async () => {
       const created = await store.cases.createCaseAsync(caseInput());
       const first = { leaseOwner: "first" };

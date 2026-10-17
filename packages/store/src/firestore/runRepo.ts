@@ -1,20 +1,24 @@
 import { caseSchema, taskSchema } from "@evianta/core";
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { z } from "zod";
 
 import { StoreNotFoundError } from "../errors.js";
 import {
+  addChargeAmounts,
   applyCaseUsageIncrement,
   applyTaskCharge,
+  caseUsageAmounts,
+  emptyUsageAmounts,
   isLeaseHeld,
   usageChargeSchema,
 } from "../mutations.js";
-import type { RunRepo } from "../types.js";
+import type { RunRepo, UsageAmounts } from "../types.js";
 import { caseSubcollection, casesCollection, toFirestoreData } from "./helpers.js";
 import { leaseRef, leaseSchema } from "./lease.js";
 
 const chargeSchema = z.object({
   applied: z.boolean(),
+  runId: z.string().optional(),
   taskId: z.string().optional(),
   increment: usageChargeSchema.omit({ taskId: true }),
 });
@@ -71,7 +75,7 @@ export function createRunRepo(db: Firestore): RunRepo {
         .doc(caseId)
         .collection("runCharges")
         .doc(`${encodeURIComponent(runId)}:${encodeURIComponent(chargeId)}`);
-      const charge = chargeSchema.parse({ applied: false, taskId, increment });
+      const charge = chargeSchema.parse({ applied: false, runId, taskId, increment });
 
       await db.runTransaction(async (transaction) => {
         const snapshot = await transaction.get(ref);
@@ -137,6 +141,35 @@ export function createRunRepo(db: Firestore): RunRepo {
       }
 
       return applied;
+    },
+    async getUsageTotalsAsync(caseId, runId) {
+      const charges = cases.doc(caseId).collection("runCharges");
+
+      return db.runTransaction(
+        async (transaction) => {
+          const [caseSnapshot, pending, runCharges] = await Promise.all([
+            transaction.get(cases.doc(caseId)),
+            transaction.get(charges.where("applied", "==", false)),
+            transaction.get(charges.where("runId", "==", runId)),
+          ]);
+
+          if (!caseSnapshot.exists) {
+            throw new StoreNotFoundError("case", caseId);
+          }
+
+          const sum = (start: UsageAmounts, docs: QueryDocumentSnapshot[]) =>
+            docs.reduce(
+              (total, doc) => addChargeAmounts(total, chargeSchema.parse(doc.data()).increment),
+              start,
+            );
+
+          return {
+            case: sum(caseUsageAmounts(caseSchema.parse(caseSnapshot.data())), pending.docs),
+            run: sum(emptyUsageAmounts(), runCharges.docs),
+          };
+        },
+        { readOnly: true },
+      );
     },
   };
 }
