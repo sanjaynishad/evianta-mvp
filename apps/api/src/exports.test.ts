@@ -188,6 +188,78 @@ describe("deliverable exports", () => {
     ]);
   });
 
+  it("preserves long reviewed and top-level content in Excel continuation rows", async () => {
+    const { app, store, caseRecord, base } = await seedExportCaseAsync();
+    const deliverable = (await store.deliverables.getDeliverableAsync(
+      caseRecord.id,
+      "deliverable-primary",
+    ))!;
+    const topLevel = `${"A".repeat(32_766)}\u{1f600}${"B".repeat(40_000)}`;
+    const edited = `${"C".repeat(32_766)}\u{1f600}${"D".repeat(167_232)}`;
+    const tableValue = "E".repeat(40_000);
+    const tableContent = `| Description |\n| --- |\n| ${tableValue} |`;
+
+    await store.deliverables.saveDeliverableAsync({ ...deliverable, content: topLevel });
+    await request(app)
+      .patch(`${base}/sections/t1-section-1`)
+      .send({ editedContent: edited })
+      .expect(200);
+    await request(app)
+      .patch(`${base}/sections/t1-section-2`)
+      .send({ editedContent: tableContent })
+      .expect(200);
+
+    const response = await binary(
+      request(app).get(`${base}/export`).query({ format: "xlsx" }),
+    ).expect(200);
+    const workbook = new ExcelJS.Workbook();
+
+    await workbook.xlsx.load(response.body as Buffer);
+
+    const sections = workbook.getWorksheet("Sections")!;
+    const contents = new Map<string, string>();
+    let title = "";
+
+    sections.eachRow((row, index) => {
+      if (index === 1) {
+        return;
+      }
+
+      if (row.getCell(1).value) {
+        title = String(row.getCell(1).value);
+      }
+
+      contents.set(title, (contents.get(title) ?? "") + String(row.getCell(6).value ?? ""));
+    });
+
+    expect(contents.get(deliverable.title)).toBe(topLevel);
+    expect(contents.get("Statement of claim")).toBe(edited);
+    expect(contents.get("Outstanding invoices")).toBe(tableContent);
+
+    const table = workbook.getWorksheet("Outstanding invoices")!;
+    const tableParts: string[] = [];
+
+    table.eachRow((row, index) => {
+      if (index > 1) {
+        tableParts.push(String(row.getCell(1).value ?? ""));
+      }
+    });
+
+    expect(tableParts.join("")).toBe(tableValue);
+
+    for (const sheet of workbook.worksheets) {
+      sheet.eachRow((row) => {
+        row.eachCell((cell) => {
+          if (typeof cell.value === "string") {
+            expect(cell.value.length).toBeLessThanOrEqual(32_767);
+            expect(cell.value).not.toMatch(/[\ud800-\udbff]$/);
+            expect(cell.value).not.toMatch(/^[\udc00-\udfff]/);
+          }
+        });
+      });
+    }
+  });
+
   it("parses markdown and JSON tables", () => {
     expect(parseTable("Intro\n| A | B |\n|---|---|\n| 1 | 2 |\nOutro")).toEqual({
       header: ["A", "B"],

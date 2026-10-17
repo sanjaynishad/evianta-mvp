@@ -478,6 +478,38 @@ export function toCellValue(text: string): string | number {
   return text;
 }
 
+const EXCEL_CELL_TEXT_LIMIT = 32_767;
+
+function splitCellText(text: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    let end = Math.min(start + EXCEL_CELL_TEXT_LIMIT, text.length);
+    const lastCodeUnit = text.charCodeAt(end - 1);
+
+    if (end < text.length && lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) {
+      end--;
+    }
+
+    parts.push(text.slice(start, end));
+    start = end;
+  }
+
+  return parts.length > 0 ? parts : [""];
+}
+
+function addXlsxRows(sheet: ExcelJS.Worksheet, values: (string | number)[]): void {
+  const columns = values.map((value) =>
+    typeof value === "string" ? splitCellText(value) : [value],
+  );
+  const rowCount = Math.max(...columns.map((column) => column.length));
+
+  for (let index = 0; index < rowCount; index++) {
+    sheet.addRow(columns.map((column) => column[index] ?? ""));
+  }
+}
+
 export async function exportXlsxAsync(input: ExportInput): Promise<ExportFile> {
   const { caseRecord, deliverable, generatedAt } = input;
   const { entries, refsBySection } = buildEvidenceAppendix(input);
@@ -503,29 +535,20 @@ export async function exportXlsxAsync(input: ExportInput): Promise<ExportFile> {
   sections.getRow(1).font = { bold: true };
 
   if (deliverable.content) {
-    sections.addRow({
-      title: deliverable.title,
-      kind: "text",
-      role: "",
-      status: "",
-      edited: "no",
-      content: deliverable.content,
-      comment: "",
-      evidence: "",
-    });
+    addXlsxRows(sections, [deliverable.title, "text", "", "", "no", deliverable.content, "", ""]);
   }
 
   for (const section of deliverable.sections) {
-    sections.addRow({
-      title: section.title,
-      kind: section.kind,
-      role: section.producedByRole,
-      status: section.reviewStatus,
-      edited: isEditedByReviewer(section) ? "yes" : "no",
-      content: effectiveContent(section),
-      comment: section.reviewComment ?? "",
-      evidence: (refsBySection.get(section.id) ?? []).join(", "),
-    });
+    addXlsxRows(sections, [
+      section.title,
+      section.kind,
+      section.producedByRole,
+      section.reviewStatus,
+      isEditedByReviewer(section) ? "yes" : "no",
+      effectiveContent(section),
+      section.reviewComment ?? "",
+      (refsBySection.get(section.id) ?? []).join(", "),
+    ]);
   }
 
   sections.getColumn("content").alignment = { wrapText: true, vertical: "top" };
@@ -543,10 +566,11 @@ export async function exportXlsxAsync(input: ExportInput): Promise<ExportFile> {
 
     const sheet = workbook.addWorksheet(worksheetName(section.title, used));
 
-    sheet.addRow(table.header).font = { bold: true };
+    addXlsxRows(sheet, table.header);
+    sheet.getRow(1).font = { bold: true };
 
     for (const row of table.rows) {
-      sheet.addRow(row.map(toCellValue));
+      addXlsxRows(sheet, row.map(toCellValue));
     }
 
     sheet.columns.forEach((column) => {
@@ -567,14 +591,14 @@ export async function exportXlsxAsync(input: ExportInput): Promise<ExportFile> {
   appendix.getRow(1).font = { bold: true };
 
   for (const { ref, evidence } of entries) {
-    appendix.addRow({
+    addXlsxRows(appendix, [
       ref,
-      source: evidence.sourceRef,
-      location: describeLocation(evidence.location),
-      description: evidence.description,
-      excerpt: evidence.excerpt ?? "",
-      confidence: evidence.confidence ?? "",
-    });
+      evidence.sourceRef,
+      describeLocation(evidence.location),
+      evidence.description,
+      evidence.excerpt ?? "",
+      evidence.confidence ?? "",
+    ]);
   }
 
   const body = Buffer.from(await workbook.xlsx.writeBuffer());

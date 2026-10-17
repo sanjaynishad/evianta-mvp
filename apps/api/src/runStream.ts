@@ -61,7 +61,13 @@ export async function streamRunEventsAsync(
   const { store, events, runs, logger, heartbeatMs } = options;
   const cursor = resolveStreamCursor(req);
 
-  if (!(await store.cases.getCaseAsync(caseId))) {
+  const caseRecord = await store.cases.getCaseAsync(caseId);
+
+  if (res.destroyed) {
+    return;
+  }
+
+  if (!caseRecord) {
     throw notFoundError("case");
   }
 
