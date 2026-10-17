@@ -17,6 +17,10 @@ import {
 } from "./usecases/data-analysis/index.js";
 import { createTaxNoticeAgents, registerTaxNoticeHandlers } from "./usecases/tax-notice/index.js";
 import type { DeterministicCheckOptions } from "./verification.js";
+import {
+  createMsmePaymentAgents,
+  createMsmePaymentTaskHandlers,
+} from "./usecases/msme-payment/index.js";
 
 export interface AgentRegistry extends AgentLookup {
   list(): AnyAgent[];
@@ -33,6 +37,7 @@ export function createDefaultAgents(): AnyAgent[] {
     ),
     ...createTaxNoticeAgents(),
     createReviewerAgent(),
+    ...createMsmePaymentAgents(),
   ];
 }
 
@@ -84,6 +89,7 @@ export function createDefaultTaskHandlers(
     ...SPECIALIST_ROLES.map((role) => createSpecialistTaskHandler(role)),
     createDataAnalystTaskHandler(),
     createReviewTaskHandler(reviewOptions),
+    ...createMsmePaymentTaskHandlers({ review: reviewOptions }),
   ]);
 
   return registerTaxNoticeHandlers(generic, { review: reviewOptions });
