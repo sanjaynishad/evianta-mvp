@@ -147,10 +147,12 @@ export { paymentReconciliationTableMarkdown } from "./render.js";
 export {
   createMsmePaymentReviewTaskHandler,
   expectedPaymentFigures,
+  msmePaymentReviewChecks,
   outstandingRecomputeCheck,
   quotedAmountsCheck,
   quotedDatesCheck,
   quotedRupeeAmounts,
+  type MsmePaymentReviewCheckInput,
   type MsmePaymentReviewOptions,
 } from "./review.js";
 export {

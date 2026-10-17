@@ -308,7 +308,6 @@ export function createMsmePaymentReviewTaskHandler(
       }
 
       const { reconciliation } = await preparePaymentCaseAsync(ctx, reconcileOptions);
-      const expected = expectedPaymentFigures(reconciliation);
       const computingTaskIds = new Set(
         ctx.tasks
           .filter(
@@ -324,26 +323,50 @@ export function createMsmePaymentReviewTaskHandler(
           section.title !== CASE_PACK_QUESTIONS_SECTION_TITLE &&
           section.title !== SUPPORTING_DOCUMENTS_SECTION_TITLE,
       );
-      const chronologySections = quotedSections.filter(
-        (section) => section.title === CHRONOLOGY_SECTION_TITLE,
-      );
       const tolerance = reviewOptions.tolerance ?? DEFAULT_NUMERIC_TOLERANCE;
       const handler = createReviewTaskHandler({
         ...reviewOptions,
         additionalChecks: [
           ...(reviewOptions.additionalChecks ?? []),
-          outstandingRecomputeCheck(
-            expected,
-            (finding) => computingTaskIds.has(finding.taskId),
+          ...msmePaymentReviewChecks({
+            reconciliation,
+            computingTaskIds,
+            quotedSections,
             tolerance,
-          ),
-          quotedAmountsCheck(quotedSections, expected, reconciliation, Math.max(tolerance, 0.5)),
-          quotedDatesCheck(quotedSections, reconciliation),
-          chronologyOrderCheck(chronologySections),
+          }),
         ],
       });
 
       return handler.executeAsync(ctx);
     },
   };
+}
+
+export interface MsmePaymentReviewCheckInput {
+  reconciliation: PaymentReconciliation;
+  /** Tasks whose stated figures must match the recomputation. */
+  computingTaskIds: ReadonlySet<string>;
+  /** Case-preparation sections whose amounts and dates are checked. */
+  quotedSections: readonly UpstreamSection[];
+  /** The review tolerance; it is never widened to the payment-matching tolerance. */
+  tolerance?: number;
+}
+
+/** The MSME-specific deterministic checks added to the generic reviewer. */
+export function msmePaymentReviewChecks(input: MsmePaymentReviewCheckInput): AdditionalCheck[] {
+  const tolerance = input.tolerance ?? DEFAULT_NUMERIC_TOLERANCE;
+  const expected = expectedPaymentFigures(input.reconciliation);
+
+  return [
+    outstandingRecomputeCheck(
+      expected,
+      (finding) => input.computingTaskIds.has(finding.taskId),
+      tolerance,
+    ),
+    quotedAmountsCheck(input.quotedSections, expected, input.reconciliation, tolerance),
+    quotedDatesCheck(input.quotedSections, input.reconciliation),
+    chronologyOrderCheck(
+      input.quotedSections.filter((section) => section.title === CHRONOLOGY_SECTION_TITLE),
+    ),
+  ];
 }

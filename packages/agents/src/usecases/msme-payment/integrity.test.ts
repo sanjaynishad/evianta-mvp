@@ -22,6 +22,7 @@ import {
 } from "./evidenceAnalysis.js";
 import { readPaymentRecords } from "./records.js";
 import { hasPaymentData, reconcilePayments } from "./reconcile.js";
+import { msmePaymentReviewChecks } from "./review.js";
 import { creditTermsInDocuments, resolveCreditTerms } from "./terms.js";
 
 describe("findEscalationClaims", () => {
@@ -153,5 +154,37 @@ describe("balances and cutoffs", () => {
     ]);
 
     expect(creditTermsInDocuments([reminder])).toEqual([]);
+  });
+});
+
+describe("review tolerance for quoted amounts", () => {
+  it("uses the review tolerance, so a sign-reversed small balance is flagged", async () => {
+    const invoices = ["Invoice No,Invoice Date,Amount", "INV-1,2025-01-01,1000"].join("\n");
+    const payments = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2025-01-10,UTR1,INV-1,999.75",
+    ].join("\n");
+    const reconciliation = await reconcileMsmeFixtureAsync(invoices, payments);
+    const section = (content: string) => ({
+      taskId: "task-prep",
+      taskTitle: "Prepare the case pack",
+      role: "case-preparation" as const,
+      deliverableId: "deliverable-primary",
+      title: "Proposed follow-up draft",
+      content,
+    });
+    const quotedIssues = (content: string) =>
+      msmePaymentReviewChecks({
+        reconciliation,
+        computingTaskIds: new Set(),
+        quotedSections: [section(content)],
+      })
+        .flatMap((check) => check([]))
+        .filter((issue) => issue.check === "quoted-amount")
+        .map((issue) => issue.key);
+
+    expect(reconciliation.totals.outstanding).toBe(0.25);
+    expect(quotedIssues("A balance of -Rs 0.25 remains.")).toEqual(["amount:-0.25"]);
+    expect(quotedIssues("A balance of Rs 0.25 remains.")).toEqual([]);
   });
 });
