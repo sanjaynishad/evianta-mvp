@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { Moon, Search, Sun } from "lucide-react";
+import { Moon, Plug, Search, Settings2, Sun } from "lucide-react";
+import { ConnectSourceDialog } from "@/components/sources/connect-source-dialog";
+import { ManageSourcesDialog } from "@/components/sources/manage-sources-dialog";
 import {
   CommandDialog,
   CommandEmpty,
@@ -35,6 +37,7 @@ export interface CommandPaletteProps {
 
 export function CommandPalette({ className }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
+  const [sourcesDialog, setSourcesDialog] = useState<"connect" | "manage">();
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const router = useRouter();
@@ -116,6 +119,23 @@ export function CommandPalette({ className }: CommandPaletteProps) {
             })}
           </CommandGroup>
           <CommandSeparator />
+          <CommandGroup heading="Data sources">
+            <CommandItem
+              value="Connect a source"
+              onSelect={() => runCommand(() => setSourcesDialog("connect"))}
+            >
+              <Plug aria-hidden />
+              Connect a source
+            </CommandItem>
+            <CommandItem
+              value="Manage data sources"
+              onSelect={() => runCommand(() => setSourcesDialog("manage"))}
+            >
+              <Settings2 aria-hidden />
+              Manage data sources
+            </CommandItem>
+          </CommandGroup>
+          <CommandSeparator />
           <CommandGroup heading="Preferences">
             <CommandItem
               value="Toggle theme"
@@ -130,6 +150,14 @@ export function CommandPalette({ className }: CommandPaletteProps) {
           </CommandGroup>
         </CommandList>
       </CommandDialog>
+      <ConnectSourceDialog
+        open={sourcesDialog === "connect"}
+        onOpenChange={(next) => setSourcesDialog(next ? "connect" : undefined)}
+      />
+      <ManageSourcesDialog
+        open={sourcesDialog === "manage"}
+        onOpenChange={(next) => setSourcesDialog(next ? "manage" : undefined)}
+      />
     </>
   );
 }

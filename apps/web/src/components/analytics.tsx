@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 
 const measurementId = "G-Z4PMQFXB3L";
-const publicPaths = new Set(["/", "/cases/new", "/design"]);
+const publicPaths = new Set(["/", "/cases", "/cases/new", "/design"]);
 
 declare global {
   interface Window {

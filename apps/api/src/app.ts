@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Orchestrator, RunEventBus } from "@evianta/agents";
 import type { AiClient } from "@evianta/ai";
+import { getSourceConnector } from "@evianta/connectors";
 import { ingestDocumentAsync } from "@evianta/ingest";
 import type { DocumentStore, Store } from "@evianta/store";
 import express, { type Express } from "express";
@@ -11,6 +12,7 @@ import {
   createCaseReviewGuard,
   type ApiConfig,
   type ApiContext,
+  type SourceConnectorRegistry,
 } from "./context.js";
 import { createCorsMiddleware } from "./cors.js";
 import { createErrorHandler, notFoundHandler } from "./errors.js";
@@ -18,9 +20,11 @@ import { createIngestionService, type IngestFunction } from "./ingestion.js";
 import { jsonLogger, type ApiLogger } from "./logger.js";
 import { createAgentRoutes } from "./routes/agents.js";
 import { createCaseRoutes } from "./routes/cases.js";
+import { createChatRoutes } from "./routes/chat.js";
 import { createDeliverableRoutes } from "./routes/deliverables.js";
 import { createReviewRoutes } from "./routes/review.js";
 import { createRunRoutes } from "./routes/runs.js";
+import { createSourceRoutes } from "./routes/sources.js";
 import { createRunLauncher } from "./runs.js";
 import { createUsageViewRouter } from "./usageView.js";
 
@@ -41,6 +45,8 @@ export interface AppDependencies {
   events?: RunEventBus;
   /** Document extraction; defaults to `ingestDocumentAsync` from @evianta/ingest. */
   ingest?: IngestFunction;
+  /** Data-source connectors; defaults to the demo connectors from @evianta/connectors. */
+  sources?: SourceConnectorRegistry;
   config?: Partial<ApiConfig>;
   logger?: ApiLogger;
   newId?: () => string;
@@ -87,6 +93,7 @@ export function createApp(dependencies: AppDependencies): EviantaApp {
     events,
     ingestion,
     runs,
+    sources: dependencies.sources ?? { get: getSourceConnector },
     uploads: createCaseActivityTracker(),
     approvals: createCaseReviewGuard(),
     logger,
@@ -122,6 +129,8 @@ export function createApp(dependencies: AppDependencies): EviantaApp {
   app.use(createRunRoutes(ctx));
   app.use(createDeliverableRoutes(ctx));
   app.use(createReviewRoutes(ctx));
+  app.use(createChatRoutes(ctx));
+  app.use(createSourceRoutes(ctx));
   app.use(notFoundHandler);
   app.use(createErrorHandler(logger));
 

@@ -1,8 +1,14 @@
-import type { UsageCaseRow, UsageSummary, UsageTotals, UseCase } from "@evianta/core";
+import type {
+  IntakeModeTotals,
+  UsageCaseRow,
+  UsageSummary,
+  UsageTotals,
+  UseCase,
+} from "@evianta/core";
 import { DataTable, type DataTableColumn } from "@/components/patterns/data-table";
 import { StatusBadge } from "@/components/patterns/status-badge";
 import { Badge } from "@/components/ui/badge";
-import { formatDateTime, formatNumber, formatUsd } from "@/lib/format";
+import { formatDateTime, formatNumber, formatPercent, formatUsd } from "@/lib/format";
 import { caseStatusToWorkStatus, useCaseLabels } from "@/lib/labels";
 
 export interface UsageViewProps {
@@ -13,6 +19,14 @@ export interface UsageViewProps {
 }
 
 type UseCaseTotalsRow = UsageTotals & { useCase: string };
+
+type IntakeModeRow = IntakeModeTotals & { mode: string };
+
+const intakeModeLabels: Record<string, string> = {
+  chat: "Chat",
+  form: "Guided setup",
+  unspecified: "Before entry modes",
+};
 
 function labelForUseCase(useCase: string): string {
   return useCase in useCaseLabels ? useCaseLabels[useCase as UseCase] : "No use case";
@@ -27,6 +41,7 @@ const caseColumns: DataTableColumn<UsageCaseRow>[] = [
         <span className="font-medium">{row.title}</span>
         <span className="text-xs text-muted-foreground">
           {row.useCase ? useCaseLabels[row.useCase] : "No use case"}
+          {row.intakeMode ? ` · ${intakeModeLabels[row.intakeMode] ?? row.intakeMode}` : ""}
         </span>
       </div>
     ),
@@ -107,9 +122,39 @@ const useCaseColumns: DataTableColumn<UseCaseTotalsRow>[] = [
   { id: "cost", header: "Cost", numeric: true, cell: (row) => formatUsd(row.costEstimate) },
 ];
 
+const intakeModeColumns: DataTableColumn<IntakeModeRow>[] = [
+  {
+    id: "mode",
+    header: "Entry mode",
+    cell: (row) => intakeModeLabels[row.mode] ?? row.mode,
+  },
+  { id: "cases", header: "Cases", numeric: true, cell: (row) => formatNumber(row.cases) },
+  {
+    id: "submitted",
+    header: "Submitted",
+    numeric: true,
+    cell: (row) => formatNumber(row.submitted),
+  },
+  {
+    id: "rate",
+    header: "Submit rate",
+    numeric: true,
+    cell: (row) => (row.cases > 0 ? formatPercent(row.submitted / row.cases) : "None"),
+  },
+  {
+    id: "switchedIn",
+    header: "Switched in",
+    numeric: true,
+    cell: (row) => formatNumber(row.switchedIn),
+  },
+];
+
 export function UsageView({ cases, summary, fixtureMode, nextPageHref }: UsageViewProps) {
   const useCaseRows: UseCaseTotalsRow[] = Object.entries(summary.byUseCase).map(
     ([useCase, totals]) => ({ ...totals, useCase }),
+  );
+  const intakeModeRows: IntakeModeRow[] = Object.entries(summary.byIntakeMode ?? {}).map(
+    ([mode, modeTotals]) => ({ ...modeTotals, mode }),
   );
   const totals = [
     { label: "Cases", value: formatNumber(summary.totals.cases) },
@@ -142,6 +187,21 @@ export function UsageView({ cases, summary, fixtureMode, nextPageHref }: UsageVi
         </h2>
         <DataTable columns={useCaseColumns} rows={useCaseRows} getRowId={(row) => row.useCase} />
       </section>
+      {intakeModeRows.length > 0 ? (
+        <section aria-labelledby="usage-by-intake-mode" className="flex flex-col gap-3">
+          <h2 id="usage-by-intake-mode" className="text-base font-semibold">
+            How cases start
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Own cases by entry mode, excluding samples. Submitted cases went on to a run.
+          </p>
+          <DataTable
+            columns={intakeModeColumns}
+            rows={intakeModeRows}
+            getRowId={(row) => row.mode}
+          />
+        </section>
+      ) : null}
       <section aria-labelledby="usage-cases" className="flex flex-col gap-3">
         <h2 id="usage-cases" className="text-base font-semibold">
           Cases, newest first

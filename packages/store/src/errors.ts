@@ -10,6 +10,8 @@ export type StoreEntity =
   | "document"
   | "extraction"
   | "event"
+  | "chat-message"
+  | "source-connection"
   | "file";
 
 export class StoreNotFoundError extends Error {

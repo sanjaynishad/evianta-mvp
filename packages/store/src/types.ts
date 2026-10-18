@@ -3,7 +3,11 @@ import type {
   AgentProfileInput,
   AgentRole,
   Case,
+  CaseIntake,
+  CaseIntakeInput,
   CaseStatus,
+  ChatMessage,
+  ChatMessageInput,
   Deliverable,
   DeliverableInput,
   DocumentMetadata,
@@ -18,6 +22,8 @@ import type {
   OpenQuestionStatus,
   RunEvent,
   SectionReviewStatus,
+  SourceConnection,
+  SourceConnectionInput,
   Task,
   TaskInput,
   TaskStatus,
@@ -29,11 +35,25 @@ export interface CreateCaseInput {
   id?: string;
   title: string;
   description?: string;
-  useCase: UseCase;
+  useCase?: UseCase;
   status?: CaseStatus;
   visitorId?: string;
   isSample?: boolean;
+  intake?: CaseIntakeInput;
 }
+
+/** Omitted fields are left unchanged. */
+export interface CaseDetailsUpdate {
+  title?: string;
+  description?: string;
+  useCase?: UseCase;
+}
+
+/** Receives the stored intake and case; may run more than once and must be pure. */
+export type CaseIntakeUpdate = (
+  current: CaseIntake | undefined,
+  caseRecord: Case,
+) => CaseIntakeInput;
 
 export interface ListAllCasesOptions {
   limit?: number;
@@ -112,6 +132,9 @@ export interface CaseRepo {
   listAllCasesAsync(options?: ListAllCasesOptions): Promise<CasePage>;
   updateCaseStatusAsync(caseId: string, status: CaseStatus, fence?: LeaseFence): Promise<Case>;
   updateCaseUsageAsync(caseId: string, increment: CaseUsageIncrement): Promise<Case>;
+  updateCaseDetailsAsync(caseId: string, details: CaseDetailsUpdate): Promise<Case>;
+  /** Reads the case and writes its validated new intake atomically. */
+  updateIntakeAsync(caseId: string, update: CaseIntakeUpdate): Promise<Case>;
   recordApprovalAsync(caseId: string, approval: ApprovalInput): Promise<Case>;
   clearApprovalAsync(caseId: string): Promise<Case>;
   copyCaseAsync(sourceCaseId: string, visitorId: string): Promise<Case>;
@@ -188,6 +211,22 @@ export interface EventRepo {
   listEventsAsync(caseId: string, afterSeq?: number): Promise<RunEvent[]>;
 }
 
+export interface ChatRepo {
+  appendMessageAsync(caseId: string, message: ChatMessageInput): Promise<ChatMessage>;
+  /** Oldest first; messages with the same `createdAt` keep their append order. */
+  listMessagesAsync(caseId: string): Promise<ChatMessage[]>;
+}
+
+export interface SourceConnectionRepo {
+  createConnectionAsync(input: SourceConnectionInput): Promise<SourceConnection>;
+  /** Oldest first by `connectedAt`. */
+  listConnectionsForVisitorAsync(visitorId: string): Promise<SourceConnection[]>;
+  getConnectionAsync(connectionId: string): Promise<SourceConnection | undefined>;
+  /** Does nothing when the connection does not exist. */
+  deleteConnectionAsync(connectionId: string): Promise<void>;
+  touchConnectionAsync(connectionId: string, lastImportAt: string): Promise<SourceConnection>;
+}
+
 export interface RunRepo {
   acquireLeaseAsync(caseId: string, owner: string, ttlMs: number): Promise<boolean>;
   renewLeaseAsync(caseId: string, owner: string, ttlMs: number): Promise<boolean>;
@@ -232,4 +271,6 @@ export interface Store {
   documents: DocumentRepo;
   events: EventRepo;
   runs: RunRepo;
+  chat: ChatRepo;
+  connections: SourceConnectionRepo;
 }

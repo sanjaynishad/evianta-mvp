@@ -5,16 +5,19 @@ import {
   evidenceSchema,
   extractedDocumentSchema,
   findingSchema,
+  sourceConnectionSchema,
   taskSchema,
   type AgentProfile,
   type AgentRole,
   type Case,
+  type ChatMessage,
   type Deliverable,
   type DocumentMetadata,
   type Evidence,
   type ExtractedDocument,
   type Finding,
   type RunEvent,
+  type SourceConnection,
   type Task,
 } from "@evianta/core";
 
@@ -27,18 +30,24 @@ import {
 import {
   addChargeAmounts,
   applyCaseApproval,
+  applyCaseDetails,
+  applyCaseIntake,
   assertDeliverableIdentity,
   applyCaseStatus,
   applyCaseUsageIncrement,
+  applyConnectionImport,
   applyOpenQuestionUpdate,
   applySectionUpdate,
   applyTaskCharge,
   applyTaskUpdate,
   buildCaseCopy,
+  buildChatMessage,
   buildNewCase,
   buildRunEvent,
   caseUsageAmounts,
   compareCasesNewestFirst,
+  compareConnectionsOldestFirst,
+  compareMessagesByCreatedAt,
   compareProfilesByRole,
   clearCaseApproval,
   emptyUsageAmounts,
@@ -123,6 +132,8 @@ export function createInMemoryStore(): Store {
   const documents = new CaseScopedCollection<DocumentMetadata>("document");
   const extractions = new CaseScopedCollection<ExtractedDocument>("extraction");
   const events = new CaseScopedCollection<RunEvent>("event");
+  const messages = new CaseScopedCollection<ChatMessage>("chat-message");
+  const connections = new Map<string, SourceConnection>();
   const leases = new Map<string, StoredLease>();
   const charges = new Map<
     string,
@@ -313,6 +324,14 @@ export function createInMemoryStore(): Store {
       async updateCaseUsageAsync(caseId, increment) {
         return putCase(applyCaseUsageIncrement(getCaseOrThrow(caseId), increment));
       },
+      async updateCaseDetailsAsync(caseId, details) {
+        return putCase(applyCaseDetails(getCaseOrThrow(caseId), details));
+      },
+      async updateIntakeAsync(caseId, update) {
+        const current = getCaseOrThrow(caseId);
+
+        return putCase(applyCaseIntake(current, update(current.intake, current)));
+      },
       async recordApprovalAsync(caseId, approval) {
         return putCase(applyCaseApproval(getCaseOrThrow(caseId), approval));
       },
@@ -334,6 +353,7 @@ export function createInMemoryStore(): Store {
         documents.copyCase(sourceCaseId, copy.id, withCaseId);
         extractions.copyCase(sourceCaseId, copy.id, unchanged);
         events.copyCase(sourceCaseId, copy.id, withCaseId);
+        messages.copyCase(sourceCaseId, copy.id, withCaseId);
 
         return putCase(copy);
       },
@@ -486,6 +506,56 @@ export function createInMemoryStore(): Store {
       },
       async listEventsAsync(caseId, afterSeq = 0) {
         return events.list(caseId).filter((event) => event.seq > afterSeq);
+      },
+    },
+    chat: {
+      async appendMessageAsync(caseId, input) {
+        const message = buildChatMessage(caseId, input);
+
+        return messages.create(caseId, message.id, message);
+      },
+      async listMessagesAsync(caseId) {
+        return messages.list(caseId).sort(compareMessagesByCreatedAt);
+      },
+    },
+    connections: {
+      async createConnectionAsync(input) {
+        const connection = sourceConnectionSchema.parse(input);
+
+        if (connections.has(connection.id)) {
+          throw new StoreConflictError("source-connection", connection.id);
+        }
+
+        connections.set(connection.id, structuredClone(connection));
+
+        return connection;
+      },
+      async listConnectionsForVisitorAsync(visitorId) {
+        return [...connections.values()]
+          .filter((connection) => connection.visitorId === visitorId)
+          .sort(compareConnectionsOldestFirst)
+          .map((connection) => structuredClone(connection));
+      },
+      async getConnectionAsync(connectionId) {
+        const connection = connections.get(connectionId);
+
+        return connection === undefined ? undefined : structuredClone(connection);
+      },
+      async deleteConnectionAsync(connectionId) {
+        connections.delete(connectionId);
+      },
+      async touchConnectionAsync(connectionId, lastImportAt) {
+        const connection = connections.get(connectionId);
+
+        if (!connection) {
+          throw new StoreNotFoundError("source-connection", connectionId);
+        }
+
+        const next = applyConnectionImport(structuredClone(connection), lastImportAt);
+
+        connections.set(connectionId, structuredClone(next));
+
+        return next;
       },
     },
   };

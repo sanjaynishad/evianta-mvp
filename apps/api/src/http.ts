@@ -64,3 +64,10 @@ export function requireVisitorId(req: Request): string {
 
   return parsed.data;
 }
+
+/** The visitor id when a valid one was sent; used to scope optional data-source lookups. */
+export function optionalVisitorId(req: Request): string | undefined {
+  const parsed = visitorIdSchema.safeParse(req.get(VISITOR_HEADER));
+
+  return parsed.success ? parsed.data : undefined;
+}

@@ -1,4 +1,9 @@
-import type { ExtractedDocumentInput, NewRunEvent } from "@evianta/core";
+import type {
+  ChatMessageInput,
+  ExtractedDocumentInput,
+  NewRunEvent,
+  SourceConnectionInput,
+} from "@evianta/core";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { DocumentStore } from "./documents/documentStore.js";
@@ -600,6 +605,114 @@ export function describeStoreContract(
         await expect(store.cases.copyCaseAsync("missing", "visitor-a")).rejects.toThrow(
           StoreNotFoundError,
         );
+        await expect(
+          store.cases.updateCaseDetailsAsync("missing", { title: "Renamed" }),
+        ).rejects.toThrow(StoreNotFoundError);
+        await expect(
+          store.cases.updateIntakeAsync("missing", () => ({ mode: "chat" })),
+        ).rejects.toThrow(StoreNotFoundError);
+      });
+
+      it("creates a case without a use case and with an intake", async () => {
+        const created = await store.cases.createCaseAsync({
+          title: "New request",
+          intake: { mode: "chat", documentItems: { "doc-1": "notice" } },
+        });
+
+        expect(created.useCase).toBeUndefined();
+        expect(created.intake).toEqual({
+          mode: "chat",
+          stage: "gathering",
+          supported: true,
+          enabledConnectionIds: [],
+          skippedItemIds: [],
+          documentItems: { "doc-1": "notice" },
+          proposals: [],
+          clarifications: [],
+          requestMessages: [],
+        });
+        expect(await store.cases.getCaseAsync(created.id)).toEqual(created);
+      });
+
+      it("updates only the provided case details", async () => {
+        const created = await store.cases.createCaseAsync({
+          title: "New request",
+          description: "Original description",
+        });
+
+        await sleepAsync(5);
+
+        const updated = await store.cases.updateCaseDetailsAsync(created.id, {
+          useCase: "msme-payment",
+        });
+        const renamed = await store.cases.updateCaseDetailsAsync(created.id, {
+          title: "Overdue invoices",
+          description: "Buyer has not paid",
+        });
+
+        expect(updated).toMatchObject({
+          title: "New request",
+          description: "Original description",
+          useCase: "msme-payment",
+        });
+        expect(updated.updatedAt > created.updatedAt).toBe(true);
+        expect(updated.createdAt).toBe(created.createdAt);
+        expect(renamed).toMatchObject({
+          title: "Overdue invoices",
+          description: "Buyer has not paid",
+          useCase: "msme-payment",
+        });
+        expect(await store.cases.getCaseAsync(created.id)).toEqual(renamed);
+        await expect(
+          store.cases.updateCaseDetailsAsync(created.id, {
+            useCase: "payroll" as unknown as "tax-notice",
+          }),
+        ).rejects.toThrow();
+        expect(await store.cases.getCaseAsync(created.id)).toEqual(renamed);
+      });
+
+      it("updates the intake from its latest state", async () => {
+        const created = await store.cases.createCaseAsync(caseInput());
+        const seen: Array<{ intake: unknown; caseId: string }> = [];
+
+        await sleepAsync(5);
+
+        const first = await store.cases.updateIntakeAsync(created.id, (current, caseRecord) => {
+          seen.push({ intake: current, caseId: caseRecord.id });
+
+          return {
+            mode: "chat",
+            clarifications: [{ id: "c-1", text: "When was the notice received?", kind: "date" }],
+          };
+        });
+
+        expect(seen).toEqual([{ intake: undefined, caseId: created.id }]);
+        expect(first.updatedAt > created.updatedAt).toBe(true);
+        expect(first.intake).toMatchObject({
+          mode: "chat",
+          stage: "gathering",
+          clarifications: [{ id: "c-1", kind: "date" }],
+        });
+
+        await Promise.all(
+          ["item-a", "item-b"].map((itemId) =>
+            store.cases.updateIntakeAsync(created.id, (current) => ({
+              ...current,
+              skippedItemIds: [...(current?.skippedItemIds ?? []), itemId],
+            })),
+          ),
+        );
+
+        const latest = await store.cases.getCaseAsync(created.id);
+
+        expect([...(latest?.intake?.skippedItemIds ?? [])].sort()).toEqual(["item-a", "item-b"]);
+        expect(latest?.intake?.clarifications).toHaveLength(1);
+        await expect(
+          store.cases.updateIntakeAsync(created.id, () => ({
+            mode: "voice" as unknown as "chat",
+          })),
+        ).rejects.toThrow();
+        expect(await store.cases.getCaseAsync(created.id)).toEqual(latest);
       });
     });
 
@@ -679,6 +792,31 @@ export function describeStoreContract(
         expect(sampleEvents).toHaveLength(2);
         expect(sampleExtraction?.pages[0]?.text).toBe("Demand of Rs. 48,210");
         expect(copyEvents.at(-1)).toMatchObject({ seq: 3, runId: "run-2" });
+      });
+
+      it("copies the intake and the chat history", async () => {
+        const sample = await seedSampleAsync();
+
+        await store.cases.updateIntakeAsync(sample.id, () => ({
+          mode: "chat",
+          skippedItemIds: ["form-16"],
+        }));
+        await store.chat.appendMessageAsync(sample.id, {
+          id: "msg-1",
+          caseId: sample.id,
+          role: "user",
+          createdAt: "2026-10-16T00:00:00.000Z",
+          parts: [{ type: "text", text: "I received a notice." }],
+        });
+
+        const copy = await store.cases.copyCaseAsync(sample.id, "visitor-a");
+        const messages = await store.chat.listMessagesAsync(copy.id);
+
+        expect(copy.intake).toMatchObject({ mode: "chat", skippedItemIds: ["form-16"] });
+        expect(messages).toEqual([
+          expect.objectContaining({ id: "msg-1", caseId: copy.id, role: "user" }),
+        ]);
+        expect(await store.chat.listMessagesAsync(sample.id)).toHaveLength(1);
       });
 
       it("copies a complete extraction while the sample's extraction is replaced", async () => {
@@ -1115,6 +1253,29 @@ export function describeStoreContract(
         );
       });
 
+      it("round-trips the provenance of an imported document", async () => {
+        const metadata = {
+          id: "doc-imported",
+          caseId: "case-1",
+          name: "ledger.csv",
+          mimeType: "text/csv",
+          size: 512,
+          gcsPath: "gs://bucket/cases/case-1/documents/doc-imported/ledger.csv",
+          uploadedAt: "2026-10-16T00:00:00.000Z",
+          provenance: {
+            connectorId: "tally",
+            connectionId: "conn-1",
+            itemId: "ledger-fy25",
+            label: "Sales ledger FY 2024-25",
+          },
+        } as const;
+
+        await store.documents.addDocumentMetadataAsync(metadata);
+
+        expect(await store.documents.getDocumentAsync("case-1", "doc-imported")).toEqual(metadata);
+        expect(await store.documents.getDocumentsForCaseAsync("case-1")).toEqual([metadata]);
+      });
+
       it("caches and replaces extractions, including nested table rows", async () => {
         expect(await store.documents.getExtractionAsync("case-1", "doc-1")).toBeUndefined();
 
@@ -1254,6 +1415,157 @@ export function describeStoreContract(
           } as unknown as NewRunEvent),
         ).rejects.toThrow();
         expect(await store.events.listEventsAsync("case-1")).toEqual([]);
+      });
+    });
+
+    describe("chat messages", () => {
+      function message(id: string, createdAt: string, text = id): ChatMessageInput {
+        return {
+          id,
+          caseId: "case-1",
+          role: "user",
+          createdAt,
+          parts: [{ type: "text", text }],
+        };
+      }
+
+      it("appends messages and lists them oldest first, keeping append order for ties", async () => {
+        const tie = "2026-10-16T00:00:05.000Z";
+        const later = await store.chat.appendMessageAsync(
+          "case-1",
+          message("z-later", "2026-10-16T00:00:09.000Z"),
+        );
+        const first = await store.chat.appendMessageAsync(
+          "case-1",
+          message("m-b", "2026-10-16T00:00:01.000Z"),
+        );
+        const tieFirst = await store.chat.appendMessageAsync("case-1", message("t-2", tie));
+        const tieSecond = await store.chat.appendMessageAsync("case-1", message("t-1", tie));
+        const reply = await store.chat.appendMessageAsync("case-1", {
+          id: "a-1",
+          caseId: "case-1",
+          role: "assistant",
+          createdAt: "2026-10-16T00:00:10.000Z",
+          parts: [
+            { type: "text", text: "Here is the checklist." },
+            { type: "intake-request" },
+            { type: "attachments" },
+          ],
+          generatedBy: "rules",
+          usage: { input: 10, output: 5, total: 15 },
+        });
+        await store.chat.appendMessageAsync("case-2", {
+          ...message("other", tie),
+          caseId: "case-2",
+        });
+
+        expect(reply.parts[2]).toEqual({ type: "attachments", documentIds: [] });
+        expect(await store.chat.listMessagesAsync("case-1")).toEqual([
+          first,
+          tieFirst,
+          tieSecond,
+          later,
+          reply,
+        ]);
+        expect((await store.chat.listMessagesAsync("case-2")).map((item) => item.id)).toEqual([
+          "other",
+        ]);
+        expect(await store.chat.listMessagesAsync("case-3")).toEqual([]);
+      });
+
+      it("rejects duplicates, messages for another case, and invalid messages", async () => {
+        await store.chat.appendMessageAsync("case-1", message("m-1", "2026-10-16T00:00:00.000Z"));
+
+        await expect(
+          store.chat.appendMessageAsync("case-1", message("m-1", "2026-10-16T00:00:01.000Z")),
+        ).rejects.toThrow(StoreConflictError);
+        await expect(
+          store.chat.appendMessageAsync("case-2", message("m-2", "2026-10-16T00:00:01.000Z")),
+        ).rejects.toThrow();
+        await expect(
+          store.chat.appendMessageAsync("case-1", {
+            ...message("m-3", "2026-10-16T00:00:01.000Z"),
+            role: "system" as unknown as "user",
+          }),
+        ).rejects.toThrow();
+        expect((await store.chat.listMessagesAsync("case-1")).map((item) => item.id)).toEqual([
+          "m-1",
+        ]);
+        expect(await store.chat.listMessagesAsync("case-2")).toEqual([]);
+      });
+    });
+
+    describe("source connections", () => {
+      function connection(
+        id: string,
+        visitorId: string,
+        connectedAt: string,
+      ): SourceConnectionInput {
+        return { id, visitorId, connectorId: "tally", accountLabel: "Acme Traders", connectedAt };
+      }
+
+      it("creates, lists, reads, touches, and deletes connections", async () => {
+        const later = await store.connections.createConnectionAsync(
+          connection("conn-b", "visitor-a", "2026-10-16T00:00:02.000Z"),
+        );
+        const earlier = await store.connections.createConnectionAsync({
+          ...connection("conn-a", "visitor-a", "2026-10-16T00:00:01.000Z"),
+          connectorId: "gmail",
+          accountLabel: "accounts@acme.example",
+        });
+        const other = await store.connections.createConnectionAsync(
+          connection("conn-c", "visitor-b", "2026-10-16T00:00:00.000Z"),
+        );
+
+        expect(earlier).toMatchObject({ status: "connected", connectorId: "gmail" });
+        expect(earlier.lastImportAt).toBeUndefined();
+        expect(await store.connections.listConnectionsForVisitorAsync("visitor-a")).toEqual([
+          earlier,
+          later,
+        ]);
+        expect(await store.connections.listConnectionsForVisitorAsync("visitor-b")).toEqual([
+          other,
+        ]);
+        expect(await store.connections.listConnectionsForVisitorAsync("visitor-c")).toEqual([]);
+        expect(await store.connections.getConnectionAsync("conn-b")).toEqual(later);
+        expect(await store.connections.getConnectionAsync("missing")).toBeUndefined();
+
+        const touched = await store.connections.touchConnectionAsync(
+          "conn-b",
+          "2026-10-17T00:00:00.000Z",
+        );
+
+        expect(touched).toEqual({ ...later, lastImportAt: "2026-10-17T00:00:00.000Z" });
+        expect(await store.connections.getConnectionAsync("conn-b")).toEqual(touched);
+
+        await store.connections.deleteConnectionAsync("conn-b");
+        await store.connections.deleteConnectionAsync("conn-b");
+        await store.connections.deleteConnectionAsync("missing");
+
+        expect(await store.connections.getConnectionAsync("conn-b")).toBeUndefined();
+        expect(await store.connections.listConnectionsForVisitorAsync("visitor-a")).toEqual([
+          earlier,
+        ]);
+      });
+
+      it("rejects duplicates and invalid input and throws not found when touching a missing one", async () => {
+        const input = connection("conn-a", "visitor-a", "2026-10-16T00:00:00.000Z");
+
+        await store.connections.createConnectionAsync(input);
+
+        await expect(store.connections.createConnectionAsync(input)).rejects.toThrow(
+          StoreConflictError,
+        );
+        await expect(
+          store.connections.createConnectionAsync({
+            ...connection("conn-b", "visitor-a", "2026-10-16T00:00:00.000Z"),
+            connectorId: "dropbox" as unknown as "tally",
+          }),
+        ).rejects.toThrow();
+        await expect(
+          store.connections.touchConnectionAsync("missing", "2026-10-17T00:00:00.000Z"),
+        ).rejects.toThrow(StoreNotFoundError);
+        expect(await store.connections.getConnectionAsync("conn-b")).toBeUndefined();
       });
     });
 

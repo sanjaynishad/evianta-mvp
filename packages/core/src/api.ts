@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { agentProfileSchema, agentRoleSchema, modelTierSchema } from "./agents.js";
 import { caseSchema, caseStatusSchema, useCaseSchema } from "./case.js";
+import { chatMessageSchema } from "./chat.js";
 import { deliverableSchema, sectionReviewStatusSchema } from "./deliverable.js";
 import {
   documentMetadataSchema,
@@ -12,6 +13,13 @@ import {
 import { runEventTypes, type RunEventType } from "./events.js";
 import { evidenceSchema } from "./evidence.js";
 import { findingSchema, openQuestionSchema } from "./finding.js";
+import { intakeModeSchema } from "./intake.js";
+import {
+  sourceConnectionSchema,
+  sourceConnectorDefinitionSchema,
+  sourceConnectorIdSchema,
+  sourceItemSchema,
+} from "./sources.js";
 import { taskSchema } from "./task.js";
 import { costEstimateSchema, tokenUsageSchema } from "./usage.js";
 
@@ -23,10 +31,108 @@ export const visitorHeaderName = "X-Evianta-Visitor";
 export const createCaseRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().max(4000).optional(),
-  useCase: useCaseSchema,
+  // Optional so a chat can start before the kind of work is known; a run needs one.
+  useCase: useCaseSchema.optional(),
+  intakeMode: intakeModeSchema.optional(),
 });
 
 export type CreateCaseRequest = z.infer<typeof createCaseRequestSchema>;
+
+// PATCH /cases/:id. Only while the case is unplanned.
+export const updateCaseRequestSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200).optional(),
+    description: z.string().trim().max(4000).optional(),
+    useCase: useCaseSchema.optional(),
+  })
+  .refine(
+    (update) =>
+      update.title !== undefined ||
+      update.description !== undefined ||
+      update.useCase !== undefined,
+    { message: "Provide a title, a description, or a use case" },
+  );
+
+export type UpdateCaseRequest = z.infer<typeof updateCaseRequestSchema>;
+
+// PATCH /cases/:id/intake. Each field is one independent intake action.
+export const updateIntakeRequestSchema = z
+  .object({
+    mode: intakeModeSchema.optional(),
+    enabledConnectionIds: z.array(z.string().min(1)).max(20).optional(),
+    skipItem: z.object({ itemId: z.string().min(1), skipped: z.boolean() }).optional(),
+    assignDocument: z
+      .object({ documentId: z.string().min(1), itemId: z.string().min(1).nullable() })
+      .optional(),
+    answerClarification: z
+      .object({ id: z.string().min(1), answer: z.string().trim().max(1000) })
+      .optional(),
+  })
+  .refine((update) => Object.values(update).some((value) => value !== undefined), {
+    message: "Provide an intake change",
+  });
+
+export type UpdateIntakeRequest = z.infer<typeof updateIntakeRequestSchema>;
+
+export const caseResponseSchema = z.object({ case: caseSchema });
+
+export const chatMessageRequestSchema = z
+  .object({
+    text: z.string().trim().max(4000).default(""),
+    documentIds: z.array(z.string().min(1)).max(50).default([]),
+  })
+  .refine((request) => request.text.length > 0 || request.documentIds.length > 0, {
+    message: "Write a message or attach a file",
+  });
+
+export type ChatMessageRequest = z.input<typeof chatMessageRequestSchema>;
+
+export const chatMessagesResponseSchema = z.object({
+  messages: z.array(chatMessageSchema),
+});
+
+export type ChatMessagesResponse = z.infer<typeof chatMessagesResponseSchema>;
+
+// Final frame of POST /cases/:id/messages: the stored reply and the case it updated.
+export const chatReplyFrameSchema = z.object({
+  message: chatMessageSchema,
+  case: caseSchema,
+});
+
+export type ChatReplyFrame = z.infer<typeof chatReplyFrameSchema>;
+
+export const sourceCatalogResponseSchema = z.object({
+  connectors: z.array(sourceConnectorDefinitionSchema),
+});
+
+export const sourceConnectionsResponseSchema = z.object({
+  connections: z.array(sourceConnectionSchema),
+});
+
+export const connectSourceRequestSchema = z.object({
+  connectorId: sourceConnectorIdSchema,
+});
+
+export type ConnectSourceRequest = z.infer<typeof connectSourceRequestSchema>;
+
+export const sourceItemsResponseSchema = z.object({
+  items: z.array(sourceItemSchema),
+});
+
+export const sourceProposalActionRequestSchema = z.object({
+  action: z.enum(["attach", "dismiss"]),
+  proposalIds: z.array(z.string().min(1)).min(1).max(50),
+});
+
+export type SourceProposalActionRequest = z.infer<typeof sourceProposalActionRequestSchema>;
+
+export const sourceImportRequestSchema = z.object({
+  connectionId: z.string().min(1),
+  itemId: z.string().min(1),
+  checklistItemId: z.string().min(1).optional(),
+});
+
+export type SourceImportRequest = z.infer<typeof sourceImportRequestSchema>;
 
 export const caseListResponseSchema = z.object({
   cases: z.array(caseSchema),
@@ -86,6 +192,14 @@ export const uploadDocumentsResponseSchema = z.object({
 });
 
 export type UploadDocumentsResponse = z.infer<typeof uploadDocumentsResponseSchema>;
+
+// Response to attaching or importing data-source items: the new documents and the updated case.
+export const sourceAttachResponseSchema = z.object({
+  documents: z.array(caseDocumentSchema),
+  case: caseSchema,
+});
+
+export type SourceAttachResponse = z.infer<typeof sourceAttachResponseSchema>;
 
 // GET /cases/:id/documents/:documentId. The extraction is absent until reading has produced one.
 export const documentDetailResponseSchema = z.object({
@@ -258,6 +372,7 @@ export const apiErrorCodes = {
   nothingToRetry: "nothing-to-retry",
   uploadInProgress: "upload-in-progress",
   caseAlreadyPlanned: "case-already-planned",
+  useCaseMissing: "use-case-missing",
   sampleReadOnly: sampleReadOnlyReason,
 } as const;
 
@@ -272,6 +387,7 @@ export const usageCaseRowSchema = z.object({
   id: z.string(),
   title: z.string(),
   useCase: useCaseSchema.optional(),
+  intakeMode: intakeModeSchema.optional(),
   status: caseStatusSchema,
   visitorId: z.string().optional(),
   isSample: z.boolean().default(false),
@@ -308,10 +424,22 @@ export const usageTotalsSchema = z.object({
 
 export type UsageTotals = z.infer<typeof usageTotalsSchema>;
 
+export const intakeModeTotalsSchema = z.object({
+  cases: z.number().int().nonnegative(),
+  // Cases that went on to a run.
+  submitted: z.number().int().nonnegative(),
+  // Drafts that moved here from the other entry mode.
+  switchedIn: z.number().int().nonnegative().default(0),
+});
+
+export type IntakeModeTotals = z.infer<typeof intakeModeTotalsSchema>;
+
 export const usageSummarySchema = z.object({
   totals: usageTotalsSchema,
   // Keyed by use case, plus "unspecified" for cases without one.
   byUseCase: z.record(z.string(), usageTotalsSchema).default({}),
+  // Keyed by entry mode ("chat" or "form"), plus "unspecified" for cases from before entry modes.
+  byIntakeMode: z.record(z.string(), intakeModeTotalsSchema).default({}),
 });
 
 export type UsageSummary = z.infer<typeof usageSummarySchema>;

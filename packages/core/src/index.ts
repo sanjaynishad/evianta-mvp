@@ -1,6 +1,8 @@
 export * from "./agents.js";
 export * from "./api.js";
 export * from "./case.js";
+export * from "./catalog.js";
+export * from "./chat.js";
 export * from "./citation.js";
 export * from "./dashboard.js";
 export * from "./deliverable.js";
@@ -8,5 +10,7 @@ export * from "./document.js";
 export * from "./events.js";
 export * from "./evidence.js";
 export * from "./finding.js";
+export * from "./intake.js";
+export * from "./sources.js";
 export * from "./task.js";
 export * from "./usage.js";

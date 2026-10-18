@@ -85,10 +85,12 @@ export interface CaseWorkspaceController {
   uploadLockedReason: string | undefined;
   reload: () => void;
   mutate: (update: (current: CaseState) => CaseState) => void;
-  runAsync: () => Promise<void>;
-  retryAsync: () => Promise<void>;
+  // Resolve to true once the run has started; failures are already shown as a toast.
+  runAsync: () => Promise<boolean>;
+  retryAsync: () => Promise<boolean>;
   replay: () => void;
-  uploadAsync: (files: File[]) => Promise<void>;
+  // Resolves with the documents that uploaded; failures stay listed in `uploads`.
+  uploadAsync: (files: File[]) => Promise<CaseDocument[]>;
   dismissUpload: (id: string) => void;
 }
 
@@ -283,9 +285,9 @@ export function useCaseWorkspace(
     return () => clearTimeout(timer);
   }, [hasProcessingDocuments, reload, state, caseState.error]);
 
-  async function startAsync(action: WorkspaceAction) {
+  async function startAsync(action: WorkspaceAction): Promise<boolean> {
     if (!state) {
-      return;
+      return false;
     }
 
     setBusyAction(action);
@@ -313,12 +315,15 @@ export function useCaseWorkspace(
         lastEventId: state.run.lastEventSeq,
       });
       reload();
+      return true;
     } catch (error) {
       if (!showReadOnlyToast(error)) {
         toast.error(action === "run" ? "The run did not start" : "The retry did not start", {
           description: describeError(error),
         });
       }
+
+      return false;
     } finally {
       setBusyAction(undefined);
     }
@@ -334,8 +339,9 @@ export function useCaseWorkspace(
     setStreamRequest({ id: nextRequestId(), runId, replay: true });
   }
 
-  async function uploadAsync(files: File[]) {
+  async function uploadAsync(files: File[]): Promise<CaseDocument[]> {
     const { supported, unsupported } = partitionUploadFiles(files);
+    const uploaded: CaseDocument[] = [];
     const pending = supported.map((file) => ({
       id: `upload-${nextRequestId()}`,
       file,
@@ -360,6 +366,7 @@ export function useCaseWorkspace(
       pending.map(async ({ id, file }) => {
         try {
           const document: CaseDocument = await dataSource.uploadDocumentAsync(caseId, file);
+          uploaded.push(document);
           setUploads((current) => current.filter((upload) => upload.id !== id));
           mutate((current) => ({
             ...current,
@@ -397,6 +404,8 @@ export function useCaseWorkspace(
     } finally {
       uploadsInFlight.current.delete(settled);
     }
+
+    return uploaded;
   }
 
   let uploadLockedReason: string | undefined;

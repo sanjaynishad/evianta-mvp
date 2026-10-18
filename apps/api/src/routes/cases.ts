@@ -1,30 +1,49 @@
-import { useCaseSchema, type Case, type DocumentMetadata } from "@evianta/core";
-import { detectDocumentFormat, SUPPORTED_MIME_TYPES } from "@evianta/ingest";
+import {
+  applyIntakeChange,
+  createCaseIntake,
+  intakeModeSchema,
+  updateCaseRequestSchema,
+  updateIntakeRequestSchema,
+  useCaseSchema,
+  type Case,
+} from "@evianta/core";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
 
 import { loadCaseStateAsync, toDocumentView } from "../caseState.js";
-import { getCaseOrThrowAsync, getMutableCaseAsync, type ApiContext } from "../context.js";
+import { getCaseOrThrowAsync, type ApiContext } from "../context.js";
+import {
+  addDocumentsAsync,
+  requireUnplannedCaseAsync,
+  validateDocumentBuffer,
+  type ValidatedUpload,
+} from "../documents.js";
 import { ApiError, notFoundError, toApiError } from "../errors.js";
 import {
   asyncRoute,
   caseParamsSchema,
   contentDisposition,
   documentParamsSchema,
+  optionalVisitorId,
   requireVisitorId,
 } from "../http.js";
+import {
+  listOwnedConnectionsAsync,
+  refreshIntakeQuietlyAsync,
+  updateIntakeAsync,
+} from "../intake.js";
 
 const createCaseSchema = z
   .object({
     title: z.string().trim().min(1).max(200),
     description: z.string().trim().max(4000).optional(),
-    useCase: useCaseSchema,
+    useCase: useCaseSchema.optional(),
+    intakeMode: intakeModeSchema.optional(),
   })
   .strict();
 
 const UPLOAD_FIELDS = new Set(["file", "files"]);
-const SUPPORTED_MIME_TYPE_SET: ReadonlySet<string> = new Set(SUPPORTED_MIME_TYPES);
 const MAX_FILE_NAME_LENGTH = 255;
 
 function newestFirst(left: Case, right: Case): number {
@@ -39,12 +58,6 @@ function decodeFileName(originalName: string): string {
   return name.trim().slice(-MAX_FILE_NAME_LENGTH) || "document";
 }
 
-interface ValidatedUpload {
-  name: string;
-  mimeType: string;
-  buffer: Buffer;
-}
-
 function validateUpload(file: Express.Multer.File): ValidatedUpload {
   const name = decodeFileName(file.originalname);
 
@@ -52,17 +65,7 @@ function validateUpload(file: Express.Multer.File): ValidatedUpload {
     throw new ApiError(400, "unexpected-file-field", 'Send files in the "files" field.');
   }
 
-  if (file.size === 0) {
-    throw new ApiError(400, "empty-file", `"${name}" is empty.`);
-  }
-
-  const detected = detectDocumentFormat(file.buffer, { mimeType: file.mimetype, name });
-
-  if (!SUPPORTED_MIME_TYPE_SET.has(detected.mimeType)) {
-    throw new ApiError(415, "unsupported-media-type", `"${name}" is not a supported file type.`);
-  }
-
-  return { name, mimeType: detected.mimeType, buffer: file.buffer };
+  return validateDocumentBuffer(name, file.mimetype, file.buffer);
 }
 
 export function createCaseRoutes(ctx: ApiContext): Router {
@@ -98,8 +101,12 @@ export function createCaseRoutes(ctx: ApiContext): Router {
     "/cases",
     asyncRoute(async (req, res) => {
       const visitorId = requireVisitorId(req);
-      const body = createCaseSchema.parse(req.body);
-      const created = await store.cases.createCaseAsync({ ...body, visitorId });
+      const { intakeMode, ...body } = createCaseSchema.parse(req.body);
+      const created = await store.cases.createCaseAsync({
+        ...body,
+        visitorId,
+        intake: createCaseIntake(intakeMode ?? "form"),
+      });
 
       res
         .status(201)
@@ -165,30 +172,7 @@ export function createCaseRoutes(ctx: ApiContext): Router {
     "/cases/:caseId/documents",
     asyncRoute(async (req, res) => {
       const { caseId } = caseParamsSchema.parse(req.params);
-      // Registered before the checks so a run cannot start between them and the stored metadata.
-      const endUpload = ctx.uploads.begin(caseId);
-      const documents: DocumentMetadata[] = [];
-
-      try {
-        await getMutableCaseAsync(ctx, caseId);
-
-        if (ctx.runs.isActive(caseId)) {
-          throw new ApiError(
-            409,
-            "run-in-progress",
-            "Wait for the run to finish before uploading.",
-          );
-        }
-
-        // Completed tasks are reused by later runs, so documents added after planning would be ignored.
-        if ((await store.tasks.getTasksForCaseAsync(caseId)).length > 0) {
-          throw new ApiError(
-            409,
-            "case-already-planned",
-            "Documents cannot be added after the case has been planned. Start a new case to use different documents.",
-          );
-        }
-
+      const documents = await addDocumentsAsync(ctx, caseId, async () => {
         const files = await parseUploadAsync(req, res);
 
         if (files.length === 0) {
@@ -199,43 +183,61 @@ export function createCaseRoutes(ctx: ApiContext): Router {
           );
         }
 
-        const uploads = files.map(validateUpload);
-
-        for (const item of uploads) {
-          const gcsPath = await ctx.documentStore.uploadAsync(
-            caseId,
-            item.name,
-            item.mimeType,
-            item.buffer,
-          );
-
-          documents.push(
-            await store.documents.addDocumentMetadataAsync({
-              id: ctx.newId(),
-              caseId,
-              name: item.name,
-              mimeType: item.mimeType,
-              size: item.buffer.length,
-              gcsPath,
-              uploadedAt: ctx.now().toISOString(),
-            }),
-          );
-        }
-      } finally {
-        // Documents stored before a later file failed still get extracted.
-        for (const document of documents) {
-          ctx.ingestion.enqueue(document);
-        }
-
-        endUpload();
-      }
-
-      res.status(201).json({
-        documents: documents.map((document) => toDocumentView(document, undefined, ctx.ingestion)),
+        return files.map(validateUpload);
       });
+      const views = documents.map((document) => toDocumentView(document, undefined, ctx.ingestion));
+
+      // New files can fill checklist items that open data-source proposals were offered for.
+      await refreshIntakeQuietlyAsync(ctx, caseId, optionalVisitorId(req));
+
+      res.status(201).json({ documents: views });
     }),
   );
 
+  router.patch(
+    "/cases/:caseId",
+    asyncRoute(async (req, res) => {
+      const { caseId } = caseParamsSchema.parse(req.params);
+      const update = updateCaseRequestSchema.parse(req.body);
+
+      // Registered as activity so a run cannot start while the edit is in flight.
+      const endUpdate = ctx.uploads.begin(caseId);
+      try {
+        await requireUnplannedCaseAsync(ctx, caseId, "changing the case");
+        await store.cases.updateCaseDetailsAsync(caseId, update);
+
+        res.json(await updateIntakeAsync(ctx, caseId, optionalVisitorId(req)));
+      } finally {
+        endUpdate();
+      }
+    }),
+  );
+
+  router.patch(
+    "/cases/:caseId/intake",
+    asyncRoute(async (req, res) => {
+      const { caseId } = caseParamsSchema.parse(req.params);
+      const visitorId = requireVisitorId(req);
+      const change = updateIntakeRequestSchema.parse(req.body);
+
+      const endUpdate = ctx.uploads.begin(caseId);
+      try {
+        await requireUnplannedCaseAsync(ctx, caseId, "changing the case");
+
+        const owned = new Set(
+          (await listOwnedConnectionsAsync(ctx, visitorId)).map((connection) => connection.id),
+        );
+
+        res.json(
+          await updateIntakeAsync(ctx, caseId, visitorId, (intake) =>
+            applyIntakeChange(intake, change, owned),
+          ),
+        );
+      } finally {
+        endUpdate();
+      }
+    }),
+  );
   router.get(
     "/cases/:caseId/documents/:documentId",
     asyncRoute(async (req, res) => {

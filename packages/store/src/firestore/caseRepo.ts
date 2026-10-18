@@ -1,5 +1,6 @@
 import {
   caseSchema,
+  chatMessageSchema,
   deliverableSchema,
   documentMetadataSchema,
   evidenceSchema,
@@ -12,6 +13,8 @@ import type { DocumentData, Firestore } from "firebase-admin/firestore";
 import { StoreConflictError, StoreNotFoundError } from "../errors.js";
 import {
   applyCaseApproval,
+  applyCaseDetails,
+  applyCaseIntake,
   applyCaseStatus,
   applyCaseUsageIncrement,
   buildCaseCopy,
@@ -45,6 +48,7 @@ const copyTransforms: Record<CaseSubcollection, CopyTransform> = {
   extractions: (data) => extractionMetaSchema.parse(data),
   extractionChunks: (data) => extractionChunkSchema.parse(data),
   events: (data, caseId) => ({ ...runEventSchema.parse(data), caseId }),
+  messages: (data, caseId) => ({ ...chatMessageSchema.parse(data), caseId }),
 };
 
 const copiedSubcollections = Object.keys(copyTransforms) as CaseSubcollection[];
@@ -117,6 +121,16 @@ export function createCaseRepo(db: Firestore): CaseRepo {
     async updateCaseUsageAsync(caseId, increment) {
       return mutateDocAsync(db, cases.doc(caseId), caseSchema, "case", (current) =>
         applyCaseUsageIncrement(current, increment),
+      );
+    },
+    async updateCaseDetailsAsync(caseId, details) {
+      return mutateDocAsync(db, cases.doc(caseId), caseSchema, "case", (current) =>
+        applyCaseDetails(current, details),
+      );
+    },
+    async updateIntakeAsync(caseId, update) {
+      return mutateDocAsync(db, cases.doc(caseId), caseSchema, "case", (current) =>
+        applyCaseIntake(current, update(current.intake, current)),
       );
     },
     async recordApprovalAsync(caseId, approval) {

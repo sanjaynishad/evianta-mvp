@@ -2,8 +2,10 @@ import { AiError, emptyUsage, type AiClient, type Cost } from "@evianta/ai";
 import {
   agentProfileSchema,
   agentRoleSchema,
+  clarificationAnswerSchema,
   openQuestionSeveritySchema,
   useCaseSchema,
+  withIntakeContext,
   type AgentRole,
   type Case,
   type DocumentMetadata,
@@ -22,6 +24,8 @@ export const coordinatorInputSchema = z.object({
   useCase: useCaseSchema,
   title: z.string(),
   description: z.string().optional(),
+  clarifications: z.array(clarificationAnswerSchema).optional(),
+  requestMessages: z.array(z.string()).optional(),
   documents: z.array(
     z.object({
       documentId: z.string(),
@@ -89,6 +93,7 @@ export const coordinatorProfile = agentProfileSchema.parse({
 export const COORDINATOR_SYSTEM_PROMPT = [
   "You are the coordinator of a professional workspace. Plan the case into specialist tasks.",
   "Start from referencePlan. Return one entry per reference task with the same assignedRole and dependsOn. You may refine the title and add short instructions that point the specialist at the relevant uploaded documents.",
+  "requestMessages are what the user typed while setting up the case, oldest first. Where a later message corrects the description, an earlier message, or a clarification (for example a different assessment year or period), follow the later message.",
   "Do not remove, merge, or add tasks, and do not introduce dependency cycles.",
   "Add openQuestions (with severity, and assignedRole when one task owns it) for missing, unreadable, or inconsistent inputs, for example a ledger the plan needs but nobody uploaded.",
   "Keep notes brief.",
@@ -294,6 +299,7 @@ export async function planWithCoordinatorAsync(input: PlanCaseInput): Promise<Pl
     useCase: caseRecord.useCase,
     title: caseRecord.title,
     description: caseRecord.description,
+    ...withIntakeContext(caseRecord.intake),
     documents: input.documents.map(({ metadata, extraction }) => ({
       documentId: metadata.id,
       name: metadata.name,

@@ -13,6 +13,7 @@ export * from "./errors.js";
 export * from "./events.js";
 export * from "./findings.js";
 export * from "./handlers.js";
+export * from "./intake.js";
 export * from "./orchestrator.js";
 export * from "./plans.js";
 export * from "./record.js";

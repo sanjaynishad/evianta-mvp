@@ -4,14 +4,17 @@ import { createTestDataSource, renderWithDataSource } from "@/test/render-with-d
 import { IntakeView } from "./intake-view";
 
 const push = vi.fn();
+const replace = vi.fn();
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push }),
+  useRouter: () => ({ push, replace }),
   usePathname: () => "/cases/new",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 beforeEach(() => {
   push.mockReset();
+  replace.mockReset();
 });
 
 function checklistLabels() {

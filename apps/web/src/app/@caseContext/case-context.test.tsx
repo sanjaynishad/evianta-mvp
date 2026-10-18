@@ -26,11 +26,11 @@ describe("case context slot", () => {
 
   it("resets to the workspace label on home and unmatched routes", () => {
     const { unmount } = render(<HomeCaseContext />);
-    expect(screen.getByText("All cases")).toBeInTheDocument();
+    expect(screen.getByText("Workspace")).toBeInTheDocument();
     unmount();
 
     render(<CatchAllCaseContext />);
-    expect(screen.getByText("All cases")).toBeInTheDocument();
+    expect(screen.getByText("Workspace")).toBeInTheDocument();
   });
 
   it("labels the design gallery", () => {
@@ -45,7 +45,7 @@ describe("case context slot", () => {
     unmount();
 
     render(await UsageCaseContext(usageProps("guess")));
-    expect(screen.getByText("All cases")).toBeInTheDocument();
+    expect(screen.getByText("Workspace")).toBeInTheDocument();
     expect(screen.queryByText("Usage")).not.toBeInTheDocument();
   });
 });

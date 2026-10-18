@@ -1,10 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { Copy, FolderOpen, Plus, TriangleAlert } from "lucide-react";
+import { useState } from "react";
+import {
+  ClipboardList,
+  Copy,
+  Database,
+  FolderOpen,
+  MessageSquare,
+  MessageSquarePlus,
+  TriangleAlert,
+} from "lucide-react";
 import { CaseSummaryCard } from "@/components/case/case-summary-card";
 import { FixtureModeNotice } from "@/components/case/fixture-mode-notice";
 import { EmptyState } from "@/components/patterns/empty-state";
+import { ManageSourcesDialog } from "@/components/sources/manage-sources-dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useResource } from "@/hooks/use-resource";
@@ -42,6 +52,7 @@ export function HomeView() {
   const samples = useResource("samples", () => dataSource.listSamplesAsync());
   const cases = useResource("cases", () => dataSource.listCasesAsync());
   const { tryCaseAsync, copyingCaseId } = useTryCase();
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   return (
     <div className="flex flex-col gap-8">
@@ -52,13 +63,26 @@ export function HomeView() {
             Open a sample to see finished work, or start your own case.
           </p>
         </div>
-        <Button asChild>
-          <Link href="/cases/new">
-            <Plus aria-hidden />
-            New case
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={() => setSourcesOpen(true)}>
+            <Database aria-hidden />
+            Data sources
+          </Button>
+          <Button asChild variant="outline">
+            <Link href="/cases/new">
+              <ClipboardList aria-hidden />
+              Guided setup
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link href="/">
+              <MessageSquarePlus aria-hidden />
+              New chat
+            </Link>
+          </Button>
+        </div>
       </div>
+      <ManageSourcesDialog open={sourcesOpen} onOpenChange={setSourcesOpen} />
 
       {dataSource.mode === "fixtures" ? <FixtureModeNotice /> : null}
 
@@ -127,12 +151,12 @@ export function HomeView() {
         ) : cases.data.length === 0 ? (
           <EmptyState
             title="No cases yet"
-            description="Start a new case, or try a sample to get an editable copy."
+            description="Start a new chat, or try a sample to get an editable copy."
             action={
               <Button asChild variant="outline">
-                <Link href="/cases/new">
-                  <Plus aria-hidden />
-                  New case
+                <Link href="/">
+                  <MessageSquarePlus aria-hidden />
+                  New chat
                 </Link>
               </Button>
             }
@@ -141,7 +165,31 @@ export function HomeView() {
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {cases.data.map((caseItem) => (
               <li key={caseItem.id}>
-                <CaseSummaryCard caseItem={caseItem} />
+                <CaseSummaryCard
+                  caseItem={caseItem}
+                  actions={
+                    <>
+                      <Button asChild variant="outline" size="sm">
+                        <Link
+                          href={`/chat/${encodeURIComponent(caseItem.id)}`}
+                          aria-label={`Open the chat for ${caseItem.title}`}
+                        >
+                          <MessageSquare aria-hidden />
+                          Chat
+                        </Link>
+                      </Button>
+                      <Button asChild variant="ghost" size="sm">
+                        <Link
+                          href={`/cases/${encodeURIComponent(caseItem.id)}`}
+                          aria-label={`Open the workspace for ${caseItem.title}`}
+                        >
+                          <FolderOpen aria-hidden />
+                          Workspace
+                        </Link>
+                      </Button>
+                    </>
+                  }
+                />
               </li>
             ))}
           </ul>

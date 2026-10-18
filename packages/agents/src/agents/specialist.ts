@@ -1,6 +1,7 @@
 import {
   agentProfileSchema,
   agentRoleSchema,
+  clarificationAnswerSchema,
   findingDateSchema,
   findingFigureSchema,
   findingSeveritySchema,
@@ -89,6 +90,8 @@ export const specialistInputSchema = z.object({
     title: z.string(),
     description: z.string().optional(),
     useCase: useCaseSchema.optional(),
+    clarifications: z.array(clarificationAnswerSchema).optional(),
+    requestMessages: z.array(z.string()).optional(),
   }),
   task: z.object({
     title: z.string(),
@@ -307,6 +310,7 @@ export function specialistSystemPrompt(role: AgentRole, focus: string, grounding
     `You are the ${role} specialist in a professional workspace that prepares work for human review.`,
     `Your focus: ${focus}`,
     "Use only the provided documents, prior findings, and context. Never invent documents, figures, or dates.",
+    "case.requestMessages are what the user typed while setting up the case, oldest first; where a later message corrects the description or a clarification, follow the later message.",
     citation,
     "To rely on a source already cited by a prior finding, add an evidence entry with its evidenceId.",
     "Every material finding (severity high or medium) needs at least one evidence entry.",

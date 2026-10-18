@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { caseIntakeSchema } from "./intake.js";
 import { costEstimateSchema } from "./usage.js";
 
 export const useCaseSchema = z.enum(["data-analysis", "tax-notice", "msme-payment"]);
@@ -47,6 +48,8 @@ export const caseSchema = z.object({
   sourceCaseId: z.string().optional(),
   approval: caseApprovalSchema.optional(),
   usage: caseUsageSchema.optional(),
+  // How the case is being gathered, from the chat or the guided setup form.
+  intake: caseIntakeSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

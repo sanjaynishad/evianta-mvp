@@ -10,6 +10,11 @@ import {
   caseListResponseSchema,
   caseSchema,
   caseStateSchema,
+  chatMessageRequestSchema,
+  chatMessageSchema,
+  chatMessagesResponseSchema,
+  chatReplyFrameSchema,
+  connectSourceRequestSchema,
   createCaseRequestSchema,
   deliverableSchema,
   documentDetailResponseSchema,
@@ -18,12 +23,22 @@ import {
   runStartResponseSchema,
   sampleReadOnlyErrorBodySchema,
   sectionUpdateRequestSchema,
+  sourceAttachResponseSchema,
+  sourceCatalogResponseSchema,
+  sourceConnectionSchema,
+  sourceConnectionsResponseSchema,
+  sourceImportRequestSchema,
+  sourceItemsResponseSchema,
+  sourceProposalActionRequestSchema,
+  updateCaseRequestSchema,
+  updateIntakeRequestSchema,
   uploadDocumentsResponseSchema,
   usageCasesResponseSchema,
   usageSummarySchema,
   visitorHeaderName,
   type AgentRole,
   type AskResult,
+  type ChatReplyFrame,
   type ExportFormat,
 } from "@evianta/core";
 import type { CaseDataSource, RunStreamHandlers, RunStreamOptions } from "@/lib/data/types";
@@ -51,7 +66,7 @@ export interface ApiClientOptions {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH";
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
   json?: unknown;
   formData?: FormData;
   signal?: AbortSignal;
@@ -390,6 +405,137 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
 
     getUsageSummaryAsync(usageViewPath) {
       return requestAsync(`${usagePath(usageViewPath)}/summary`, usageSummarySchema);
+    },
+
+    updateCaseAsync(caseId, update) {
+      return requestAsync(casePath(caseId), caseSchema, {
+        method: "PATCH",
+        json: updateCaseRequestSchema.parse(update),
+      });
+    },
+
+    updateIntakeAsync(caseId, update) {
+      return requestAsync(`${casePath(caseId)}/intake`, caseSchema, {
+        method: "PATCH",
+        json: updateIntakeRequestSchema.parse(update),
+      });
+    },
+
+    async listMessagesAsync(caseId) {
+      const response = await requestAsync(
+        `${casePath(caseId)}/messages`,
+        chatMessagesResponseSchema,
+      );
+      return response.messages;
+    },
+
+    async sendMessageAsync(caseId, request, sendOptions = {}) {
+      const path = `${casePath(caseId)}/messages`;
+      const response = await sendAsync(path, {
+        method: "POST",
+        json: chatMessageRequestSchema.parse(request),
+        signal: sendOptions.signal,
+        accept: "text/event-stream",
+      });
+      if (!response.body) {
+        throw new ApiNetworkError("The reply did not arrive. Try again.");
+      }
+
+      let reply: ChatReplyFrame | undefined;
+      let failure: ApiError | undefined;
+      await readServerSentEventsAsync(response.body, ({ event, data }) => {
+        const payload = parseJson(data);
+        if (event === "user-message") {
+          const parsed = chatMessageSchema.safeParse(payload);
+          if (parsed.success) {
+            sendOptions.onUserMessage?.(parsed.data);
+          }
+
+          return;
+        }
+
+        if (event === "reply-delta") {
+          const delta = askDeltaSchema.safeParse(payload);
+          if (delta.success) {
+            sendOptions.onDelta?.(delta.data.text);
+          }
+
+          return;
+        }
+
+        if (event === "reply") {
+          const parsed = chatReplyFrameSchema.safeParse(payload);
+          if (!parsed.success) {
+            throw new ApiResponseValidationError(path, parsed.error.issues);
+          }
+
+          reply = parsed.data;
+          return;
+        }
+
+        if (event === "error") {
+          const parsed = apiErrorBodySchema.safeParse(payload);
+          const details = parsed.success ? parsed.data : {};
+          failure = new ApiError(
+            details.message ?? "Evianta could not reply right now. Try again.",
+            response.status,
+            { code: details.error ?? "chat-failed", body: payload },
+          );
+        }
+      });
+
+      if (failure) {
+        throw failure;
+      }
+
+      if (!reply) {
+        throw new ApiNetworkError("The reply stream ended early. Try again.");
+      }
+
+      return reply;
+    },
+
+    async listSourceConnectorsAsync() {
+      const response = await requestAsync("/sources/catalog", sourceCatalogResponseSchema);
+      return response.connectors;
+    },
+
+    async listSourceConnectionsAsync() {
+      const response = await requestAsync("/sources/connections", sourceConnectionsResponseSchema);
+      return response.connections;
+    },
+
+    connectSourceAsync(connectorId) {
+      return requestAsync("/sources/connections", sourceConnectionSchema, {
+        method: "POST",
+        json: connectSourceRequestSchema.parse({ connectorId }),
+      });
+    },
+
+    async disconnectSourceAsync(connectionId) {
+      await sendAsync(`/sources/connections/${segment(connectionId)}`, { method: "DELETE" });
+    },
+
+    async listSourceItemsAsync(connectionId) {
+      const response = await requestAsync(
+        `/sources/connections/${segment(connectionId)}/items`,
+        sourceItemsResponseSchema,
+      );
+      return response.items;
+    },
+
+    actOnSourceProposalsAsync(caseId, request) {
+      return requestAsync(`${casePath(caseId)}/sources/proposals`, sourceAttachResponseSchema, {
+        method: "POST",
+        json: sourceProposalActionRequestSchema.parse(request),
+      });
+    },
+
+    importSourceItemAsync(caseId, request) {
+      return requestAsync(`${casePath(caseId)}/sources/import`, sourceAttachResponseSchema, {
+        method: "POST",
+        json: sourceImportRequestSchema.parse(request),
+      });
     },
   };
 }

@@ -23,7 +23,8 @@ export type CaseSubcollection =
   | "documents"
   | "extractions"
   | "extractionChunks"
-  | "events";
+  | "events"
+  | "messages";
 
 // Hidden field that keeps case-scoped lists in insertion order; schema parsing strips it on read.
 export const orderField = "_order";

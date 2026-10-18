@@ -63,8 +63,8 @@ describe("AppShell", () => {
   it("uses the workspace context for both the home route and the full-load fallback", () => {
     expect(HomeCaseContext).toBe(DefaultCaseContext);
     render(<HomeCaseContext />);
+    expect(screen.getByText("Evianta")).toBeInTheDocument();
     expect(screen.getByText("Workspace")).toBeInTheDocument();
-    expect(screen.getByText("All cases")).toBeInTheDocument();
   });
 
   it("renders navigation, the case context slot, and the main region", () => {

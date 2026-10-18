@@ -15,6 +15,7 @@
   "dependencies": {
     "@evianta/agents": "workspace:*",
     "@evianta/ai": "workspace:*",
+    "@evianta/connectors": "workspace:*",
     "@evianta/core": "workspace:*",
     "@evianta/env": "workspace:*",
     "@evianta/ingest": "workspace:*",

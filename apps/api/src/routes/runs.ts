@@ -1,10 +1,11 @@
 import type { RunMode } from "@evianta/agents";
-import type { Case, Task, TaskStatus } from "@evianta/core";
+import { createCaseIntake, type Case, type Task, type TaskStatus } from "@evianta/core";
 import { Router } from "express";
 
 import { getMutableCaseAsync, type ApiContext } from "../context.js";
 import { ApiError } from "../errors.js";
 import { asyncRoute, caseParamsSchema } from "../http.js";
+import { messageOf } from "../logger.js";
 import { streamRunEventsAsync } from "../runStream.js";
 
 const RETRYABLE_STATUSES: ReadonlySet<TaskStatus> = new Set(["failed", "blocked", "in-progress"]);
@@ -25,6 +26,37 @@ function hasRetryableWork(caseRecord: Case, tasks: readonly Task[]): boolean {
 export function createRunRoutes(ctx: ApiContext): Router {
   const router = Router();
 
+  // The chat shows each run as a live card; a failure here must not undo the started run.
+  async function recordRunInChatAsync(
+    caseId: string,
+    runId: string,
+    mode: RunMode,
+    hasIntake: boolean,
+  ) {
+    try {
+      if (hasIntake) {
+        await ctx.store.cases.updateIntakeAsync(caseId, (intake) => ({
+          ...(intake ?? createCaseIntake("form")),
+          stage: "submitted",
+        }));
+      }
+
+      await ctx.store.chat.appendMessageAsync(caseId, {
+        id: ctx.newId(),
+        caseId,
+        role: "assistant",
+        createdAt: ctx.now().toISOString(),
+        parts: [{ type: "run", runId, mode }],
+      });
+    } catch (error) {
+      ctx.logger.warn("Could not record the run in the chat.", {
+        caseId,
+        runId,
+        error: messageOf(error),
+      });
+    }
+  }
+
   async function startAsync(caseId: string, mode: RunMode) {
     if (ctx.approvals.isActive(caseId)) {
       throw new ApiError(
@@ -38,7 +70,7 @@ export function createRunRoutes(ctx: ApiContext): Router {
       const caseRecord = await getMutableCaseAsync(ctx, caseId);
 
       if (!caseRecord.useCase) {
-        throw new ApiError(422, "use-case-missing", "The case has no use case to plan from.");
+        throw new ApiError(422, "use-case-missing", "Choose the kind of work before starting.");
       }
 
       if (mode === "retry") {
@@ -76,6 +108,8 @@ export function createRunRoutes(ctx: ApiContext): Router {
       }
 
       const started = ctx.runs.start(caseId, mode);
+
+      await recordRunInChatAsync(caseId, started.runId, started.mode, Boolean(caseRecord.intake));
 
       return {
         caseId,
