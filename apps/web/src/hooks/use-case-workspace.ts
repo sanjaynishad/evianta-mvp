@@ -417,7 +417,33 @@ export function useCaseWorkspace(
 
   let progress: RunProgress | undefined;
   if (live && !live.settled) {
-    progress = live.progress;
+    if (state) {
+      const plannedProgress = createRunProgress(state);
+      const liveTasks = new Map(live.progress.tasks.map((task) => [task.id, task]));
+      const plannedTaskIds = new Set(plannedProgress.tasks.map((task) => task.id));
+      progress = {
+        ...live.progress,
+        tasks: [
+          ...plannedProgress.tasks.map((task) => {
+            const streamed = liveTasks.get(task.id);
+            return streamed
+              ? {
+                  ...task,
+                  status: streamed.status,
+                  attempts: streamed.attempts,
+                  lastError: streamed.lastError,
+                  tokenUsage: streamed.tokenUsage,
+                  costEstimate: streamed.costEstimate,
+                  findingIds: streamed.findingIds,
+                }
+              : task;
+          }),
+          ...live.progress.tasks.filter((task) => !plannedTaskIds.has(task.id)),
+        ],
+      };
+    } else {
+      progress = live.progress;
+    }
   } else if (state) {
     progress = { ...createRunProgress(state), announcement: live?.progress.announcement ?? "" };
   }

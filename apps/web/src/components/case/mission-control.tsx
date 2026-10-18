@@ -24,7 +24,7 @@ import type { RunProgress, TaskProgress } from "@/lib/run-progress";
 
 const laneWidth = 260;
 const nodeWidth = 220;
-const nodeHeight = 84;
+const nodeHeight = 104;
 const laneGap = 24;
 const rowHeight = nodeHeight + laneGap;
 
@@ -109,15 +109,28 @@ function statusLabel(task: TaskProgress): string {
   }
 }
 
-function TaskCard({ task, graph = false }: { task: TaskProgress; graph?: boolean }) {
+function TaskCard({
+  task,
+  tasks,
+  graph = false,
+}: {
+  task: TaskProgress;
+  tasks: TaskProgress[];
+  graph?: boolean;
+}) {
   const Icon = roleIcons[task.assignedRole] ?? CircleDot;
   const tokenCount = task.tokenUsage ? task.tokenUsage.input + task.tokenUsage.output : undefined;
+  const dependencies = task.dependsOn.map(
+    (dependency) => tasks.find((candidate) => candidate.id === dependency)?.title ?? dependency,
+  );
+  const dependencyLabel = dependencies.length > 0 ? ` Depends on: ${dependencies.join(", ")}.` : "";
+
   return (
     <article
-      className="flex min-h-[84px] min-w-0 flex-col justify-between rounded-lg border bg-card p-3 shadow-elevation-1"
+      className="flex min-h-[104px] min-w-0 flex-col justify-between rounded-lg border bg-card p-3 shadow-elevation-1"
       data-agent-role={task.assignedRole}
       data-agent-status={task.status}
-      aria-label={`${agentRoleLabels[task.assignedRole]}: ${statusLabel(task)}. ${task.title}`}
+      aria-label={`${agentRoleLabels[task.assignedRole]}: ${statusLabel(task)}. ${task.title}.${dependencyLabel}`}
       style={graph ? { width: nodeWidth, height: nodeHeight } : undefined}
     >
       <div className="flex min-w-0 items-start gap-2">
@@ -134,6 +147,14 @@ function TaskCard({ task, graph = false }: { task: TaskProgress; graph?: boolean
         </div>
         <StatusBadge status={taskStatusToWorkStatus[task.status]} label={statusLabel(task)} />
       </div>
+      {dependencies.length > 0 ? (
+        <p
+          className="truncate pl-10 text-[11px] text-muted-foreground"
+          title={`Depends on: ${dependencies.join(", ")}`}
+        >
+          Depends on: {dependencies.join(", ")}
+        </p>
+      ) : null}
       <div className="flex items-center justify-between gap-2 pl-10 text-[11px] text-muted-foreground">
         <span className="truncate">
           {task.status === "in-progress" ? "Working now" : `${task.findingIds.length} findings`}
@@ -208,7 +229,7 @@ function Graph({ tasks }: { tasks: TaskProgress[] }) {
                 height: nodeHeight,
               }}
             >
-              <TaskCard task={task} graph />
+              <TaskCard task={task} tasks={tasks} graph />
             </li>
           ))}
         </ol>
@@ -278,7 +299,7 @@ export function MissionControl({
           <ol aria-label="Specialist steps" className="flex flex-col gap-2">
             {progress.tasks.map((task) => (
               <li key={task.id}>
-                <TaskCard task={task} />
+                <TaskCard task={task} tasks={progress.tasks} />
               </li>
             ))}
           </ol>
@@ -292,7 +313,7 @@ export function MissionControl({
         <ol aria-label="Specialist steps" className="flex flex-col gap-2 md:hidden">
           {progress.tasks.map((task) => (
             <li key={task.id}>
-              <TaskCard task={task} />
+              <TaskCard task={task} tasks={progress.tasks} />
             </li>
           ))}
         </ol>
