@@ -109,6 +109,19 @@ describe("chat intake over HTTP", () => {
     expect(reply.message.parts.map((part) => part.type)).toEqual(["text", "use-case-choice"]);
   });
 
+  it("keeps every setup message so later corrections reach the agents", async () => {
+    const { app, store } = createTestHarness();
+    const created = await createChatCaseAsync(app);
+
+    await sendMessageAsync(app, created.id, { text: "Reply to my 143(1) notice for AY 2024-25" });
+    await sendMessageAsync(app, created.id, { text: " Correction: it is AY 2025-26 " });
+
+    expect((await store.cases.getCaseAsync(created.id))?.intake?.requestMessages).toEqual([
+      "Reply to my 143(1) notice for AY 2024-25",
+      "Correction: it is AY 2025-26",
+    ]);
+  });
+
   it("keeps a confirmed use case when a later message is off topic", async () => {
     const { app } = createTestHarness({
       script: {

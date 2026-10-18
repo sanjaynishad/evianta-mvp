@@ -1,10 +1,12 @@
 import { askCaseAsync, runIntakeTurnAsync, summarizeDocument } from "@evianta/agents";
 import { AiError } from "@evianta/ai";
 import {
+  appendRequestMessage,
   chatMessageRequestSchema,
   chatStageOf,
   chatStoppedReply,
   chatWorkingReply,
+  createCaseIntake,
   intakeClarificationSchema,
   intakeReplyParts,
   pendingSourceProposals,
@@ -58,8 +60,17 @@ export function createChatRoutes(ctx: ApiContext): Router {
     caseRecord: Case,
     messages: ChatMessage[],
     visitorId: string,
+    text: string,
   ): Promise<AssistantReply> {
     const caseId = caseRecord.id;
+
+    // Saved before the model call so corrections reach planning even if the reply fails.
+    if (text && !(await isPlannedAsync(caseId))) {
+      caseRecord = await store.cases.updateIntakeAsync(caseId, (intake) =>
+        appendRequestMessage(intake ?? createCaseIntake("chat"), text),
+      );
+    }
+
     const metadata = await store.documents.getDocumentsForCaseAsync(caseId);
     const documents = await Promise.all(
       metadata.map(async (document) => {
@@ -234,7 +245,7 @@ export function createChatRoutes(ctx: ApiContext): Router {
         if (stage === "gathering") {
           const messages = await store.chat.listMessagesAsync(caseId);
 
-          reply = await intakeReplyAsync(caseRecord, messages, visitorId);
+          reply = await intakeReplyAsync(caseRecord, messages, visitorId, request.text);
         } else if (stage === "delivered") {
           reply = await followUpReplyAsync(caseId, request.text);
         } else {

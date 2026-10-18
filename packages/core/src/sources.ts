@@ -87,7 +87,7 @@ export const sourceConnectorCatalog: readonly SourceConnectorDefinition[] = [
     name: "Tally",
     category: "accounting",
     monogram: "T",
-    provides: "Ledgers, outstanding receivables, and sales registers",
+    provides: "Ledgers, receipts, outstanding receivables, and sales registers",
     scopes: ["Read ledgers and vouchers", "Read outstanding reports"],
     mode: "demo",
     datasets: [
@@ -95,7 +95,13 @@ export const sourceConnectorCatalog: readonly SourceConnectorDefinition[] = [
         id: "party-ledger",
         label: "Party ledger",
         description: "Ledger account for a customer or income head, with receipts and balance.",
-        satisfies: ["ledger", "statement"],
+        satisfies: ["ledger"],
+      },
+      {
+        id: "receipts",
+        label: "Receipts",
+        description: "Receipt vouchers with payment date, UTR, invoice, and amount received.",
+        satisfies: ["statement"],
       },
       {
         id: "outstanding-receivables",

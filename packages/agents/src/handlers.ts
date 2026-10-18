@@ -1,6 +1,6 @@
 import { VERIFY_AGAINST_CURRENT_LAW, type AiClient, type Cost } from "@evianta/ai";
 import {
-  withClarifications,
+  withIntakeContext,
   type AgentRole,
   type Case,
   type Citation,
@@ -184,7 +184,7 @@ export function buildSpecialistInput(
       title: ctx.case.title,
       ...(ctx.case.description ? { description: ctx.case.description } : {}),
       ...(ctx.case.useCase ? { useCase: ctx.case.useCase } : {}),
-      ...withClarifications(ctx.case.intake),
+      ...withIntakeContext(ctx.case.intake),
     },
     task: {
       title: ctx.task.title,

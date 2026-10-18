@@ -55,6 +55,49 @@ describe("payment table columns", () => {
 
     expect(records.payments[0]).toMatchObject({ amount: 400, reference: "TXN-9" });
   });
+
+  it("applies Tally receipts but never reads the mixed party ledger as payments", async () => {
+    const invoices = [
+      "Invoice No,Invoice Date,Due Date,Invoice Amount",
+      "SHI/26-27/014,2026-04-18,2026-06-02,212400",
+      "SHI/26-27/052,2026-06-06,2026-07-21,300000",
+    ].join("\n");
+    const receipts = [
+      "Payment Date,Receipt No,UTR,Against Invoice,Amount Received,Narration",
+      "2026-06-01,RCT/26-27/064,N152261127304,SHI/26-27/014,212400,NEFT from Apex Retail",
+    ].join("\n");
+    const ledger = [
+      "Date,Particulars,Vch Type,Vch No,Debit,Credit,Balance,Narration",
+      "2026-04-18,Sales GST 18%,Sales,SHI/26-27/014,212400,,212400,Supply against PO",
+      "2026-06-01,Bank,Receipt,RCT/26-27/064,,212400,0,NEFT N152261127304 against SHI/26-27/014",
+      "2026-10-15,Closing Balance,,,,,0,",
+    ].join("\n");
+    const documents = [
+      await csvPaymentDocumentAsync("doc-i", "tally-outstanding-statement.csv", invoices),
+      await csvPaymentDocumentAsync(
+        "doc-r",
+        "tally-receipts-statement-apex-retail-fy2026-27.csv",
+        receipts,
+      ),
+      await csvPaymentDocumentAsync("doc-l", "tally-party-ledger-apex-retail.csv", ledger),
+    ];
+    const records = readPaymentRecords(documents);
+    const reconciliation = reconcilePayments(records, resolveCreditTerms(documents), {
+      asOfDate: "2026-10-15",
+    });
+
+    expect(records.payments).toHaveLength(1);
+    expect(records.payments[0]).toMatchObject({
+      amount: 212400,
+      reference: "N152261127304",
+      documentId: "doc-r",
+    });
+    expect(records.unclassified.map((table) => table.documentId)).toContain("doc-l");
+    expect(
+      reconciliation.lines.find((line) => line.invoice.invoiceNumber === "SHI/26-27/014")
+        ?.outstanding,
+    ).toBe(0);
+  });
 });
 
 describe("narration references", () => {

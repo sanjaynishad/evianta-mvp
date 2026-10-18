@@ -3,14 +3,17 @@ import { describe, expect, it } from "vitest";
 import { caseSchema } from "./case.js";
 import { chatMessageSchema, chatMessageText } from "./chat.js";
 import {
+  appendRequestMessage,
   applyIntakeChange,
   buildIntakeRequirements,
   caseIntakeSchema,
   composeRulesIntakeReply,
   createCaseIntake,
+  INTAKE_MAX_REQUEST_MESSAGES,
   refreshSourceProposals,
   summarizeIntakeRequirements,
   withClarifications,
+  withIntakeContext,
 } from "./intake.js";
 
 describe("withClarifications", () => {
@@ -27,6 +30,25 @@ describe("withClarifications", () => {
       clarifications: [{ question: "Which period?", answer: "FY 2024-25" }],
     });
     expect(withClarifications(undefined)).toEqual({});
+  });
+});
+
+describe("appendRequestMessage", () => {
+  it("trims, skips blanks, and keeps only the most recent messages", () => {
+    let intake = appendRequestMessage(createCaseIntake("chat"), "   ");
+
+    expect(intake.requestMessages).toEqual([]);
+
+    for (let index = 0; index < INTAKE_MAX_REQUEST_MESSAGES + 2; index += 1) {
+      intake = appendRequestMessage(intake, ` message ${index} `);
+    }
+
+    expect(intake.requestMessages).toHaveLength(INTAKE_MAX_REQUEST_MESSAGES);
+    expect(intake.requestMessages[0]).toBe("message 2");
+    expect(withIntakeContext(intake).requestMessages?.at(-1)).toBe(
+      `message ${INTAKE_MAX_REQUEST_MESSAGES + 1}`,
+    );
+    expect(withIntakeContext(createCaseIntake("chat"))).toEqual({});
   });
 });
 

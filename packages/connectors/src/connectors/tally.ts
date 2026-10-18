@@ -4,6 +4,7 @@ import {
   STATEMENT_DATE,
   apexAccountEntries,
   apexOpeningInvoice,
+  apexPayments,
   daysOverdue,
   dueDateOf,
   invoiceTotal,
@@ -55,6 +56,20 @@ function partyLedgerCsv(): string {
   return toCsv(
     ["Date", "Particulars", "Vch Type", "Vch No", "Debit", "Credit", "Balance", "Narration"],
     rows,
+  );
+}
+
+function receiptsCsv(): string {
+  return toCsv(
+    ["Payment Date", "Receipt No", "UTR", "Against Invoice", "Amount Received", "Narration"],
+    apexPayments.map((payment) => [
+      payment.date,
+      payment.receiptVoucher,
+      payment.utr,
+      payment.invoiceNumber,
+      payment.amount,
+      `NEFT from ${buyer.name} to Konkan Mercantile Bank Ltd (Current A/c)`,
+    ]),
   );
 }
 
@@ -119,6 +134,13 @@ const items: Record<string, DemoItem> = {
     fileName: "tally-party-ledger-apex-retail-fy2026-27.csv",
     mimeType: CSV_MIME_TYPE,
     buildAsync: () => textFile(partyLedgerCsv()),
+  },
+  receipts: {
+    label: `Receipts: ${buyer.name}`,
+    detail: `${apexPayments.length} receipts with UTR and invoice, to ${formatLongDate(STATEMENT_DATE)}`,
+    fileName: "tally-receipts-statement-apex-retail-fy2026-27.csv",
+    mimeType: CSV_MIME_TYPE,
+    buildAsync: () => textFile(receiptsCsv()),
   },
   "outstanding-receivables": {
     label: `Outstanding receivables: ${buyer.name}`,

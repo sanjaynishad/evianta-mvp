@@ -629,6 +629,7 @@ export function describeStoreContract(
           documentItems: { "doc-1": "notice" },
           proposals: [],
           clarifications: [],
+          requestMessages: [],
         });
         expect(await store.cases.getCaseAsync(created.id)).toEqual(created);
       });

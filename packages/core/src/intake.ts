@@ -48,6 +48,36 @@ export function withClarifications(intake: CaseIntake | undefined): {
   return clarifications.length > 0 ? { clarifications } : {};
 }
 
+export const INTAKE_MAX_REQUEST_MESSAGES = 20;
+export const INTAKE_MAX_REQUEST_MESSAGE_LENGTH = 2000;
+
+/** Records what the user typed while setting up the case, keeping the most recent messages. */
+export function appendRequestMessage(intake: CaseIntake, text: string): CaseIntake {
+  const message = text.trim().slice(0, INTAKE_MAX_REQUEST_MESSAGE_LENGTH);
+
+  if (!message) {
+    return intake;
+  }
+
+  return {
+    ...intake,
+    requestMessages: [...intake.requestMessages, message].slice(-INTAKE_MAX_REQUEST_MESSAGES),
+  };
+}
+
+/** Answered clarifications and the user's setup messages, as passed to planning and specialists. */
+export function withIntakeContext(intake: CaseIntake | undefined): {
+  clarifications?: ClarificationAnswer[];
+  requestMessages?: string[];
+} {
+  const requestMessages = intake?.requestMessages ?? [];
+
+  return {
+    ...withClarifications(intake),
+    ...(requestMessages.length > 0 ? { requestMessages: [...requestMessages] } : {}),
+  };
+}
+
 export const sourceProposalStatusSchema = z.enum(["proposed", "attached", "dismissed"]);
 
 export type SourceProposalStatus = z.infer<typeof sourceProposalStatusSchema>;
@@ -79,6 +109,8 @@ export const caseIntakeSchema = z.object({
   documentItems: z.record(z.string(), z.string()).default({}),
   proposals: z.array(sourceProposalSchema).default([]),
   clarifications: z.array(intakeClarificationSchema).default([]),
+  // Messages typed in chat before the work started, oldest first; later ones may correct earlier ones.
+  requestMessages: z.array(z.string()).default([]),
 });
 
 export type CaseIntake = z.infer<typeof caseIntakeSchema>;
