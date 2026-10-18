@@ -1,41 +1,71 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
 
-// Keeps the page pinned to the newest message unless the reader scrolled up to read history.
 export function useStickToBottom(dependency: unknown) {
-  const endRef = useRef<HTMLDivElement>(null);
+  const [content, setContent] = useState<HTMLDivElement | null>(null);
+  const following = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
 
-  useEffect(() => {
-    function update() {
-      const distance =
-        document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
-      setAtBottom(distance < 160);
-    }
-
-    update();
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
-    };
+  const scrollToBottom = useCallback(() => {
+    following.current = true;
+    setAtBottom(true);
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
   }, []);
 
   useEffect(() => {
-    if (atBottom) {
-      endRef.current?.scrollIntoView?.({ block: "end" });
+    let previousScrollY = window.scrollY;
+
+    function update() {
+      const distance =
+        document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+      const nearBottom = distance <= 64;
+
+      if (nearBottom) {
+        following.current = true;
+      } else if (window.scrollY < previousScrollY) {
+        following.current = false;
+      }
+
+      previousScrollY = window.scrollY;
+      setAtBottom(following.current || nearBottom);
     }
-    // Only new content should scroll; reaching the bottom by hand must not re-trigger it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dependency]);
+
+    window.addEventListener("scroll", update, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!content) {
+      return;
+    }
+
+    function followContent() {
+      if (following.current) {
+        scrollToBottom();
+      }
+    }
+
+    followContent();
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(followContent) : undefined;
+
+    observer?.observe(content);
+
+    window.addEventListener("resize", followContent);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", followContent);
+    };
+  }, [content, dependency, scrollToBottom]);
 
   return {
-    endRef,
+    contentRef: setContent,
     atBottom,
-    scrollToBottom: () => endRef.current?.scrollIntoView?.({ behavior: "smooth", block: "end" }),
+    scrollToBottom,
   };
 }
 

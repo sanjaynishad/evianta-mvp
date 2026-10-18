@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { untitledChatTitle } from "@evianta/core";
 import { setPendingFirstMessage, takePendingFirstMessage } from "@/lib/chat-pending";
 import { createTestDataSource, renderWithDataSource } from "@/test/render-with-data";
@@ -19,6 +19,11 @@ vi.mock("next/navigation", () => ({
 beforeEach(() => {
   push.mockReset();
   replace.mockReset();
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("Composer", () => {

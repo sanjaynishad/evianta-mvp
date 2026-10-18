@@ -135,7 +135,7 @@ export function ChatThread({ caseId }: ChatThreadProps) {
   const [dragging, setDragging] = useState(false);
   const [editingTitle, setEditingTitle] = useState<string>();
   const firstMessageTaken = useRef(false);
-  const { endRef, atBottom, scrollToBottom } = useStickToBottom(
+  const { contentRef, atBottom, scrollToBottom } = useStickToBottom(
     `${thread.messages.length}:${thread.pending?.replyText.length ?? 0}:${workspace.progress?.lastSeq ?? 0}:${state?.deliverables.length ?? 0}`,
   );
 
@@ -576,6 +576,7 @@ export function ChatThread({ caseId }: ChatThreadProps) {
 
   return (
     <div
+      ref={contentRef}
       className="relative flex min-h-[calc(100dvh-8rem)] flex-col gap-4"
       onDragOver={(event) => {
         if (gathering && event.dataTransfer.types.includes("Files")) {
@@ -721,7 +722,6 @@ export function ChatThread({ caseId }: ChatThreadProps) {
             </Button>
           </div>
         ) : null}
-        <div ref={endRef} />
       </div>
 
       <p className="sr-only" role="status" aria-live="polite">
@@ -729,7 +729,11 @@ export function ChatThread({ caseId }: ChatThreadProps) {
       </p>
 
       <div className="sticky bottom-0 z-10 flex flex-col gap-2 bg-gradient-to-t from-background via-background to-transparent pb-4 pt-6">
-        {!atBottom ? <JumpToLatest onClick={scrollToBottom} /> : null}
+        {!atBottom ? (
+          <div className="absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap">
+            <JumpToLatest onClick={scrollToBottom} />
+          </div>
+        ) : null}
         {readOnly ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card p-3 shadow-elevation-2">
             <p className="text-sm text-muted-foreground">
