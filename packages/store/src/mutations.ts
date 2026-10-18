@@ -99,6 +99,7 @@ export function applyCaseApproval(current: Case, approval: ApprovalInput): Case 
     approval: {
       approvedAt: approval.approvedAt ?? now,
       unresolvedQuestionIds: approval.unresolvedQuestionIds ?? [],
+      reviewFailureAcknowledged: approval.reviewFailureAcknowledged ?? false,
       note: approval.note,
     },
     updatedAt: now,

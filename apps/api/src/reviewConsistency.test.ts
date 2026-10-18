@@ -58,6 +58,30 @@ async function exportedTextAsync(app: ReturnType<typeof createTestHarness>["app"
 }
 
 describe("approval and editing consistency", () => {
+  it("requires an explicit acknowledgement when the independent review failed", async () => {
+    const { app, store, base, caseId } = await seedAsync();
+
+    await store.tasks.createTaskAsync({
+      id: "failed-independent-review",
+      caseId,
+      title: "Independent review",
+      assignedRole: "independent-review",
+      status: "failed",
+      attempts: 1,
+    });
+
+    const blocked = await request(app).post(`${base}/approve`).send({}).expect(409);
+    expect(blocked.body).toMatchObject({ error: "review-incomplete" });
+    expect((await store.cases.getCaseAsync(caseId))?.approval).toBeUndefined();
+
+    const approved = await request(app)
+      .post(`${base}/approve`)
+      .send({ acknowledgeIncompleteReview: true })
+      .expect(200);
+
+    expect(approved.body.case.approval.reviewFailureAcknowledged).toBe(true);
+  });
+
   it("does not export replacement content with the previous approval", async () => {
     const { app, store, base, caseId } = await seedAsync();
 

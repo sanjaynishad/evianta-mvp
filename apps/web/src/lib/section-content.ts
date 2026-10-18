@@ -23,6 +23,24 @@ interface Token {
 const differencePattern = /\b(difference|diff|variance|gap|mismatch|shortfall)\b/i;
 const numberPattern = /^[-+]?(?:rs\.?\s*|₹\s*)?[\d,]+(?:\.\d+)?%?$/i;
 
+function splitMarkdownTableRow(line: string): string[] {
+  const cells: string[] = [""];
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]!;
+    if (character === "\\" && line[index + 1] === "|") {
+      cells[cells.length - 1] += "|";
+      index += 1;
+    } else if (character === "|") {
+      cells.push("");
+    } else {
+      cells[cells.length - 1] += character;
+    }
+  }
+
+  return cells.map((cell) => cell.trim());
+}
+
 function tokenize(line: string): Token[] {
   const tokens: Token[] = [];
   const pattern = /\S+(?: \S+)*/g;
@@ -87,6 +105,47 @@ export function parseTextTable(content: string): TextTable | undefined {
   const lines = content.split(/\r?\n/).filter((line) => line.trim().length > 0);
   if (lines.length < 2) {
     return undefined;
+  }
+
+  if (lines.every((line) => line.trim().startsWith("|") && line.trim().endsWith("|"))) {
+    const markdownRows = lines.map((line) => splitMarkdownTableRow(line.trim().slice(1, -1)));
+    const headers = markdownRows[0]!;
+    const bodyRows = markdownRows
+      .slice(1)
+      .filter((row) => !row.every((cell) => /^:?-{3,}:?$/.test(cell)));
+
+    if (headers.length < 2 || bodyRows.some((row) => row.length !== headers.length)) {
+      return undefined;
+    }
+
+    const parsedRows = bodyRows.map((cells) => ({
+      cells,
+      values: cells.map(parseFigure),
+    }));
+    const numericColumns = headers.map(
+      (_, index) =>
+        index > 0 &&
+        parsedRows.some((row) => row.values[index] !== undefined) &&
+        parsedRows.every((row) => !row.cells[index] || row.values[index] !== undefined),
+    );
+    const differenceIndex = headers.findIndex(
+      (header, index) => numericColumns[index] && differencePattern.test(header),
+    );
+    const differenceColumn = differenceIndex >= 0 ? differenceIndex : undefined;
+    const rows: TextTableRow[] = parsedRows.map((row) => {
+      const difference = differenceColumn === undefined ? undefined : row.values[differenceColumn];
+      return { ...row, discrepancy: difference === undefined ? undefined : difference !== 0 };
+    });
+    const last = rows.at(-1);
+    const hasTotal = last !== undefined && /^(grand )?total\b/i.test(last.cells[0] ?? "");
+
+    return {
+      headers,
+      rows: hasTotal ? rows.slice(0, -1) : rows,
+      total: hasTotal ? last : undefined,
+      numericColumns,
+      differenceColumn,
+    };
   }
 
   const headerTokens = tokenize(lines[0]!);

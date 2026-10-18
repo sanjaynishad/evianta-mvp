@@ -51,6 +51,8 @@ import {
 import { recordTableKeys } from "./records.js";
 import {
   hasPaymentData,
+  hasPaymentRecordReadFailures,
+  hasVerifiablePaymentData,
   type PaymentReconcileOptions,
   type PaymentReconciliation,
 } from "./reconcile.js";
@@ -144,6 +146,140 @@ export function findEscalationClaims(text: string): string[] {
     );
 }
 
+function conditionLegalClaimsInText(content: string): { content: string; changed: boolean } {
+  let changed = false;
+  const abbreviationPattern =
+    /\b(?:rs|inr|mr|mrs|ms|dr|no|nos|approx|etc|vs|sec|ss|cl|art|para|pvt|ltd|co)\.$/i;
+  const multiPeriodAbbreviationPattern = /\b(?:[a-z]\.){2,}$/i;
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  let normalizedContent = "";
+  lines.forEach((line, index) => {
+    normalizedContent += line;
+
+    if (index === lines.length - 1) {
+      return;
+    }
+
+    const nextLine = lines[index + 1] ?? "";
+    const currentIsListItem = /^\s*(?:[-*•]|\d+[.)])\s+/.test(line);
+    const nextIsListItem = /^\s*(?:[-*•]|\d+[.)])\s+/.test(nextLine);
+
+    normalizedContent +=
+      !line.trim() || !nextLine.trim() || currentIsListItem || nextIsListItem ? "\n" : " ";
+  });
+
+  const segments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < normalizedContent.length; index += 1) {
+    const character = normalizedContent[index];
+    if (character === "\n") {
+      segments.push(normalizedContent.slice(start, index + 1));
+      start = index + 1;
+      continue;
+    }
+
+    if (character !== "." && character !== "!" && character !== "?") {
+      continue;
+    }
+
+    const nextCharacter = normalizedContent[index + 1] ?? "";
+    if (nextCharacter && !/\s/.test(nextCharacter)) {
+      continue;
+    }
+
+    const beforePeriod = normalizedContent.slice(start, index + 1).trimEnd();
+    const nextText = normalizedContent.slice(index + 1).trimStart();
+    const isDecimal =
+      character === "." &&
+      /\d/.test(normalizedContent[index - 1] ?? "") &&
+      /\d/.test(nextCharacter);
+    const isAbbreviation =
+      character === "." &&
+      ((multiPeriodAbbreviationPattern.test(beforePeriod) && /^[a-z\d]/i.test(nextText)) ||
+        (abbreviationPattern.test(beforePeriod) && /^[a-z\d]/i.test(nextText)));
+
+    if (isDecimal || isAbbreviation) {
+      continue;
+    }
+
+    segments.push(normalizedContent.slice(start, index + 1));
+    start = index + 1;
+  }
+
+  if (start < normalizedContent.length) {
+    segments.push(normalizedContent.slice(start));
+  }
+
+  const conditionedContent = segments
+    .map((sentence) => {
+      return sentence
+        .split(/(?<=;)/)
+        .map((clause) => {
+          const discussesInterest = /\b(?:interest|msmed|statutory)\b/i.test(clause);
+          const assertsEntitlement =
+            /\b(?:entitled|liable|payable|due|must\s+pay|shall\s+pay|will\s+pay|will\s+accrue|accrues|can\s+(?:claim|recover))\b/i.test(
+              clause,
+            );
+          const isConditional =
+            /\b(?:subject\s+to|conditional\s+on|only\s+if|if\s+(?:eligible|applicable|confirmed)|where\s+eligible|unless|may\s+be|could\s+be|might\s+be|potentially|not\s+(?:yet\s+)?(?:confirmed|established))\b/i.test(
+              clause,
+            );
+
+          if (!discussesInterest || !assertsEntitlement || isConditional) {
+            return clause;
+          }
+
+          changed = true;
+          const leadingWhitespace = clause.match(/^\s*/)?.[0] ?? "";
+          const trailingWhitespace = clause.match(/\s*$/)?.[0] ?? "";
+          const semicolon = /;\s*$/.test(clause) ? ";" : "";
+
+          return `${leadingWhitespace}Any statutory interest remains subject to confirmation of the supplier's eligibility, the relevant dates, and current law. Confirm these points with an adviser before relying on this route.${semicolon}${trailingWhitespace}`;
+        })
+        .join("");
+    })
+    .join("");
+
+  return { content: conditionedContent, changed };
+}
+
+export function conditionLegalClaimsInSection<T extends { title: string; content: string }>(
+  section: T,
+): { section: T; changed: boolean } {
+  const title = conditionLegalClaimsInText(section.title);
+  const content = conditionLegalClaimsInText(section.content);
+
+  return {
+    section: { ...section, title: title.content, content: content.content },
+    changed: title.changed || content.changed,
+  };
+}
+
+function conditionLegalClaims(draft: FollowUpDraft): { draft: FollowUpDraft; changed: boolean } {
+  let changed = false;
+  const condition = (content: string) => {
+    const result = conditionLegalClaimsInText(content);
+    changed ||= result.changed;
+
+    return result.content;
+  };
+
+  return {
+    draft: {
+      ...draft,
+      subject: condition(draft.subject),
+      ...(draft.salutation !== undefined ? { salutation: condition(draft.salutation) } : {}),
+      parts: draft.parts.map((part) => ({
+        ...part,
+        title: condition(part.title),
+        content: condition(part.content),
+      })),
+      ...(draft.closing ? { closing: condition(draft.closing) } : {}),
+    },
+    changed,
+  };
+}
+
 export interface MsmeComputedFigure {
   key: string;
   label: string;
@@ -195,16 +331,28 @@ function outstandingPosition(reconciliation: PaymentReconciliation) {
 }
 
 export const NO_PAYMENT_DATA_MESSAGE =
-  "The outstanding amount could not be computed because no readable invoice register was found. Upload the invoices or a sales register.";
+  "The outstanding balance could not be reconciled because no readable invoice register was found. Uploaded invoice copies may show individual amounts, but they do not establish the full balance or payments received. Confirm the complete invoice and payment records before relying on a total.";
+
+export const UNVERIFIABLE_PAYMENT_DATA_MESSAGE =
+  "The outstanding balance could not be verified because known invoice or payment records could not be read safely. Readable rows may omit invoices or receipts; resolve the record-reading issues and confirm the complete records before stating a balance or making a payment demand.";
+
+function paymentDataIssueMessage(reconciliation: PaymentReconciliation): string {
+  return hasPaymentRecordReadFailures(reconciliation) || hasPaymentData(reconciliation)
+    ? UNVERIFIABLE_PAYMENT_DATA_MESSAGE
+    : NO_PAYMENT_DATA_MESSAGE;
+}
 
 export function paymentSummaryFinding(reconciliation: PaymentReconciliation): AgentFindingInput {
-  if (!hasPaymentData(reconciliation)) {
+  if (!hasVerifiablePaymentData(reconciliation)) {
     return {
-      summary: "Outstanding amount not computed: no readable invoice register",
+      summary:
+        paymentDataIssueMessage(reconciliation) === NO_PAYMENT_DATA_MESSAGE
+          ? "Outstanding amount not computed: no readable invoice register"
+          : "Outstanding amount not computed: invoice or payment records could not be read safely",
       severity: "info",
       confidence: "high",
       evidence: [],
-      openQuestions: [{ text: NO_PAYMENT_DATA_MESSAGE, severity: "high" }],
+      openQuestions: [{ text: paymentDataIssueMessage(reconciliation), severity: "high" }],
     };
   }
 
@@ -252,8 +400,8 @@ export function paymentSummaryFinding(reconciliation: PaymentReconciliation): Ag
 }
 
 export function paymentSummaryMarkdown(reconciliation: PaymentReconciliation): string {
-  if (!hasPaymentData(reconciliation)) {
-    return NO_PAYMENT_DATA_MESSAGE;
+  if (!hasVerifiablePaymentData(reconciliation)) {
+    return paymentDataIssueMessage(reconciliation);
   }
 
   const { totals } = reconciliation;
@@ -485,30 +633,19 @@ export function casePackQuestionsMarkdown(
   return parts.join("\n").trim();
 }
 
-function referencesLine(
-  findingIds: readonly string[],
-  knownIds: ReadonlySet<string>,
-): string | undefined {
-  const known = findingIds.filter((id) => knownIds.has(id));
-
-  return known.length > 0 ? `_Relies on: findings ${known.join(", ")}._` : undefined;
-}
-
-export function followUpDraftMarkdown(draft: FollowUpDraft, knownIds: ReadonlySet<string>): string {
-  const parts: string[] = [`_${MSME_PAYMENT_GUARDRAIL}_`, "", `**Subject:** ${draft.subject}`];
+export function followUpDraftMarkdown(
+  draft: FollowUpDraft,
+  _knownIds: ReadonlySet<string>,
+): string {
+  const parts: string[] = [MSME_PAYMENT_GUARDRAIL, "", `Subject: ${draft.subject}`];
 
   if (draft.salutation) {
     parts.push("", draft.salutation);
   }
 
   draft.parts.forEach((part, index) => {
-    const references = referencesLine(part.findingIds, knownIds);
-
-    parts.push("", `**${index + 1}. ${part.title}**`, part.content.trim());
-
-    if (references) {
-      parts.push(references);
-    }
+    const title = part.title.replace(/^\s*\d+[.)]\s*/, "");
+    parts.push("", `${index + 1}. ${title}`, part.content.trim());
   });
 
   if (draft.closing) {
@@ -532,7 +669,7 @@ function draftPartFinding(
     summary: `Draft point: ${part.title}`,
     ...(referenced.length > 0
       ? {
-          detail: `Relies on:\n- ${referenced.map((finding) => `${finding.id}: ${finding.summary}`).join("\n- ")}`,
+          detail: `Relies on:\n- ${referenced.map((finding) => finding.summary).join("\n- ")}`,
         }
       : {}),
     severity: "info",
@@ -548,7 +685,10 @@ export function casePreparationTaskOutput(
 ): TaskOutput {
   const base = specialistResultToTaskOutput(result, false);
   const { reconciliation, chronology } = prepared;
-  const { draft } = result.output;
+  const paymentDataAvailable = hasVerifiablePaymentData(reconciliation);
+  const sourceDraft = paymentDataAvailable ? result.output.draft : undefined;
+  const conditionedDraft = sourceDraft ? conditionLegalClaims(sourceDraft) : undefined;
+  const draft = conditionedDraft?.draft;
   const documentNames = new Map(
     ctx.documentMetadata.map((metadata) => [metadata.id, metadata.name]),
   );
@@ -581,6 +721,26 @@ export function casePreparationTaskOutput(
     },
   ];
 
+  if (!paymentDataAvailable && result.output.draft) {
+    sections.push({
+      title: FOLLOW_UP_DRAFT_SECTION_TITLE,
+      kind: "text",
+      content: `A follow-up draft has been withheld because the invoice and payment records are not sufficient to verify the outstanding balance. ${paymentDataIssueMessage(reconciliation)}`,
+      findingIndexes: [],
+    });
+    openQuestions.push({
+      text: `A follow-up draft was withheld. ${paymentDataIssueMessage(reconciliation)}`,
+      severity: "high",
+    });
+  }
+
+  if (conditionedDraft?.changed) {
+    openQuestions.push({
+      text: "A statutory-interest statement in the draft was changed to conditional wording. Confirm supplier eligibility, relevant dates, and current law with an adviser before relying on the route.",
+      severity: "high",
+    });
+  }
+
   if (draft) {
     const start = findings.length;
 
@@ -605,15 +765,25 @@ export function casePreparationTaskOutput(
         severity: "low",
       });
     }
-  } else {
-    sections.push(...(base.sections ?? []));
+  } else if (paymentDataAvailable) {
+    for (const section of base.sections ?? []) {
+      const conditioned = conditionLegalClaimsInSection(section);
+      sections.push(conditioned.section);
+
+      if (conditioned.changed) {
+        openQuestions.push({
+          text: "A statutory-interest statement in the draft was changed to conditional wording. Confirm supplier eligibility, relevant dates, and current law with an adviser before relying on the route.",
+          severity: "high",
+        });
+      }
+    }
   }
 
   const draftText = [
     draft?.subject,
     ...(draft ? draft.parts.map((part) => part.content) : []),
     draft?.closing,
-    ...(base.sections ?? []).map((section) => section.content),
+    ...(paymentDataAvailable ? sections.map((section) => section.content) : []),
   ]
     .filter(Boolean)
     .join("\n");
@@ -668,7 +838,7 @@ export function createCasePreparationTaskHandler(
         const context: Record<string, unknown> = {
           guardrail: MSME_PAYMENT_GUARDRAIL,
           ...(figures.length > 0 ? { computedFigures: figures } : {}),
-          ...(hasPaymentData(prepared.reconciliation)
+          ...(hasVerifiablePaymentData(prepared.reconciliation)
             ? { outstandingPosition: outstandingPosition(prepared.reconciliation) }
             : {}),
           chronology: prepared.chronology.map((event) => `${event.date} ${event.title}`),

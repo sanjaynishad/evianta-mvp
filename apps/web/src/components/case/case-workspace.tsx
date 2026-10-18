@@ -130,14 +130,6 @@ function ReviewContent({
 
   return (
     <div className="flex flex-col gap-6">
-      {showProgress ? (
-        <RunProgressPanel
-          progress={progress}
-          replaying={workspace.replaying}
-          connection={workspace.connection}
-        />
-      ) : null}
-
       <FailurePanel
         failedTasks={failedTasks}
         blockedTasks={blockedTasks}
@@ -148,6 +140,14 @@ function ReviewContent({
         readOnly={readOnly}
         onRetry={() => void workspace.retryAsync()}
       />
+
+      {showProgress ? (
+        <RunProgressPanel
+          progress={progress}
+          replaying={workspace.replaying}
+          connection={workspace.connection}
+        />
+      ) : null}
 
       <section aria-labelledby="deliverables-heading" className="flex flex-col gap-4">
         <h2 id="deliverables-heading" className="text-base font-semibold print:sr-only">
@@ -303,6 +303,9 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
   const readOnly = caseItem.isSample;
   const hasRun = Boolean(state.run.lastRunId) || (caseItem.usage?.runCount ?? 0) > 0;
   const canApprove = !readOnly && state.deliverables.length > 0 && !workspace.streaming;
+  const reviewIncomplete = state.tasks.some(
+    (task) => task.assignedRole === "independent-review" && task.status !== "completed",
+  );
   const openLocalNotes = localNotes.notes.filter((note) => note.status === "open").length;
 
   return (
@@ -446,10 +449,11 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
         localNotes={localNotes.notes}
         cost={{ total: progress.totalCost, tokens: progress.totalTokens }}
         approving={actions.isPending(approveActionKey)}
+        reviewIncomplete={reviewIncomplete}
         waitingForChanges={actions.hasPendingChanges}
-        onApprove={(note) => {
+        onApprove={(note, acknowledgeIncompleteReview) => {
           setGateOpen(false);
-          return actions.approveAsync(note);
+          return actions.approveAsync(note, acknowledgeIncompleteReview);
         }}
       />
     </ReviewProvider>

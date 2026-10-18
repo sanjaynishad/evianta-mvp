@@ -32,7 +32,7 @@ export interface ReviewActions {
   ) => Promise<boolean>;
   resolveQuestionAsync: (questionId: string, note?: string) => Promise<boolean>;
   dismissQuestionAsync: (questionId: string, note?: string) => Promise<boolean>;
-  approveAsync: (note?: string) => Promise<boolean>;
+  approveAsync: (note?: string, acknowledgeIncompleteReview?: boolean) => Promise<boolean>;
 }
 
 export const sectionActionKey = (sectionId: string) => `section:${sectionId}`;
@@ -238,59 +238,69 @@ export function useReviewActions({
     updateQuestionAsync(questionId, "dismissed", note),
   );
 
-  const approveAsync = useLatestCallback(async (note?: string) => {
-    if (!state) {
-      return false;
-    }
+  const approveAsync = useLatestCallback(
+    async (note?: string, acknowledgeIncompleteReview: boolean = false) => {
+      if (!state) {
+        return false;
+      }
 
-    // Approval records which questions are still open, so it waits for resolves, dismissals,
-    // and section changes that have not been confirmed yet.
-    if (hasPendingChanges) {
-      toast.info("Your review changes are still saving", {
-        description: "Approve once they are saved, so the approval records them.",
-      });
-      return false;
-    }
+      // Approval records which questions are still open, so it waits for resolves, dismissals,
+      // and section changes that have not been confirmed yet.
+      if (hasPendingChanges) {
+        toast.info("Your review changes are still saving", {
+          description: "Approve once they are saved, so the approval records them.",
+        });
+        return false;
+      }
 
-    const previousApproval = state.case.approval;
-    const cleaned = cleanNote(note);
-    const optimisticApproval = {
-      approvedAt: now().toISOString(),
-      unresolvedQuestionIds: unresolvedQuestions(state.findings).map((item) => item.question.id),
-      note: cleaned,
-    };
-    // Only the approval field is guarded, so other updates to the case (such as refreshed usage)
-    // that land while the request is pending are kept.
-    mutate((current) => ({ ...current, case: { ...current.case, approval: optimisticApproval } }));
-    setKey(approveActionKey, true);
-    try {
-      const response = await dataSource.approveCaseAsync(caseId, cleaned);
-      mutate((current) =>
-        current.case.approval === optimisticApproval
-          ? {
-              ...current,
-              case: {
-                ...current.case,
-                approval: response.case.approval,
-                status: response.case.status,
-                updatedAt: response.case.updatedAt,
-              },
-            }
-          : current,
-      );
-      return true;
-    } catch (error) {
-      mutate((current) =>
-        current.case.approval === optimisticApproval
-          ? { ...current, case: { ...current.case, approval: previousApproval } }
-          : current,
-      );
-      reportFailure("The case was not approved", error);
-      return false;
-    } finally {
-      setKey(approveActionKey, false);
-    }
-  });
+      const previousApproval = state.case.approval;
+      const cleaned = cleanNote(note);
+      const optimisticApproval = {
+        approvedAt: now().toISOString(),
+        unresolvedQuestionIds: unresolvedQuestions(state.findings).map((item) => item.question.id),
+        reviewFailureAcknowledged: acknowledgeIncompleteReview,
+        note: cleaned,
+      };
+      // Only the approval field is guarded, so other updates to the case (such as refreshed usage)
+      // that land while the request is pending are kept.
+      mutate((current) => ({
+        ...current,
+        case: { ...current.case, approval: optimisticApproval },
+      }));
+      setKey(approveActionKey, true);
+      try {
+        const response = await dataSource.approveCaseAsync(
+          caseId,
+          cleaned,
+          acknowledgeIncompleteReview,
+        );
+        mutate((current) =>
+          current.case.approval === optimisticApproval
+            ? {
+                ...current,
+                case: {
+                  ...current.case,
+                  approval: response.case.approval,
+                  status: response.case.status,
+                  updatedAt: response.case.updatedAt,
+                },
+              }
+            : current,
+        );
+        return true;
+      } catch (error) {
+        mutate((current) =>
+          current.case.approval === optimisticApproval
+            ? { ...current, case: { ...current.case, approval: previousApproval } }
+            : current,
+        );
+        reportFailure("The case was not approved", error);
+        return false;
+      } finally {
+        setKey(approveActionKey, false);
+      }
+    },
+  );
 
   return {
     isPending: (key) => pending.has(key),

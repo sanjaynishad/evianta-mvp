@@ -14,7 +14,27 @@ export function publicRunError(error: string): string {
   return genericRunError;
 }
 
-export function publicTaskError(): string {
+export function publicTaskError(error?: string): string {
+  if (error === "The agent returned output in an unexpected format. Retry the run to try again.") {
+    return "The agent returned a response the task could not use. Retry the failed step; if it fails again, review the case inputs.";
+  }
+
+  if (/^The model service was unavailable after \d+ attempt\(s\)\./.test(error ?? "")) {
+    return "The model service was unavailable. Retry the failed step when the service is available.";
+  }
+
+  if (error === "The model declined to respond to this task.") {
+    return "The model declined this task. Review the case inputs and retry the failed step.";
+  }
+
+  if (error === "The model provider rejected the request credentials.") {
+    return "The model provider rejected its credentials. Contact an administrator before retrying.";
+  }
+
+  if (error === "The model provider is not configured for this task.") {
+    return "The model provider is not configured for this task. Contact an administrator.";
+  }
+
   return genericTaskError;
 }
 
@@ -24,7 +44,7 @@ export function publicRunEvent(event: RunEvent): RunEvent {
   }
 
   if (event.type === "task-failed") {
-    return { ...event, error: publicTaskError() };
+    return { ...event, error: publicTaskError(event.error) };
   }
 
   return event;

@@ -36,6 +36,7 @@ export function ApprovalBadge({ caseItem }: ApprovalBadgeProps) {
     <Badge variant="success" data-testid="approval-badge" className="py-1">
       <BadgeCheck aria-hidden />
       Approved {formatDateTime(approval.approvedAt)}
+      {approval.reviewFailureAcknowledged ? " with incomplete independent review" : ""}
       {open > 0 ? ` with ${open} open ${open === 1 ? "item" : "items"}` : ""}
     </Badge>
   );
@@ -48,9 +49,10 @@ export interface ApprovalGateDialogProps {
   localNotes: LocalReviewNote[];
   cost: { total: number; tokens: number };
   approving: boolean;
+  reviewIncomplete?: boolean;
   // Set while review changes are still saving; approval waits so it records the saved state.
   waitingForChanges?: boolean;
-  onApprove: (note: string) => Promise<boolean>;
+  onApprove: (note: string, acknowledgeIncompleteReview: boolean) => Promise<boolean>;
 }
 
 const confidenceLevels = ["high", "medium", "low", "unassessed"] as const;
@@ -62,25 +64,37 @@ export function ApprovalGateDialog({
   localNotes,
   cost,
   approving,
+  reviewIncomplete = false,
   waitingForChanges = false,
   onApprove,
 }: ApprovalGateDialogProps) {
   const noteId = useId();
   const [note, setNote] = useState("");
+  const [acknowledgeIncompleteReview, setAcknowledgeIncompleteReview] = useState(false);
   const unresolved = summary.unresolved;
   const openNotes = localNotes.filter((item) => item.status === "open");
   const highCount = unresolved.filter((item) => item.question.severity === "high").length;
   const sections = summary.sections;
 
   async function handleApproveAsync() {
-    const approved = await onApprove(note);
+    const approved = await onApprove(note, acknowledgeIncompleteReview);
     if (approved) {
       setNote("");
+      setAcknowledgeIncompleteReview(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          setAcknowledgeIncompleteReview(false);
+        }
+
+        onOpenChange(nextOpen);
+      }}
+    >
       <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Approve this case</DialogTitle>
@@ -89,6 +103,24 @@ export function ApprovalGateDialog({
             Evianta never files or submits anything on your behalf.
           </DialogDescription>
         </DialogHeader>
+
+        {reviewIncomplete ? (
+          <div
+            role="alert"
+            className="flex flex-col gap-2 rounded-md border border-danger/30 bg-danger-subtle p-3 text-sm"
+          >
+            <p className="font-medium">The independent review did not complete.</p>
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={acknowledgeIncompleteReview}
+                onChange={(event) => setAcknowledgeIncompleteReview(event.target.checked)}
+                className="mt-0.5 size-4 shrink-0 accent-danger"
+              />
+              I acknowledge this case is being approved without a completed independent review.
+            </label>
+          </div>
+        ) : null}
 
         {unresolved.length > 0 ? (
           <div
@@ -226,7 +258,7 @@ export function ApprovalGateDialog({
           <Button
             onClick={() => void handleApproveAsync()}
             loading={approving}
-            disabled={waitingForChanges}
+            disabled={waitingForChanges || (reviewIncomplete && !acknowledgeIncompleteReview)}
           >
             {approving ? null : <BadgeCheck aria-hidden />}
             {unresolved.length > 0 ? `Approve with ${unresolved.length} open` : "Approve case"}

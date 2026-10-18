@@ -230,11 +230,19 @@ function lowConfidenceQuestion(
 }
 
 function eventKindFor(kind: MsmeDocumentKind): DocumentEventKind | undefined {
-  if (kind === "purchase-order" || kind === "agreement") {
-    return kind;
+  switch (kind) {
+    case "purchase-order":
+    case "agreement":
+      return kind;
+    case "invoice":
+      return "invoice-copy";
+    case "delivery-record":
+      return "delivery";
+    case "correspondence":
+      return "correspondence";
+    default:
+      return undefined;
   }
-
-  return undefined;
 }
 
 export function documentFindings(
@@ -242,13 +250,74 @@ export function documentFindings(
   pages: readonly PaymentReviewPage[],
 ): AgentFindingInput[] {
   const findings: AgentFindingInput[] = [];
+  const structuredEvents: {
+    kind: DocumentEventKind;
+    documentId: string;
+    date: string;
+    reference?: string;
+  }[] = [
+    ...output.invoices.flatMap((invoice) => {
+      const date = toIsoDate(invoice.date);
+      return date && invoice.source
+        ? [
+            {
+              kind: "invoice-copy" as const,
+              documentId: invoice.source.documentId,
+              date,
+              reference: invoice.invoiceNumber,
+            },
+          ]
+        : [];
+    }),
+    ...output.deliveries.flatMap((delivery) => {
+      const date = toIsoDate(delivery.date);
+      return date && delivery.source
+        ? [
+            {
+              kind: "delivery" as const,
+              documentId: delivery.source.documentId,
+              date,
+              reference: delivery.reference,
+            },
+          ]
+        : [];
+    }),
+    ...output.correspondence.flatMap((item) => {
+      const date = toIsoDate(item.date);
+      return date && item.source
+        ? [
+            {
+              kind: "correspondence" as const,
+              documentId: item.source.documentId,
+              date,
+            },
+          ]
+        : [];
+    }),
+  ];
 
   output.documents.forEach((document, index) => {
     const label = KIND_LABELS[document.kind];
     const title = [label, document.reference].filter(Boolean).join(" ");
     const date = toIsoDate(document.date);
     const eventKind = eventKindFor(document.kind);
-    const eventLabel = document.kind === "agreement" ? `${title} entered into` : `${title} issued`;
+    const eventLabel =
+      document.kind === "agreement"
+        ? `${title} entered into`
+        : document.kind === "purchase-order"
+          ? `${title} issued`
+          : `${title} dated`;
+    const eventInvoiceRefs =
+      document.kind === "invoice" && document.reference ? [document.reference] : [];
+    const hasMatchingStructuredEvent = structuredEvents.some(
+      (event) =>
+        event.kind === eventKind &&
+        event.documentId === document.documentId &&
+        event.date === date &&
+        (!document.reference ||
+          !event.reference ||
+          normalizeInvoiceNumber(document.reference) === normalizeInvoiceNumber(event.reference)),
+    );
 
     findings.push({
       summary: `${title}${date ? ` dated ${date}` : ""}${document.summary ? `: ${truncate(document.summary, 160)}` : ""}`,
@@ -256,11 +325,15 @@ export function documentFindings(
       severity: "info",
       confidence: confidenceOf(document.source, pages),
       evidence: sourceEvidence(document.source ?? { documentId: document.documentId }, title),
-      ...(date && eventKind
+      ...(date && eventKind && !hasMatchingStructuredEvent
         ? {
             dates: [
               {
-                key: documentEventDateKey(eventKind, [], document.reference ?? `${index + 1}`),
+                key: documentEventDateKey(
+                  eventKind,
+                  eventInvoiceRefs,
+                  document.reference ?? `${index + 1}`,
+                ),
                 label: eventLabel,
                 date,
               },
