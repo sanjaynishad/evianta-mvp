@@ -4,12 +4,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Deployment environment
+        required: true
+        type: choice
+        default: production
+        options:
+          - development
+          - production
 
 permissions:
   contents: read
 
 concurrency:
-  group: cloud-run-${{ github.event_name == 'push' && 'development' || 'production' }}
+  group: cloud-run-${{ inputs.environment || 'development' }}
   cancel-in-progress: false
 
 jobs:
@@ -17,11 +26,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    environment: ${{ github.event_name == 'push' && 'development' || 'production' }}
+    environment: ${{ inputs.environment || 'development' }}
     permissions:
       contents: read
       id-token: write
     env:
+      DEPLOY_ENVIRONMENT: ${{ inputs.environment || 'development' }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION || 'asia-south2' }}
       GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -29,12 +39,13 @@ jobs:
       GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
       GCP_WEB_SERVICE_ACCOUNT: ${{ vars.GCP_WEB_SERVICE_ACCOUNT }}
       ARTIFACT_REGISTRY_REPOSITORY: ${{ vars.ARTIFACT_REGISTRY_REPOSITORY || 'evianta' }}
-      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE || (github.event_name == 'push' && 'evianta-api-dev' || 'evianta-api') }}
-      CLOUD_RUN_WEB_SERVICE: ${{ vars.CLOUD_RUN_WEB_SERVICE || (github.event_name == 'push' && 'evianta-web-dev' || 'evianta-web') }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE || ((github.event_name == 'push' || inputs.environment == 'development') && 'evianta-api-dev' || 'evianta-api') }}
+      CLOUD_RUN_WEB_SERVICE: ${{ vars.CLOUD_RUN_WEB_SERVICE || ((github.event_name == 'push' || inputs.environment == 'development') && 'evianta-web-dev' || 'evianta-web') }}
+      CLOUD_RUN_AUTH_FLAG: ${{ vars.CLOUD_RUN_ALLOW_UNAUTHENTICATED == 'true' && '--allow-unauthenticated' || '--no-allow-unauthenticated' }}
       GOOGLE_CLOUD_LOCATION: ${{ vars.GOOGLE_CLOUD_LOCATION || 'global' }}
-      FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || (github.event_name == 'push' && 'evianta-dev' || '(default)') }}
+      FIRESTORE_DATABASE_ID: ${{ vars.FIRESTORE_DATABASE_ID || ((github.event_name == 'push' || inputs.environment == 'development') && 'evianta-dev' || '(default)') }}
       GCS_BUCKET: ${{ vars.GCS_BUCKET }}
-      EVIANTA_WEB_ORIGIN: ${{ vars.EVIANTA_WEB_ORIGIN }}
+      EVIANTA_WEB_ORIGIN: ${{ secrets.EVIANTA_WEB_ORIGIN }}
       EVIANTA_USAGE_VIEW_PATH: ${{ secrets.EVIANTA_USAGE_VIEW_PATH }}
       DEPLOY_SHA: ${{ github.sha }}
 
@@ -50,10 +61,15 @@ jobs:
           set -euo pipefail
           for name in GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_PROVIDER GCP_DEPLOY_SERVICE_ACCOUNT GCP_RUNTIME_SERVICE_ACCOUNT GCP_WEB_SERVICE_ACCOUNT GCS_BUCKET; do
             if [[ -z "${!name}" ]]; then
-              echo "::error::Missing production environment variable: $name"
+              echo "::error::Missing $DEPLOY_ENVIRONMENT environment variable: $name"
               exit 1
             fi
           done
+
+          if [[ ! "$CLOUD_RUN_SERVICE" =~ ^[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || [[ ! "$CLOUD_RUN_WEB_SERVICE" =~ ^[a-z]([a-z0-9-]*[a-z0-9])?$ ]] || (( ${#CLOUD_RUN_SERVICE} > 49 || ${#CLOUD_RUN_WEB_SERVICE} > 49 )); then
+            echo "::error::Cloud Run service names must be at most 49 characters and use lowercase letters, numbers, and hyphens."
+            exit 1
+          fi
 
           if [[ "$CLOUD_RUN_SERVICE" == "$CLOUD_RUN_WEB_SERVICE" ]]; then
             echo "::error::API and web service names must be different."
@@ -67,9 +83,13 @@ jobs:
 
           echo "IMAGE=$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPOSITORY/$CLOUD_RUN_SERVICE:$DEPLOY_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
           echo "WEB_IMAGE=$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPOSITORY/$CLOUD_RUN_WEB_SERVICE:$DEPLOY_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+          echo "::add-mask::$GCP_REGION-docker.pkg.dev"
+          echo "::add-mask::$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPOSITORY"
+          echo "::add-mask::$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPOSITORY/$CLOUD_RUN_SERVICE:$DEPLOY_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          echo "::add-mask::$GCP_REGION-docker.pkg.dev/$GCP_PROJECT_ID/$ARTIFACT_REGISTRY_REPOSITORY/$CLOUD_RUN_WEB_SERVICE:$DEPLOY_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 
       - name: Build API image
-        run: docker build --file apps/api/Dockerfile --tag "$IMAGE" .
+        run: docker build --file apps/api/Dockerfile --tag "$IMAGE" . > /dev/null
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -84,8 +104,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
-          docker push "$IMAGE"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet > /dev/null
+          docker push "$IMAGE" > /dev/null
 
       - name: Find existing web origin
         shell: bash
@@ -96,6 +116,10 @@ jobs:
             --region="$GCP_REGION" \
             --filter="metadata.name=$CLOUD_RUN_WEB_SERVICE" \
             --format='value(status.url)')"
+          if [[ -n "$url" ]]; then
+            echo "::add-mask::$url"
+          fi
+
           echo "CURRENT_WEB_URL=$url" >> "$GITHUB_ENV"
 
       - name: Write runtime configuration
@@ -156,8 +180,11 @@ jobs:
             --ingress=all \
             --startup-probe="httpGet.path=/healthz,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=24" \
             --env-vars-file="$RUNNER_TEMP/cloud-run-env.json" \
+            --labels="evianta-managed-by=github-actions,evianta-deploy-environment=$DEPLOY_ENVIRONMENT" \
             --clear-secrets \
-            --quiet
+            "$CLOUD_RUN_AUTH_FLAG" \
+            --quiet \
+            --format=none 2> >(sed -E 's#https?://[^[:space:]]+#[redacted-url]#g' >&2)
 
           url="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
@@ -168,12 +195,13 @@ jobs:
             exit 1
           fi
 
+          echo "::add-mask::$url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Build web image with deployed API URL
         env:
           API_URL: ${{ steps.deploy.outputs.url }}
-        run: docker build --file apps/web/Dockerfile --build-arg "NEXT_PUBLIC_EVIANTA_API_URL=$API_URL" --tag "$WEB_IMAGE" .
+        run: docker build --file apps/web/Dockerfile --build-arg "NEXT_PUBLIC_EVIANTA_API_URL=$API_URL" --tag "$WEB_IMAGE" . > /dev/null
 
       - name: Refresh Google Cloud credentials after web build
         uses: google-github-actions/auth@v3
@@ -183,7 +211,7 @@ jobs:
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Push web image
-        run: docker push "$WEB_IMAGE"
+        run: docker push "$WEB_IMAGE" > /dev/null
 
       - name: Deploy web
         id: web
@@ -205,8 +233,11 @@ jobs:
             --ingress=all \
             --startup-probe="httpGet.path=/,httpGet.port=8080,timeoutSeconds=5,periodSeconds=10,failureThreshold=24" \
             --env-vars-file="$RUNNER_TEMP/cloud-run-web-env.json" \
+            --labels="evianta-managed-by=github-actions,evianta-deploy-environment=$DEPLOY_ENVIRONMENT" \
             --clear-secrets \
-            --quiet
+            "$CLOUD_RUN_AUTH_FLAG" \
+            --quiet \
+            --format=none 2> >(sed -E 's#https?://[^[:space:]]+#[redacted-url]#g' >&2)
 
           url="$(gcloud run services describe "$CLOUD_RUN_WEB_SERVICE" \
             --project="$GCP_PROJECT_ID" \
@@ -217,6 +248,7 @@ jobs:
             exit 1
           fi
 
+          echo "::add-mask::$url"
           echo "url=$url" >> "$GITHUB_OUTPUT"
 
       - name: Add deployed web origin to API configuration
@@ -241,24 +273,21 @@ jobs:
 
       - name: Apply API CORS configuration
         run: |
+          set -euo pipefail
           gcloud run services update "$CLOUD_RUN_SERVICE" \
             --project="$GCP_PROJECT_ID" \
             --region="$GCP_REGION" \
             --env-vars-file="$RUNNER_TEMP/cloud-run-env.json" \
-            --quiet
+            --quiet \
+            --format=none 2> >(sed -E 's#https?://[^[:space:]]+#[redacted-url]#g' >&2)
 
       - name: Summarize deployment
-        env:
-          API_URL: ${{ steps.deploy.outputs.url }}
-          WEB_URL: ${{ steps.web.outputs.url }}
         shell: bash
         run: |
           {
             echo "## App deployment"
             echo
-            echo "- Web: $WEB_URL"
-            echo "- API: $API_URL"
-            echo "- Web image: $WEB_IMAGE"
-            echo "- API image: $IMAGE"
+            echo "- Status: deployed successfully"
+            echo "- Environment: $DEPLOY_ENVIRONMENT"
             echo "- Commit: $DEPLOY_SHA"
           } >> "$GITHUB_STEP_SUMMARY"
