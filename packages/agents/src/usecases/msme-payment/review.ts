@@ -16,7 +16,7 @@ import { formatInr, invoiceOutstandingFigureKey, MSME_FIGURE_KEYS } from "./cons
 import { preparePaymentCaseAsync } from "./context.js";
 import { quotedDates } from "./dates.js";
 import {
-  hasPaymentData,
+  hasVerifiablePaymentData,
   type PaymentReconcileOptions,
   type PaymentReconciliation,
 } from "./reconcile.js";
@@ -31,7 +31,7 @@ export interface MsmeExpectedFigure {
 export function expectedPaymentFigures(
   reconciliation: PaymentReconciliation,
 ): MsmeExpectedFigure[] {
-  if (!hasPaymentData(reconciliation)) {
+  if (!hasVerifiablePaymentData(reconciliation)) {
     return [];
   }
 

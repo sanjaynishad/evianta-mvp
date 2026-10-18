@@ -364,13 +364,16 @@ export function hasPaymentData(reconciliation: PaymentReconciliation): boolean {
   return reconciliation.records.invoices.length > 0;
 }
 
+export function hasPaymentRecordReadFailures(reconciliation: PaymentReconciliation): boolean {
+  return (
+    reconciliation.records.unreadable.length > 0 ||
+    reconciliation.records.unclassified.some((table) => table.recordKind !== undefined)
+  );
+}
+
 /** True only when no known invoice or payment rows were omitted from the reconciliation. */
 export function hasVerifiablePaymentData(reconciliation: PaymentReconciliation): boolean {
-  return (
-    hasPaymentData(reconciliation) &&
-    reconciliation.records.unreadable.length === 0 &&
-    !reconciliation.records.unclassified.some((table) => table.recordKind !== undefined)
-  );
+  return hasPaymentData(reconciliation) && !hasPaymentRecordReadFailures(reconciliation);
 }
 
 export function openLines(reconciliation: PaymentReconciliation): InvoiceLine[] {

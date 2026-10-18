@@ -274,12 +274,14 @@ describe("MSME delayed-payment use case end to end", () => {
     const questions = findings
       .filter((finding) => finding.taskId === preparationTask?.id)
       .flatMap((finding) => finding.openQuestions);
+    const allSectionContent = sections.map((section) => section.content).join("\n");
 
     expect(result.status).toBe("completed");
     expect(summary?.content).toContain("known invoice or payment records could not be read safely");
     expect(summary?.content).not.toContain("Rs 1,87,000");
     expect(draft?.content).toContain("A follow-up draft has been withheld");
     expect(draft?.content).not.toContain("Rs 1,87,000");
+    expect(allSectionContent).not.toContain("Rs 1,87,000");
     expect(questions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

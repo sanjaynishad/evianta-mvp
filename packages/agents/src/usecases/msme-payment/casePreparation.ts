@@ -51,6 +51,7 @@ import {
 import { recordTableKeys } from "./records.js";
 import {
   hasPaymentData,
+  hasPaymentRecordReadFailures,
   hasVerifiablePaymentData,
   type PaymentReconcileOptions,
   type PaymentReconciliation,
@@ -278,11 +279,7 @@ export const UNVERIFIABLE_PAYMENT_DATA_MESSAGE =
   "The outstanding balance could not be verified because known invoice or payment records could not be read safely. Readable rows may omit invoices or receipts; resolve the record-reading issues and confirm the complete records before stating a balance or making a payment demand.";
 
 function paymentDataIssueMessage(reconciliation: PaymentReconciliation): string {
-  const hasRecordReadingFailures =
-    reconciliation.records.unreadable.length > 0 ||
-    reconciliation.records.unclassified.some((table) => table.recordKind !== undefined);
-
-  return hasRecordReadingFailures || hasPaymentData(reconciliation)
+  return hasPaymentRecordReadFailures(reconciliation) || hasPaymentData(reconciliation)
     ? UNVERIFIABLE_PAYMENT_DATA_MESSAGE
     : NO_PAYMENT_DATA_MESSAGE;
 }
