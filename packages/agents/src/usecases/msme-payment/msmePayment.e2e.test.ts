@@ -1,4 +1,8 @@
-import { IMAGE_EXTRACTION_KEY, VERIFY_AGAINST_CURRENT_LAW } from "@evianta/ai";
+import {
+  AiOutputValidationError,
+  IMAGE_EXTRACTION_KEY,
+  VERIFY_AGAINST_CURRENT_LAW,
+} from "@evianta/ai";
 import { createInMemoryStore } from "@evianta/store";
 import { describe, expect, it } from "vitest";
 
@@ -11,12 +15,14 @@ import {
   MSME_AS_OF_DATE,
   MSME_DOCUMENT_IDS,
   MSME_EXPECTED,
+  msmeTaskHandlers,
   seedMsmeDocumentsAsync,
   type MsmeDraftOptions,
 } from "../../testing/msmePayment.js";
 import {
   CASE_PACK_QUESTIONS_SECTION_TITLE,
   CHRONOLOGY_SECTION_TITLE,
+  createCasePreparationAgent,
   FOLLOW_UP_DRAFT_SECTION_TITLE,
   PAYMENT_SUMMARY_SECTION_TITLE,
   SUPPORTING_DOCUMENTS_SECTION_TITLE,
@@ -253,6 +259,72 @@ describe("MSME delayed-payment use case end to end", () => {
         expect.objectContaining({
           severity: "high",
           text: expect.stringContaining("A follow-up draft was withheld"),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps deterministic case-pack sections and continues review after invalid draft output", async () => {
+    const casePreparation = createCasePreparationAgent();
+    const failingCasePreparation = {
+      ...casePreparation,
+      async runAsync() {
+        throw new AiOutputValidationError(
+          "The model returned invalid structured output.",
+          ["Invalid JSON"],
+          '{"draft":',
+          {
+            attempts: 2,
+            usage: { input: 800, output: 400, total: 1200 },
+            cost: 0.05,
+          },
+        );
+      },
+    };
+    const harness = await createMsmeHarnessAsync({
+      orchestrator: {
+        handlers: msmeTaskHandlers({
+          reconciliation: { asOfDate: MSME_AS_OF_DATE },
+          agents: { casePreparation: failingCasePreparation },
+        }),
+      },
+    });
+    const result = await harness.orchestrator.runCaseAsync(harness.caseRecord.id);
+    const { deliverables, findings, tasks } = await harness.readAsync();
+    const pack = deliverables[0];
+    const sections = pack?.sections ?? [];
+    const preparationTask = tasks.find((task) => task.assignedRole === "case-preparation");
+    const questions = findings
+      .filter((finding) => finding.taskId === preparationTask?.id)
+      .flatMap((finding) => finding.openQuestions);
+
+    expect(result.status).toBe("completed");
+    expect(preparationTask?.status).toBe("completed");
+    expect(preparationTask?.tokenUsage).toEqual({
+      input: 800,
+      output: 400,
+      total: 1200,
+    });
+    expect(preparationTask?.costEstimate).toBe(0.05);
+    expect(tasks.find((task) => task.assignedRole === "independent-review")?.status).toBe(
+      "completed",
+    );
+    expect(sections.map((section) => section.title)).toEqual(
+      expect.arrayContaining([
+        PAYMENT_SUMMARY_SECTION_TITLE,
+        CHRONOLOGY_SECTION_TITLE,
+        SUPPORTING_DOCUMENTS_SECTION_TITLE,
+        CASE_PACK_QUESTIONS_SECTION_TITLE,
+      ]),
+    );
+    expect(sections.some((section) => section.title === FOLLOW_UP_DRAFT_SECTION_TITLE)).toBe(false);
+    expect(questions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          text: expect.stringContaining(
+            "was not generated because the model returned an invalid response",
+          ),
         }),
       ]),
     );
