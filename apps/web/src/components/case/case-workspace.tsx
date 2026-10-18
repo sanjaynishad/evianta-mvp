@@ -43,7 +43,8 @@ import { ExportMenu } from "./export-menu";
 import { FailurePanel } from "./failure-panel";
 import { FindingsList } from "./findings-list";
 import { FixtureModeNotice } from "./fixture-mode-notice";
-import { RunProgressPanel } from "./run-progress-panel";
+import { MissionControl } from "./mission-control";
+import { ReviewBrief } from "../review/review-brief";
 import { SampleBanner } from "./sample-banner";
 
 export interface CaseWorkspaceProps {
@@ -122,11 +123,6 @@ function ReviewContent({
     ? state.findings.filter((finding) => streamedFindingIds.has(finding.id))
     : state.findings;
   const showDeliverables = !workspace.replaying;
-  const showProgress =
-    workspace.streaming ||
-    progress.status !== "completed" ||
-    progress.tasks.length === 0 ||
-    state.deliverables.length === 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -141,13 +137,16 @@ function ReviewContent({
         onRetry={() => void workspace.retryAsync()}
       />
 
-      {showProgress ? (
-        <RunProgressPanel
-          progress={progress}
-          replaying={workspace.replaying}
-          connection={workspace.connection}
-        />
-      ) : null}
+      <MissionControl
+        progress={progress}
+        replaying={workspace.replaying}
+        replayLabel={
+          dataSource.mode === "fixtures"
+            ? "Replay of fixture-generated sample events"
+            : "Replay of a saved run"
+        }
+        connection={workspace.connection}
+      />
 
       <section aria-labelledby="deliverables-heading" className="flex flex-col gap-4">
         <h2 id="deliverables-heading" className="text-base font-semibold print:sr-only">
@@ -384,6 +383,13 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
             copying={copyingCaseId === caseItem.id}
           />
         ) : null}
+
+        <ReviewBrief
+          caseItem={caseItem}
+          state={state}
+          summary={approvalSummary}
+          progress={progress}
+        />
 
         <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="run-announcer">
           {progress.announcement}
