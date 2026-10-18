@@ -28,37 +28,12 @@ export function EviantaLogomark({
         rx="8"
         className={tone === "brand" ? "fill-primary" : "fill-muted-foreground/15"}
       />
-      <circle
-        cx="10"
-        cy="10"
-        r="3.5"
-        className={tone === "brand" ? "fill-primary-foreground" : "fill-muted-foreground"}
-      />
       <path
-        d="M12.6 12.6 16.6 16.6"
-        strokeWidth="2.25"
+        d="M7 7h18M7 16h13M7 25h18"
+        fill="none"
+        strokeWidth="3.5"
         strokeLinecap="round"
         className={tone === "brand" ? "stroke-primary-foreground" : "stroke-muted-foreground"}
-      />
-      <rect
-        x="15"
-        y="15"
-        width="11"
-        height="12"
-        rx="2"
-        className={tone === "brand" ? "fill-primary-foreground" : "fill-muted-foreground"}
-      />
-      <path
-        d="M17.6 19.2h5.8"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-        className="stroke-highlight"
-      />
-      <path
-        d="M17.6 22.8h3.6"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        className={tone === "brand" ? "stroke-primary/50" : "stroke-background"}
       />
     </svg>
   );
