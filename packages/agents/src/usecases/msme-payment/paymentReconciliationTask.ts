@@ -39,7 +39,8 @@ import {
 } from "./context.js";
 import { normalizeInvoiceNumber, recordTableKeys, recordLocationLabel } from "./records.js";
 import {
-  hasPaymentData,
+  hasPaymentRecordReadFailures,
+  hasVerifiablePaymentData,
   outstandingComponents,
   type InvoiceLine,
   type PaymentAllocation,
@@ -468,12 +469,18 @@ export function paymentReconciliationTaskOutput(
 ): TaskOutput {
   const base = specialistResultToTaskOutput(result, false);
 
-  if (!hasPaymentData(reconciliation)) {
+  if (!hasVerifiablePaymentData(reconciliation)) {
+    const message = hasPaymentRecordReadFailures(reconciliation)
+      ? "Invoice or payment rows could not be read safely, so the outstanding amount is withheld. Resolve the record-reading issues and confirm the complete records before relying on a total."
+      : "No invoice register was found among the documents, so the outstanding amount could not be computed. Upload the invoices or a sales register.";
+
     return {
       ...base,
+      findings: [],
+      sections: [],
       openQuestions: [
         {
-          text: "No invoice register was found among the documents, so the outstanding amount could not be computed. Upload the invoices or a sales register.",
+          text: message,
           severity: "high",
         },
         ...(base.openQuestions ?? []),
@@ -559,7 +566,7 @@ export function createPaymentReconciliationTaskHandler(
         return preparePaymentCaseAsync(ctx, reconcileOptions);
       },
       buildInput(ctx, prepared) {
-        if (!hasPaymentData(prepared.reconciliation)) {
+        if (!hasVerifiablePaymentData(prepared.reconciliation)) {
           return buildSpecialistInput(ctx);
         }
 

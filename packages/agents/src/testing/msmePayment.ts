@@ -692,6 +692,12 @@ export interface MsmeDraftOptions {
   wrongTotal?: boolean;
   /** Adds a sentence claiming a reference was filed. */
   escalationClaim?: boolean;
+  /** Adds a definitive statutory-interest claim for testing the legal wording guard. */
+  statutoryInterestClaim?: boolean | string;
+  /** Puts a definitive interest claim in a draft-part title rather than its body. */
+  statutoryInterestTitle?: boolean;
+  /** Returns a plain fallback section with an unsupported interest claim in its title. */
+  fallbackInterestSection?: boolean;
 }
 
 function idsWhere(
@@ -715,6 +721,12 @@ export function followUpDraftOutput(
   );
   const disputeIds = idsWhere(priorFindings, (finding) => finding.summary.includes("Disputed:"));
   const total = options.wrongTotal ? "1,97,000" : "1,87,000";
+  const statutoryInterestClaim =
+    typeof options.statutoryInterestClaim === "string"
+      ? options.statutoryInterestClaim
+      : options.statutoryInterestClaim
+        ? "We are entitled to statutory interest under the MSMED Act."
+        : "";
 
   return {
     draft: {
@@ -739,9 +751,10 @@ export function followUpDraftOutput(
           findingIds: [...disputeIds, "not-a-finding"],
         },
         {
-          title: "Requested action",
-          content:
-            "We request payment of the undisputed balance within 15 days of this letter, or a call to agree a payment schedule.",
+          title: options.statutoryInterestTitle
+            ? "Statutory interest is payable"
+            : "Requested action",
+          content: `We request payment of the undisputed balance within 15 days of this letter, or a call to agree a payment schedule.${statutoryInterestClaim ? ` ${statutoryInterestClaim}` : ""}`,
           findingIds: [],
         },
       ],
@@ -788,9 +801,21 @@ export function withDynamicFollowUpDraft(
     async runStructuredAsync(request) {
       if (request.key === "case-preparation") {
         const input = request.input as { priorFindings?: PriorFinding[] };
+        const output = followUpDraftOutput(input.priorFindings ?? [], options);
+        const casePreparationOutput = options.fallbackInterestSection
+          ? {
+              ...output,
+              draft: undefined,
+              section: {
+                title: "Statutory interest is payable",
+                kind: "text" as const,
+                content: "Please review the account and confirm the balance.",
+              },
+            }
+          : output;
 
         ai.script("case-preparation", {
-          output: followUpDraftOutput(input.priorFindings ?? [], options),
+          output: casePreparationOutput,
           usage: { input: 3000, output: 1100 },
         });
       }

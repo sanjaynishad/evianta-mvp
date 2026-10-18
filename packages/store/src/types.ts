@@ -88,6 +88,7 @@ export interface LeaseFence {
 
 export interface ApprovalInput {
   unresolvedQuestionIds?: string[];
+  reviewFailureAcknowledged?: boolean;
   note?: string;
   approvedAt?: string;
 }

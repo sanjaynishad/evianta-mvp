@@ -63,6 +63,32 @@ describe("parseTextTable", () => {
     expect(parseFigure("Rs 12,400")).toBe(12400);
     expect(parseFigure("Mehta")).toBeUndefined();
   });
+
+  it("keeps escaped pipes inside a Markdown table cell", () => {
+    const table = parseTextTable(
+      "| Document | Summary |\n| --- | --- |\n| invoice.pdf | Buyer \\| seller correspondence |",
+    );
+
+    expect(table?.headers).toEqual(["Document", "Summary"]);
+    expect(table?.rows[0]?.cells).toEqual(["invoice.pdf", "Buyer | seller correspondence"]);
+  });
+
+  it("parses Markdown tables without rendering their syntax as plain text", () => {
+    const table = parseTextTable(
+      "| Invoice | Amount | Difference |\n| --- | ---: | ---: |\n| INV-1 | ₹12,400 | ₹400 |\n| Total | ₹12,400 | ₹400 |",
+    );
+
+    expect(table?.headers).toEqual(["Invoice", "Amount", "Difference"]);
+    expect(table?.rows).toEqual([
+      {
+        cells: ["INV-1", "₹12,400", "₹400"],
+        values: [undefined, 12400, 400],
+        discrepancy: true,
+      },
+    ]);
+    expect(table?.total?.cells).toEqual(["Total", "₹12,400", "₹400"]);
+    expect(table?.differenceColumn).toBe(2);
+  });
 });
 
 describe("parseTextTimeline", () => {

@@ -107,7 +107,11 @@ export interface CaseDataSource {
   ): Promise<Deliverable>;
   resolveOpenQuestionAsync(caseId: string, questionId: string, note?: string): Promise<Finding>;
   dismissOpenQuestionAsync(caseId: string, questionId: string, note?: string): Promise<Finding>;
-  approveCaseAsync(caseId: string, note?: string): Promise<ApproveCaseResponse>;
+  approveCaseAsync(
+    caseId: string,
+    note?: string,
+    acknowledgeIncompleteReview?: boolean,
+  ): Promise<ApproveCaseResponse>;
   listUsageCasesAsync(usageViewPath: string, query?: UsageCasesQuery): Promise<UsageCasesResponse>;
   getUsageSummaryAsync(usageViewPath: string): Promise<UsageSummary>;
   updateCaseAsync(caseId: string, update: UpdateCaseRequest): Promise<Case>;

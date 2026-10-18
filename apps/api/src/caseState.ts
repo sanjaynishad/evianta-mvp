@@ -211,7 +211,7 @@ export async function loadCaseStateAsync(
   return {
     case: caseRecord,
     tasks: record.tasks.map((task) =>
-      task.lastError ? { ...task, lastError: publicTaskError() } : task,
+      task.lastError ? { ...task, lastError: publicTaskError(task.lastError) } : task,
     ),
     findings: record.findings,
     evidence: record.evidence,

@@ -2,6 +2,7 @@ import {
   agentDirectoryResponseSchema,
   agentProfileSchema,
   apiErrorBodySchema,
+  approveCaseRequestSchema,
   approveCaseResponseSchema,
   askDeltaSchema,
   askRequestSchema,
@@ -378,10 +379,13 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       return response.finding;
     },
 
-    approveCaseAsync(caseId, note) {
+    approveCaseAsync(caseId, note, acknowledgeIncompleteReview) {
       return requestAsync(`${casePath(caseId)}/approve`, approveCaseResponseSchema, {
         method: "POST",
-        json: reviewNoteRequestSchema.parse({ note: note?.trim() || undefined }),
+        json: approveCaseRequestSchema.parse({
+          note: note?.trim() || undefined,
+          ...(acknowledgeIncompleteReview ? { acknowledgeIncompleteReview: true } : {}),
+        }),
       });
     },
 

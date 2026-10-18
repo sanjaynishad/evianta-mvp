@@ -11,7 +11,7 @@ import {
   textPaymentDocument as textDocument,
 } from "../../testing/msmePayment.js";
 import { readPaymentRecords, resolveInvoiceKey } from "./records.js";
-import { outstandingComponents, reconcilePayments } from "./reconcile.js";
+import { hasVerifiablePaymentData, outstandingComponents, reconcilePayments } from "./reconcile.js";
 import { creditTermsInDocuments, resolveCreditTerms } from "./terms.js";
 
 const AGREEMENT = msmeAgreementDocument();
@@ -107,6 +107,41 @@ describe("readPaymentRecords", () => {
         reason: "the amount of INV-2 is blank or unreadable",
       }),
     ]);
+  });
+
+  it("does not treat a partial balance as verifiable when invoice or payment rows are unreadable", async () => {
+    const invoices = ["Invoice No,Invoice Date,Amount", "INV-1,2024-01-01,1000"].join("\n");
+    const payments = [
+      "Payment Date,UTR,Invoice Ref,Amount Received",
+      "2024-01-10,UTR-1,INV-1,500",
+      "2024-01-11,UTR-2,INV-1,unreadable",
+    ].join("\n");
+    const reconciliation = await reconcileFixtureAsync(invoices, payments);
+
+    expect(reconciliation.lines[0]?.outstanding).toBe(500);
+    expect(reconciliation.records.unreadable).toHaveLength(1);
+    expect(hasVerifiablePaymentData(reconciliation)).toBe(false);
+  });
+
+  it("does not treat a balance as verifiable when a payment table has ambiguous amount columns", async () => {
+    const payments = [
+      "Payment Date,UTR,Invoice Ref,Amount Paid,Amount Received",
+      "2024-01-10,UTR-1,INV-1,500,500",
+    ].join("\n");
+    const documents = await fixtureDocumentsAsync(
+      ["Invoice No,Invoice Date,Amount", "INV-1,2024-01-01,1000"].join("\n"),
+      payments,
+    );
+    const reconciliation = reconcilePayments(
+      readPaymentRecords(documents),
+      resolveCreditTerms(documents),
+      { asOfDate: "2025-03-31" },
+    );
+
+    expect(reconciliation.records.unclassified).toEqual([
+      expect.objectContaining({ recordKind: "payments" }),
+    ]);
+    expect(hasVerifiablePaymentData(reconciliation)).toBe(false);
   });
 
   it("never reads a quantity total as the invoice amount", async () => {

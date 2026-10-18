@@ -36,6 +36,22 @@ function PlainBlock({ content }: { content: string }) {
   );
 }
 
+function InlineFormatting({ content }: { content: string }) {
+  return content
+    .split(/(\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}_])_[^_\n]+_(?![\p{L}\p{N}_]))/gu)
+    .map((part, index) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={index}>{part.slice(2, -2)}</strong>;
+      }
+
+      if (part.startsWith("_") && part.endsWith("_")) {
+        return <em key={index}>{part.slice(1, -1)}</em>;
+      }
+
+      return part;
+    });
+}
+
 function Paragraphs({ content }: { content: string }) {
   return (
     <div className="flex flex-col gap-3 text-sm leading-relaxed">
@@ -44,7 +60,7 @@ function Paragraphs({ content }: { content: string }) {
         .filter((paragraph) => paragraph.trim().length > 0)
         .map((paragraph, index) => (
           <p key={index} className="whitespace-pre-line">
-            {paragraph}
+            <InlineFormatting content={paragraph} />
           </p>
         ))}
     </div>

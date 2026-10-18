@@ -1,6 +1,12 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { failedCaseId, failedCaseState, failedRunEvents, fixtureFailure } from "@/fixtures";
+import {
+  failedCaseId,
+  failedCaseState,
+  failedRunEvents,
+  fixtureFailure,
+  getSampleStateForUseCase,
+} from "@/fixtures";
 import { failedRunMessage } from "@/fixtures/run-events";
 import { toast } from "@/components/ui/sonner";
 import { casePlannedUploadMessage } from "@/hooks/use-case-workspace";
@@ -94,6 +100,41 @@ describe("CaseWorkspace", () => {
         "You can run this copy and edit its results. Start a new case to use your own documents.",
     });
     success.mockRestore();
+  });
+
+  it("requires acknowledgement before approving without an independent review", async () => {
+    const state = structuredClone(failedCaseState);
+    const failedTask = state.tasks.find((task) => task.status === "failed");
+    if (!failedTask) {
+      throw new Error("The failed-case fixture must include a failed task.");
+    }
+
+    failedTask.assignedRole = "independent-review";
+    state.deliverables = getSampleStateForUseCase("msme-payment").deliverables.map(
+      (deliverable) => ({ ...deliverable, caseId: failedCaseId }),
+    );
+
+    const dataSource = createTestDataSource({ seedStates: [state] });
+    const approveSpy = vi.spyOn(dataSource, "approveCaseAsync");
+    renderWithDataSource(<CaseWorkspace caseId={failedCaseId} />, dataSource);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Review and approve" }));
+    const dialog = await screen.findByRole("dialog", { name: "Approve this case" });
+    expect(
+      within(dialog).getByText("The independent review did not complete."),
+    ).toBeInTheDocument();
+
+    const approve = within(dialog).getByRole("button", { name: /Approve with \d+ open/ });
+    expect(approve).toBeDisabled();
+    fireEvent.click(
+      within(dialog).getByRole("checkbox", {
+        name: "I acknowledge this case is being approved without a completed independent review.",
+      }),
+    );
+    expect(approve).toBeEnabled();
+
+    fireEvent.click(approve);
+    await waitFor(() => expect(approveSpy).toHaveBeenCalledWith(failedCaseId, undefined, true));
   });
 
   it(

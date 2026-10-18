@@ -328,6 +328,12 @@ export const reviewNoteRequestSchema = z.object({
 
 export type ReviewNoteRequest = z.infer<typeof reviewNoteRequestSchema>;
 
+export const approveCaseRequestSchema = reviewNoteRequestSchema.extend({
+  acknowledgeIncompleteReview: z.boolean().optional(),
+});
+
+export type ApproveCaseRequest = z.infer<typeof approveCaseRequestSchema>;
+
 export const openQuestionUpdateResponseSchema = z.object({
   finding: findingSchema,
 });

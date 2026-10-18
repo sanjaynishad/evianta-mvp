@@ -14,6 +14,9 @@ import { openEventStream } from "../sse.js";
 const noteSchema = z.string().trim().min(1).max(4000);
 
 const noteBodySchema = z.object({ note: noteSchema.optional() }).strict();
+const approvalBodySchema = noteBodySchema.extend({
+  acknowledgeIncompleteReview: z.boolean().optional(),
+});
 
 const askSchema = z.object({ question: z.string().trim().min(1).max(2000) }).strict();
 
@@ -64,7 +67,7 @@ export function createReviewRoutes(ctx: ApiContext): Router {
 
       await getMutableCaseAsync(ctx, caseId);
 
-      const { note } = noteBodySchema.parse(req.body ?? {});
+      const { note, acknowledgeIncompleteReview } = approvalBodySchema.parse(req.body ?? {});
       await ctx.approvals.runAsync(caseId, async () => {
         if (ctx.runs.isActive(caseId)) {
           throw new ApiError(
@@ -74,7 +77,19 @@ export function createReviewRoutes(ctx: ApiContext): Router {
           );
         }
 
-        const { findings } = await loadActiveRecordAsync(store, caseId);
+        const { findings, tasks } = await loadActiveRecordAsync(store, caseId);
+        const incompleteReview = tasks.some(
+          (task) => task.assignedRole === "independent-review" && task.status !== "completed",
+        );
+
+        if (incompleteReview && !acknowledgeIncompleteReview) {
+          throw new ApiError(
+            409,
+            "review-incomplete",
+            "The independent review failed. Retry it before approving, or explicitly acknowledge the incomplete review.",
+          );
+        }
+
         const unresolvedQuestions = findings
           .flatMap((finding) => finding.openQuestions)
           .filter((question) => question.status === "open")
@@ -82,6 +97,7 @@ export function createReviewRoutes(ctx: ApiContext): Router {
         const unresolvedQuestionIds = unresolvedQuestions.map((question) => question.id);
         const approved = await store.cases.recordApprovalAsync(caseId, {
           unresolvedQuestionIds,
+          reviewFailureAcknowledged: incompleteReview,
           approvedAt: ctx.now().toISOString(),
           ...(note ? { note } : {}),
         });
