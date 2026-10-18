@@ -27,12 +27,20 @@ export function createRunRoutes(ctx: ApiContext): Router {
   const router = Router();
 
   // The chat shows each run as a live card; a failure here must not undo the started run.
-  async function recordRunInChatAsync(caseId: string, runId: string, mode: RunMode) {
+  async function recordRunInChatAsync(
+    caseId: string,
+    runId: string,
+    mode: RunMode,
+    hasIntake: boolean,
+  ) {
     try {
-      await ctx.store.cases.updateIntakeAsync(caseId, (intake) => ({
-        ...(intake ?? createCaseIntake("form")),
-        stage: "submitted",
-      }));
+      if (hasIntake) {
+        await ctx.store.cases.updateIntakeAsync(caseId, (intake) => ({
+          ...(intake ?? createCaseIntake("form")),
+          stage: "submitted",
+        }));
+      }
+
       await ctx.store.chat.appendMessageAsync(caseId, {
         id: ctx.newId(),
         caseId,
@@ -101,9 +109,7 @@ export function createRunRoutes(ctx: ApiContext): Router {
 
       const started = ctx.runs.start(caseId, mode);
 
-      if (caseRecord.intake) {
-        await recordRunInChatAsync(caseId, started.runId, started.mode);
-      }
+      await recordRunInChatAsync(caseId, started.runId, started.mode, Boolean(caseRecord.intake));
 
       return {
         caseId,

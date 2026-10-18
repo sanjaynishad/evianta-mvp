@@ -70,7 +70,17 @@ function ConnectionItems({
         {connector?.name ?? connection.connectorId}
         <span className="text-xs font-normal text-muted-foreground">Demo</span>
       </h3>
-      {!items.data ? (
+      {items.error ? (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-md border border-danger/40 p-2.5"
+        >
+          <span className="text-sm text-danger">{describeError(items.error)}</span>
+          <Button size="sm" variant="outline" onClick={items.reload}>
+            Try again
+          </Button>
+        </div>
+      ) : !items.data ? (
         <Skeleton className="h-14 rounded-md" />
       ) : (
         <ul className="flex flex-col gap-1.5">
