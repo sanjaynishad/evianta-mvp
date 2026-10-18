@@ -44,6 +44,12 @@ Copy `.env.example` to `.env` and set values. `EVIANTA_AI_PROVIDER` selects `goo
 
 AI token prices live in [pricing.ts](packages/ai/src/pricing.ts). Costs are calculated per attempt, including failed attempts, then summed across retries. High-tier attempts with more than 200,000 input tokens use $2.50 per million input tokens and $15 per million output tokens, including thinking tokens. `estimateCost` accepts usage for a single attempt, not combined retry usage. Grounding request fees are not included.
 
+Model calls have a 120-second per-attempt timeout and up to two retries by default. A response stopped by its output limit is rejected even if its JSON parses, then retried with twice the output allowance, up to 16,384 tokens. Complete but invalid responses get one corrective retry with validation feedback. These retries share the same budget as transient-provider retries; no incomplete response is accepted as a successful result.
+
+Search-grounded requests use two stages: research notes with Google Search, then schema-constrained formatting without search. Both stages share the retry budget, and both are included in usage, cost, and attempt counts. Citations come only from the research stage's grounding metadata; formatting cannot add verified sources. Mock scripts can provide a separate `<key>:research` entry; otherwise research consumes the next step for `<key>`.
+
+Agent logs include provider, model, attempt, output allowance, finish reason, and separate output/thinking token counts when available. Task failures include case, run, and task IDs. Model diagnostics omit prompts and raw responses. Compare the same provider and model when investigating differences between local and deployed runs.
+
 Orchestration holds a store-backed per-case lease, renewed every 20 seconds and expiring after 60 seconds if the worker stops. Planning and task-attempt charges are journaled before their work is marked complete. Runs reconcile unapplied charges into case totals atomically and idempotently, including on resume. `retryFailedAsync` can finish accounting for completed work without calling the agents again.
 
 The store reads `GCS_BUCKET` for uploaded file bytes and `FIRESTORE_DATABASE_ID` for the database ID (defaults to `(default)`; a database named `default` is different). `EVIANTA_USAGE_VIEW_PATH` enables the unlisted usage view when set. `FIRESTORE_EMULATOR_HOST` and `STORAGE_EMULATOR_HOST` point the Firestore and Storage clients at local emulators.

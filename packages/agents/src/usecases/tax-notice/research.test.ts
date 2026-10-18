@@ -19,11 +19,12 @@ describe("tax-research handler", () => {
     await orchestrator.runCaseAsync(caseRecord.id);
 
     const { findings, deliverables } = await readAsync();
-    const call = mock.calls.find((item) => item.key === "tax-research");
+    const call = mock.calls.find((item) => item.key === "tax-research:research");
     const [section143, section199, rule37ba] = findings;
     const [section] = deliverables[0]?.sections ?? [];
 
     expect(call).toMatchObject({ tier: "mid", grounding: true });
+    expect(mock.calls.find((item) => item.key === "tax-research")?.grounding).toBe(false);
     expect(call?.prompt).not.toContain("PF-04");
     expect(section143).toMatchObject({
       summary: "Section 143(1)(a): Adjustments while processing the return",

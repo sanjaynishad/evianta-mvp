@@ -49,14 +49,6 @@ async function loadRuntimeAsync(provider: GenkitProvider): Promise<GenkitRuntime
   };
 }
 
-function groundedSystemPrompt(system: string, jsonSchema: unknown): string {
-  return [
-    system,
-    "Respond with a single JSON value and nothing else (no prose, no code fences). It must conform to this JSON Schema:",
-    JSON.stringify(jsonSchema),
-  ].join("\n\n");
-}
-
 function candidateOf(response: GenerateResponseData) {
   return response.candidates?.[0];
 }
@@ -80,17 +72,43 @@ function usageOf(response: GenerateResponseData): TokenUsage {
   return { input, output, total: input + output };
 }
 
-function toModelCallResult(response: GenerateResponseData): ModelCallResult {
+function toModelCallResult(
+  response: GenerateResponseData,
+  request: ModelCallRequest,
+  provider: GenkitProvider,
+): ModelCallResult {
   if (finishReasonOf(response) === "blocked") {
     const finishMessage = response.finishMessage ?? candidateOf(response)?.finishMessage;
 
     throw new AiNonTransientError(
       `The model blocked the response${finishMessage ? `: ${finishMessage}` : "."}`,
-      { reason: "blocked", usage: usageOf(response) },
+      {
+        reason: "blocked",
+        usage: usageOf(response),
+        diagnostics: [
+          {
+            provider,
+            model: request.model,
+            key: request.key,
+            attempt: 1,
+            maxOutputTokens: request.maxOutputTokens,
+            finishReason: "blocked",
+            outputTokens: response.usage?.outputTokens,
+            thinkingTokens: response.usage?.thoughtsTokens,
+          },
+        ],
+      },
     );
   }
 
-  return { text: textOf(response), usage: usageOf(response), raw: response.custom };
+  return {
+    text: textOf(response),
+    usage: usageOf(response),
+    finishReason: finishReasonOf(response),
+    outputTokens: response.usage?.outputTokens,
+    thinkingTokens: response.usage?.thoughtsTokens,
+    raw: response.custom,
+  };
 }
 
 export function createGenkitBackend(
@@ -126,18 +144,15 @@ export function createGenkitBackend(
         ? [{ media: request.media }, { text: request.prompt }]
         : [{ text: request.prompt }];
 
-      // Gemini 2.5 rejects constrained JSON output combined with the search tool, so grounded
-      // calls describe the schema in the prompt and the client validates the text.
-      const system = request.grounding
-        ? groundedSystemPrompt(request.system, runtime.toJsonSchema(request.outputSchema))
-        : request.system;
-
       try {
         await runtime.ai.generate({
           model: runtime.modelRef(request.model),
-          system,
+          system: request.system,
           prompt,
-          output: request.grounding ? undefined : { schema: request.outputSchema },
+          output:
+            request.grounding || request.outputFormat === "text"
+              ? { format: "text" }
+              : { schema: request.outputSchema },
           config: {
             maxOutputTokens: request.maxOutputTokens,
             ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
@@ -158,7 +173,7 @@ export function createGenkitBackend(
         throw new AiNonTransientError("The model returned no response.");
       }
 
-      return toModelCallResult(captured);
+      return toModelCallResult(captured, request, provider);
     },
   };
 }

@@ -137,7 +137,7 @@ function withDraftFallback(agent: CasePreparationAgent): CasePreparationAgent {
           caseId: ctx.case.id,
           taskId: ctx.task?.id,
           attempts: error.attempts,
-          issues: error.issues,
+          modelAttempts: error.diagnostics,
           cost: error.cost,
         });
 

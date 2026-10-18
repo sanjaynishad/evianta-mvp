@@ -15,6 +15,13 @@ export function publicRunError(error: string): string {
 }
 
 export function publicTaskError(error?: string): string {
+  if (
+    error ===
+    "The agent reached its response limit after automatic recovery. Retry the failed step."
+  ) {
+    return "The agent could not complete its response within the limit after automatic recovery. Retry the failed step.";
+  }
+
   if (error === "The agent returned output in an unexpected format. Retry the run to try again.") {
     return "The agent returned a response the task could not use. Retry the failed step; if it fails again, review the case inputs.";
   }

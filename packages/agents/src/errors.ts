@@ -6,6 +6,7 @@ import {
   AiTransientError,
   roundCost,
   type Cost,
+  type ModelAttemptDiagnostic,
 } from "@evianta/ai";
 import type { TokenUsage } from "@evianta/core";
 
@@ -54,6 +55,21 @@ export function billedUsageOf(error: unknown): BilledUsage | undefined {
   return undefined;
 }
 
+export function modelFailureDetails(error: unknown): {
+  error: string;
+  modelAttempts?: ModelAttemptDiagnostic[];
+} {
+  if (error instanceof BilledTaskError) {
+    return modelFailureDetails(error.cause);
+  }
+
+  if (error instanceof AiError) {
+    return { error: error.name, modelAttempts: error.diagnostics };
+  }
+
+  return { error: messageOf(error) };
+}
+
 /** Wraps a failing step that runs after a billed call so the call's usage is not lost. */
 export async function withBilledUsageAsync<T>(
   billed: BilledUsage,
@@ -79,6 +95,10 @@ export function describeTaskError(error: unknown): string {
   }
 
   if (error instanceof AiOutputValidationError) {
+    if (error.diagnostics.at(-1)?.failure === "truncated") {
+      return "The agent reached its response limit after automatic recovery. Retry the failed step.";
+    }
+
     return "The agent returned output in an unexpected format. Retry the run to try again.";
   }
 

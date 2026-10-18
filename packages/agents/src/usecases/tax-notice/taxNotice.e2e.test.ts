@@ -98,7 +98,8 @@ describe("tax-notice use case end to end", () => {
         ["independent-review", "high"],
       ]),
     );
-    expect(mock.calls.find((call) => call.key === "tax-research")?.grounding).toBe(true);
+    expect(mock.calls.find((call) => call.key === "tax-research:research")?.grounding).toBe(true);
+    expect(mock.calls.find((call) => call.key === "tax-research")?.grounding).toBe(false);
 
     expect(deliverables).toHaveLength(1);
     expect(pack).toMatchObject({

@@ -12,6 +12,8 @@ import {
   createMsmeCaseAsync,
   createMsmeHarnessAsync,
   createMsmePaymentAi,
+  documentAnalysisStep,
+  legalResearchStep,
   MSME_AS_OF_DATE,
   MSME_DOCUMENT_IDS,
   MSME_EXPECTED,
@@ -37,6 +39,37 @@ async function runMsmeCaseAsync(draft: MsmeDraftOptions = {}) {
 }
 
 describe("MSME delayed-payment use case end to end", () => {
+  it("finishes the first run after truncated analysis and malformed research formatting", async () => {
+    const { orchestrator, caseRecord, mock, readAsync } = await createMsmeHarnessAsync({
+      script: {
+        "document-analysis": [
+          { text: '{"documents":[', finishReason: "length" },
+          documentAnalysisStep(),
+        ],
+        "legal-research:research": legalResearchStep(),
+        "legal-research": [{ text: '```json\n{"routes":[' }, legalResearchStep()],
+      },
+    });
+
+    const result = await orchestrator.runCaseAsync(caseRecord.id);
+    const { tasks, deliverables, events } = await readAsync();
+
+    expect(result.status).toBe("completed");
+    expect(tasks.every((task) => task.status === "completed" && task.attempts === 1)).toBe(true);
+    expect(events.filter((event) => event.type === "task-failed")).toEqual([]);
+    expect(
+      mock.calls
+        .filter((call) => call.key === "document-analysis")
+        .map((call) => call.maxOutputTokens),
+    ).toEqual([4096, 8192]);
+    expect(mock.calls.filter((call) => call.key === "legal-research:research")).toHaveLength(1);
+    expect(mock.calls.filter((call) => call.key === "legal-research")).toHaveLength(2);
+    expect(
+      deliverables[0]?.sections.find((section) => section.title === PAYMENT_SUMMARY_SECTION_TITLE)
+        ?.content,
+    ).toContain(`**Outstanding as of ${MSME_AS_OF_DATE}: Rs 1,87,000**`);
+  });
+
   it("plans the six-task DAG", async () => {
     const store = createInMemoryStore();
     const { mock, ai } = createMsmePaymentAi();
@@ -93,7 +126,8 @@ describe("MSME delayed-payment use case end to end", () => {
         ["independent-review", "high"],
       ]),
     );
-    expect(mock.calls.find((call) => call.key === "legal-research")?.grounding).toBe(true);
+    expect(mock.calls.find((call) => call.key === "legal-research:research")?.grounding).toBe(true);
+    expect(mock.calls.find((call) => call.key === "legal-research")?.grounding).toBe(false);
     expect(mock.calls.filter((call) => call.key === IMAGE_EXTRACTION_KEY)).toHaveLength(1);
 
     expect(deliverables).toHaveLength(1);
