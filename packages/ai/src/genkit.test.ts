@@ -97,7 +97,8 @@ describe("createGenkitBackend", () => {
 
     expect(requests[0]?.config).toEqual({ maxOutputTokens: 1024, googleSearchRetrieval: {} });
     expect(requests[0]?.output?.schema).toBeUndefined();
-    expect(JSON.stringify(requests[0]?.messages[0])).toContain("JSON Schema");
+    expect(requests[0]?.output?.format).toBe("text");
+    expect(JSON.stringify(requests[0]?.messages[0])).toContain("Answer the question.");
     expect(result.raw).toEqual(groundingResponse);
   });
 
@@ -121,6 +122,9 @@ describe("createGenkitBackend", () => {
     await expect(backend.generateAsync(callRequest())).resolves.toEqual({
       text: '{"wrong":true}',
       usage: { input: 100, output: 50, total: 150 },
+      finishReason: "stop",
+      outputTokens: 20,
+      thinkingTokens: 30,
       raw: undefined,
     });
   });
@@ -189,8 +193,12 @@ describe("createGenkitBackend", () => {
   });
 
   it("runs a grounded structured call end to end through the client", async () => {
-    const { runtime } = fakeRuntime(() =>
-      textResponse('```json\n{"answer":"nine months"}\n```', { custom: groundingResponse }),
+    const { runtime, requests } = fakeRuntime((request) =>
+      request.config?.googleSearchRetrieval
+        ? textResponse("The deadline is nine months, subject to verification.", {
+            custom: groundingResponse,
+          })
+        : textResponse('{"answer":"nine months"}'),
     );
     const ai = createAiClient(createGenkitBackend("googleai", async () => runtime));
 
@@ -207,6 +215,29 @@ describe("createGenkitBackend", () => {
     expect(result.output).toEqual({ answer: "nine months" });
     expect(result.citations).toHaveLength(2);
     expect(result.needsVerification).toBe(false);
-    expect(result.usage).toEqual({ input: 100, output: 50, total: 150 });
+    expect(result.usage).toEqual({ input: 200, output: 100, total: 300 });
+    expect(result.attempts).toBe(2);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.output?.format).toBe("text");
+    expect(requests[1]?.output?.schema).toBeDefined();
+    expect(requests[1]?.config?.googleSearchRetrieval).toBeUndefined();
+    expect(JSON.stringify(requests[1]?.messages)).toContain("nine months");
   });
+
+  it.each(["googleai", "vertexai"] as const)(
+    "preserves truncation metadata through %s",
+    async (provider) => {
+      const { runtime } = fakeRuntime(() =>
+        textResponse('{"answer":"unfinished', { finishReason: "length" }),
+      );
+      const backend = createGenkitBackend(provider, async () => runtime);
+
+      await expect(backend.generateAsync(callRequest())).resolves.toMatchObject({
+        finishReason: "length",
+        outputTokens: 20,
+        thinkingTokens: 30,
+        usage: { input: 100, output: 50, total: 150 },
+      });
+    },
+  );
 });

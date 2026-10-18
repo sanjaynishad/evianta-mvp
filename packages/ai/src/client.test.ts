@@ -168,6 +168,71 @@ describe("runStructuredAsync", () => {
 
     await expect(ai.runStructuredAsync(request())).resolves.toMatchObject({ output: validOutput });
   });
+
+  it("adds validation feedback without copying the invalid response into the retry", async () => {
+    const ai = createMockAi({
+      "case-analysis": [
+        { output: { summary: "private invalid response", amount: -1 } },
+        { output: validOutput },
+      ],
+    });
+
+    await ai.runStructuredAsync(request());
+
+    expect(ai.calls[1]?.prompt).toContain(ai.calls[0]?.prompt);
+    expect(ai.calls[1]?.prompt).toContain("Validation issues: amount:");
+    expect(ai.calls[1]?.prompt).not.toContain("private invalid response");
+    expect(ai.calls[1]?.maxOutputTokens).toBe(4096);
+  });
+
+  it("retries confirmed truncation with a larger output cap even when the JSON parses", async () => {
+    const ai = createMockAi({
+      "case-analysis": [
+        {
+          text: JSON.stringify(validOutput),
+          finishReason: "length",
+          outputTokens: 100,
+          thinkingTokens: 3996,
+          usage: { input: 100, output: 4096 },
+        },
+        { output: validOutput, usage: { input: 100, output: 200 } },
+      ],
+    });
+
+    const result = await ai.runStructuredAsync(request());
+
+    expect(result.attempts).toBe(2);
+    expect(ai.calls.map((call) => call.maxOutputTokens)).toEqual([4096, 8192]);
+    expect(result.usage).toEqual({ input: 200, output: 4296, total: 4496 });
+    expect(result.diagnostics?.[0]).toMatchObject({
+      failure: "truncated",
+      finishReason: "length",
+      outputTokens: 100,
+      thinkingTokens: 3996,
+    });
+  });
+
+  it("stops increasing the output cap at 16384 and preserves safe failure diagnostics", async () => {
+    const ai = createMockAi({
+      "case-analysis": { text: '{"summary":"private unfinished', finishReason: "length" },
+    });
+
+    const error = await ai
+      .runStructuredAsync(request({ maxOutputTokens: 8192 }))
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AiOutputValidationError);
+    expect(error).toMatchObject({
+      attempts: 2,
+      diagnostics: [
+        { attempt: 1, maxOutputTokens: 8192, failure: "truncated" },
+        { attempt: 2, maxOutputTokens: 16384, failure: "truncated" },
+      ],
+    });
+    expect(JSON.stringify((error as AiOutputValidationError).diagnostics)).not.toContain(
+      "private unfinished",
+    );
+  });
 });
 
 describe("retries", () => {
@@ -596,6 +661,88 @@ describe("backoffDelayMs", () => {
 });
 
 describe("grounding", () => {
+  it("formats grounded notes without search and preserves only original grounding citations", async () => {
+    const source = { title: "Act", url: "https://example.gov/act", snippet: "Section 143(1)" };
+    const ai = createMockAi({
+      "tax-research:research": {
+        text: "The notice demands 12,500. Confirm the applicable deadline.",
+        groundingResponse: {
+          groundingChunks: [{ web: { uri: source.url, title: source.title } }],
+          groundingSupports: [{ segment: { text: source.snippet }, groundingChunkIndices: [0] }],
+        },
+        usage: { input: 100, output: 20 },
+      },
+      "tax-research": {
+        output: validOutput,
+        citations: [{ title: "Invented", url: "https://invented.invalid" }],
+        usage: { input: 200, output: 30 },
+      },
+    });
+
+    const result = await ai.runStructuredAsync(request({ key: "tax-research", grounding: true }));
+
+    expect(ai.calls.map((call) => call.grounding)).toEqual([true, false]);
+    expect(ai.calls[0]?.outputFormat).toBe("text");
+    expect(ai.calls[1]?.prompt).toContain("Confirm the applicable deadline.");
+    expect(ai.calls[1]?.prompt).toContain(source.url);
+    expect(result.citations).toEqual([source]);
+    expect(result.usage).toEqual({ input: 300, output: 50, total: 350 });
+    expect(result.cost).toBeCloseTo(estimateCost(result.usage, "mid"), 12);
+    expect(result.attempts).toBe(2);
+  });
+
+  it("retains research charges when formatting fails without repeating search", async () => {
+    const ai = createMockAi({
+      "tax-research:research": {
+        text: "Research notes",
+        usage: { input: 100, output: 20 },
+      },
+      "tax-research": {
+        text: "not json",
+        usage: { input: 200, output: 30 },
+      },
+    });
+
+    await expect(
+      ai.runStructuredAsync(request({ key: "tax-research", grounding: true })),
+    ).rejects.toMatchObject({
+      name: "AiOutputValidationError",
+      attempts: 3,
+      usage: { input: 500, output: 80, total: 580 },
+    });
+    expect(ai.calls.map((call) => call.grounding)).toEqual([true, false, false]);
+  });
+
+  it("shares the retry budget across research and formatting", async () => {
+    const ai = createMockAi(
+      {
+        "tax-research:research": [{ error: "transient" }, { text: "Research notes" }],
+        "tax-research": [{ text: "invalid" }, { output: validOutput }],
+      },
+      { maxRetries: 1 },
+    );
+
+    await expect(
+      ai.runStructuredAsync(request({ key: "tax-research", grounding: true })),
+    ).rejects.toMatchObject({ name: "AiOutputValidationError", attempts: 3 });
+    expect(ai.calls).toHaveLength(3);
+  });
+
+  it("does not format empty research or research blocked by the provider", async () => {
+    for (const step of [
+      { text: " " },
+      { error: new AiNonTransientError("blocked", { reason: "blocked" }) },
+    ]) {
+      const ai = createMockAi({ "tax-research:research": step }, { maxRetries: 0 });
+
+      await expect(
+        ai.runStructuredAsync(request({ key: "tax-research", grounding: true })),
+      ).rejects.toBeInstanceOf(Error);
+      expect(ai.calls).toHaveLength(1);
+      expect(ai.calls[0]?.grounding).toBe(true);
+    }
+  });
+
   it("returns citations from the grounding response when grounding is requested", async () => {
     const ai = createMockAi({
       "tax-research": {

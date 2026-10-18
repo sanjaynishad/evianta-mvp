@@ -17,7 +17,14 @@ export type MockStep =
       /** Raw provider response with grounding metadata; overrides `citations`. */
       groundingResponse?: unknown;
     }
-  | { text: string; usage?: Partial<TokenUsage>; groundingResponse?: unknown }
+  | {
+      text: string;
+      usage?: Partial<TokenUsage>;
+      groundingResponse?: unknown;
+      finishReason?: string;
+      outputTokens?: number;
+      thinkingTokens?: number;
+    }
   | {
       error: "transient" | "non-transient" | Error;
       message?: string;
@@ -125,10 +132,15 @@ function createMockBackend(initialScript: MockScript) {
         prompt: call.prompt,
         media: call.media,
         grounding: call.grounding,
+        outputFormat: call.outputFormat,
         maxOutputTokens: call.maxOutputTokens,
         temperature: call.temperature,
       });
-      const step = nextStep(call.key);
+      const scriptKey =
+        call.outputFormat === "text" && call.key?.endsWith(":research") && !steps.has(call.key)
+          ? call.key.slice(0, -":research".length)
+          : call.key;
+      const step = nextStep(scriptKey);
 
       if ("error" in step) {
         if (step.error instanceof Error) {
@@ -155,7 +167,18 @@ function createMockBackend(initialScript: MockScript) {
         step.groundingResponse ??
         ("citations" in step && step.citations ? groundingResponseFor(step.citations) : undefined);
 
-      return { text, usage: syntheticUsage(call, text, step.usage), raw };
+      return {
+        text,
+        usage: syntheticUsage(call, text, step.usage),
+        raw,
+        ...("text" in step
+          ? {
+              finishReason: step.finishReason,
+              outputTokens: step.outputTokens,
+              thinkingTokens: step.thinkingTokens,
+            }
+          : {}),
+      };
     },
   };
 

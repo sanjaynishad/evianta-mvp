@@ -21,7 +21,12 @@ import {
 } from "./agents/coordinator.js";
 import { collectAncestors, collectDependents, topologicalOrder } from "./dag.js";
 import { assembleDeliverables, deliverableIdFor } from "./deliverables.js";
-import { billedUsageOf, describeTaskError, OrchestratorError } from "./errors.js";
+import {
+  billedUsageOf,
+  describeTaskError,
+  modelFailureDetails,
+  OrchestratorError,
+} from "./errors.js";
 import { createRunEventBus, createRunEventEmitter, type RunEventBus } from "./events.js";
 import type { DeliverableSpec } from "./findings.js";
 import type {
@@ -815,7 +820,12 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
             addRunUsage(attemptUsage, attemptCost);
           }
 
-          logger.warn("Task failed.", { taskId: task.id, error: messageOf(error) });
+          logger.warn("Task failed.", {
+            caseId,
+            runId,
+            taskId: task.id,
+            ...modelFailureDetails(error),
+          });
           status.set(task.id, "failed");
           failedTaskIds.push(task.id);
 

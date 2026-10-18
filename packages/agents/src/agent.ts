@@ -59,7 +59,7 @@ export type AnyAgent = Agent<any, any>;
 
 export type AgentDefinition<I, O> = Omit<Agent<I, O>, "runAsync">;
 
-/** Builds an agent whose run is a single structured model call through the AI layer. */
+/** Builds an agent whose output is validated by the AI layer. */
 export function defineAgent<I, O>(definition: AgentDefinition<I, O>): Agent<I, O> {
   if (definition.profile.role !== definition.role) {
     throw new Error(
@@ -83,6 +83,15 @@ export function defineAgent<I, O>(definition: AgentDefinition<I, O>): Agent<I, O
         input,
         grounding: definition.grounding === true,
         maxOutputTokens: definition.maxOutputTokens,
+      });
+
+      ctx.logger.info("Model call finished.", {
+        caseId: ctx.case.id,
+        taskId: ctx.task?.id,
+        role: definition.role,
+        modelAttempts: result.diagnostics,
+        usage: result.usage,
+        cost: result.cost,
       });
 
       return {

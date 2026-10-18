@@ -514,7 +514,8 @@ describe("orchestrator", () => {
     expect(evidence.find((item) => item.sourceRef === "https://example.gov/143")).toMatchObject({
       excerpt: "Assessment",
     });
-    expect(ai.calls.find((call) => call.key === "tax-research")?.grounding).toBe(true);
+    expect(ai.calls.find((call) => call.key === "tax-research:research")?.grounding).toBe(true);
+    expect(ai.calls.find((call) => call.key === "tax-research")?.grounding).toBe(false);
     expect(deliverable?.sections.map((section) => section.title)).toEqual([
       tasks[0]?.title,
       tasks[1]?.title,

@@ -17,6 +17,7 @@ import { z } from "zod";
 
 import { defineAgent, silentLogger, type Agent, type AgentLogger } from "../agent.js";
 import { validateTaskGraph } from "../dag.js";
+import { describeTaskError, modelFailureDetails } from "../errors.js";
 import { referencePlanFor, type ReferencePlan } from "../plans.js";
 import { truncate } from "../text.js";
 
@@ -328,9 +329,17 @@ export async function planWithCoordinatorAsync(input: PlanCaseInput): Promise<Pl
       modelTier: result.modelTier,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message =
+      error instanceof AiError
+        ? describeTaskError(error)
+        : error instanceof Error
+          ? error.message
+          : String(error);
 
-    logger.warn("Coordinator planning failed; using the reference plan.", { error: message });
+    logger.warn("Coordinator planning failed; using the reference plan.", {
+      caseId: caseRecord.id,
+      ...modelFailureDetails(error),
+    });
 
     return {
       plan: referencePlanDraft(reference, [`Coordinator planning failed: ${message}`]),

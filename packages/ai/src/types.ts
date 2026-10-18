@@ -40,6 +40,7 @@ export interface RunStructuredResult<TOutput> {
   citations?: Citation[];
   /** True when grounding was requested but returned no citations. */
   needsVerification: boolean;
+  diagnostics?: ModelAttemptDiagnostic[];
 }
 
 export type ImageExtractionMode = "printed" | "handwriting" | "auto";
@@ -94,6 +95,7 @@ export interface ModelCallRequest {
   media?: ModelMedia;
   outputSchema: z.ZodTypeAny;
   grounding: boolean;
+  outputFormat?: "text";
   maxOutputTokens: number;
   temperature?: number;
   signal: AbortSignal;
@@ -102,8 +104,24 @@ export interface ModelCallRequest {
 export interface ModelCallResult {
   text: string;
   usage: TokenUsage;
+  finishReason?: string;
+  outputTokens?: number;
+  thinkingTokens?: number;
   /** Provider response, used for grounding metadata. */
   raw?: unknown;
+}
+
+export interface ModelAttemptDiagnostic {
+  provider: AiProvider;
+  model: ModelId;
+  key?: string;
+  attempt: number;
+  maxOutputTokens: number;
+  finishReason?: string;
+  outputTokens?: number;
+  thinkingTokens?: number;
+  failure?: "truncated" | "invalid-output" | "transient" | "non-transient";
+  durationMs?: number;
 }
 
 export interface ModelBackend {

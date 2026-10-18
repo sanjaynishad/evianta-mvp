@@ -1,12 +1,14 @@
 import type { TokenUsage } from "@evianta/core";
 
 import { emptyUsage, type Cost } from "./pricing.js";
+import type { ModelAttemptDiagnostic } from "./types.js";
 
 export interface AiErrorDetails {
   cause?: unknown;
   attempts?: number;
   usage?: TokenUsage;
   cost?: Cost;
+  diagnostics?: ModelAttemptDiagnostic[];
 }
 
 export abstract class AiError extends Error {
@@ -14,6 +16,7 @@ export abstract class AiError extends Error {
   readonly attempts: number;
   readonly usage: TokenUsage;
   readonly cost: Cost;
+  readonly diagnostics: ModelAttemptDiagnostic[];
 
   constructor(message: string, details: AiErrorDetails = {}) {
     super(message, details.cause === undefined ? undefined : { cause: details.cause });
@@ -21,6 +24,7 @@ export abstract class AiError extends Error {
     this.attempts = details.attempts ?? 0;
     this.usage = details.usage ?? emptyUsage();
     this.cost = details.cost ?? 0;
+    this.diagnostics = details.diagnostics ?? [];
   }
 }
 

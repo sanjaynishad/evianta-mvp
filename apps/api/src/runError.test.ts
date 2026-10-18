@@ -3,6 +3,16 @@ import { describe, expect, it } from "vitest";
 import { publicTaskError } from "./runError.js";
 
 describe("publicTaskError", () => {
+  it("explains an exhausted response limit without exposing model output", () => {
+    expect(
+      publicTaskError(
+        "The agent reached its response limit after automatic recovery. Retry the failed step.",
+      ),
+    ).toBe(
+      "The agent could not complete its response within the limit after automatic recovery. Retry the failed step.",
+    );
+  });
+
   it("gives a safe retry action for transient provider failures", () => {
     expect(
       publicTaskError(
