@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MSME_DOCUMENT_IDS, reconcileMsmeFixtureAsync } from "../../testing/msmePayment.js";
 import {
+  conditionLegalClaimsInSection,
   NO_PAYMENT_DATA_MESSAGE,
   paymentSummaryFinding,
   paymentSummaryMarkdown,
@@ -43,6 +44,45 @@ describe("case pack summary", () => {
       [MSME_DOCUMENT_IDS.invoices, "C3"],
       [MSME_DOCUMENT_IDS.payments, "D3"],
     ]);
+  });
+});
+
+describe("statutory-interest claim conditioning", () => {
+  it("catches claims across p.a. abbreviations and soft line wraps", () => {
+    const result = conditionLegalClaimsInSection({
+      title: "Draft",
+      content:
+        "Statutory interest at 18.5% p.a. is payable.\nStatutory interest under the MSMED Act\nis payable at three times the bank rate.",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(
+      result.section.content.match(/Any statutory interest remains subject to confirmation/g),
+    ).toHaveLength(2);
+    expect(result.section.content).not.toContain("18.5% p.a. is payable");
+    expect(result.section.content).not.toContain("is payable at three times the bank rate");
+  });
+
+  it("preserves a principal demand when interest is already conditional", () => {
+    const content =
+      "The principal amount of Rs 1,000 is due; any statutory interest is subject to eligibility checks.";
+    const result = conditionLegalClaimsInSection({ title: "Payment", content });
+
+    expect(result.changed).toBe(false);
+    expect(result.section.content).toBe(content);
+  });
+
+  it("conditions fallback section titles as well as content and reports the change", () => {
+    const result = conditionLegalClaimsInSection({
+      title: "Statutory interest is payable",
+      content: "Please review the account and confirm the balance.",
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.section.title).toContain(
+      "Any statutory interest remains subject to confirmation",
+    );
+    expect(result.section.content).toBe("Please review the account and confirm the balance.");
   });
 });
 

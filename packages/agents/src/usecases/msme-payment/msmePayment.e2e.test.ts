@@ -357,6 +357,32 @@ describe("MSME delayed-payment use case end to end", () => {
     );
   });
 
+  it("conditions fallback section titles and warns when the title changes", async () => {
+    const { deliverables, findings, tasks } = await runMsmeCaseAsync({
+      fallbackInterestSection: true,
+    });
+    const fallback = deliverables[0]?.sections.find(
+      (section) =>
+        section.title === "Statutory interest is payable" ||
+        section.title.includes("Any statutory interest remains subject to confirmation"),
+    );
+    const preparationTask = tasks.find((task) => task.assignedRole === "case-preparation");
+    const questions = findings
+      .filter((finding) => finding.taskId === preparationTask?.id)
+      .flatMap((finding) => finding.openQuestions);
+
+    expect(fallback?.title).toContain("Any statutory interest remains subject to confirmation");
+    expect(fallback?.content).toBe("Please review the account and confirm the balance.");
+    expect(questions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "high",
+          text: expect.stringContaining("A statutory-interest statement"),
+        }),
+      ]),
+    );
+  });
+
   it("catches a seeded wrong outstanding total during independent review", async () => {
     const { mock, result, tasks, findings } = await runMsmeCaseAsync({ wrongTotal: true });
     const reviewTask = tasks.find((task) => task.assignedRole === "independent-review");

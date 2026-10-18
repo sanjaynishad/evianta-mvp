@@ -696,6 +696,8 @@ export interface MsmeDraftOptions {
   statutoryInterestClaim?: boolean | string;
   /** Puts a definitive interest claim in a draft-part title rather than its body. */
   statutoryInterestTitle?: boolean;
+  /** Returns a plain fallback section with an unsupported interest claim in its title. */
+  fallbackInterestSection?: boolean;
 }
 
 function idsWhere(
@@ -799,9 +801,21 @@ export function withDynamicFollowUpDraft(
     async runStructuredAsync(request) {
       if (request.key === "case-preparation") {
         const input = request.input as { priorFindings?: PriorFinding[] };
+        const output = followUpDraftOutput(input.priorFindings ?? [], options);
+        const casePreparationOutput = options.fallbackInterestSection
+          ? {
+              ...output,
+              draft: undefined,
+              section: {
+                title: "Statutory interest is payable",
+                kind: "text" as const,
+                content: "Please review the account and confirm the balance.",
+              },
+            }
+          : output;
 
         ai.script("case-preparation", {
-          output: followUpDraftOutput(input.priorFindings ?? [], options),
+          output: casePreparationOutput,
           usage: { input: 3000, output: 1100 },
         });
       }

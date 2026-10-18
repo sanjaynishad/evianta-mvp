@@ -307,6 +307,8 @@ export function documentFindings(
         : document.kind === "purchase-order"
           ? `${title} issued`
           : `${title} dated`;
+    const eventInvoiceRefs =
+      document.kind === "invoice" && document.reference ? [document.reference] : [];
     const hasMatchingStructuredEvent = structuredEvents.some(
       (event) =>
         event.kind === eventKind &&
@@ -327,7 +329,11 @@ export function documentFindings(
         ? {
             dates: [
               {
-                key: documentEventDateKey(eventKind, [], document.reference ?? `${index + 1}`),
+                key: documentEventDateKey(
+                  eventKind,
+                  eventInvoiceRefs,
+                  document.reference ?? `${index + 1}`,
+                ),
                 label: eventLabel,
                 date,
               },

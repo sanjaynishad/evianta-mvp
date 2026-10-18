@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { reconcileMsmeFixtureAsync } from "../../testing/msmePayment.js";
 import { documentAnalysisOutputSchema, documentFindings } from "./documentAnalysis.js";
-import { documentFactsFromFindings } from "./chronology.js";
+import {
+  documentFactsFromFindings,
+  findInconsistencies,
+  findMissingDocuments,
+} from "./chronology.js";
 
 describe("document-analysis chronology facts", () => {
   it("keeps source-backed delivery and correspondence dates when detailed extraction is absent", () => {
@@ -66,9 +71,9 @@ describe("document-analysis chronology facts", () => {
 
     const facts = documentFactsFromFindings(documentFindings(output, []));
 
-    expect(facts.events.map(({ kind, date, label }) => [kind, date, label])).toEqual([
-      ["invoice-copy", "2025-01-10", "Invoice INV_2025_001 dated"],
-    ]);
+    expect(
+      facts.events.map(({ kind, date, label, invoiceKeys }) => [kind, date, label, invoiceKeys]),
+    ).toEqual([["invoice-copy", "2025-01-10", "Invoice INV_2025_001 dated", ["INV2025001"]]]);
   });
 
   it("does not suppress an unrelated document event from a structured fact in the same file", () => {
@@ -102,6 +107,49 @@ describe("document-analysis chronology facts", () => {
       ["agreement", "Agreement AG-1 entered into"],
       ["invoice-copy", "Invoice INV-1 copy dated"],
     ]);
+  });
+
+  it("uses classified invoice references for date consistency and register checks", async () => {
+    const output = documentAnalysisOutputSchema.parse({
+      findings: [],
+      documents: [
+        {
+          documentId: "invoice-doc",
+          kind: "invoice",
+          reference: "INV-1001",
+          date: "2024-09-21",
+          parties: [],
+        },
+        {
+          documentId: "unregistered-invoice-doc",
+          kind: "invoice",
+          reference: "INV-9999",
+          date: "2025-01-01",
+          parties: [],
+        },
+      ],
+      paymentTerms: [],
+      invoices: [],
+      deliveries: [],
+      correspondence: [],
+    });
+    const reconciliation = await reconcileMsmeFixtureAsync();
+    const facts = documentFactsFromFindings(documentFindings(output, []));
+
+    expect(findInconsistencies(reconciliation, facts)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summary: expect.stringContaining("[INV-1001] Date mismatch"),
+        }),
+      ]),
+    );
+    expect(findMissingDocuments(reconciliation, facts)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          summary: expect.stringContaining("[INV9999] Invoice mentioned"),
+        }),
+      ]),
+    );
   });
 
   it("does not duplicate a classified date when the same event is extracted in detail", () => {

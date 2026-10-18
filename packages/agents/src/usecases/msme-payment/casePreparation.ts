@@ -149,52 +149,110 @@ export function findEscalationClaims(text: string): string[] {
 function conditionLegalClaimsInText(content: string): { content: string; changed: boolean } {
   let changed = false;
   const abbreviationPattern =
-    /(?:\b(?:rs|inr|mr|mrs|ms|dr|no|nos|approx|etc|vs|sec|ss|cl|art|para|pvt|ltd|co)|\b(?:e\.g|i\.e))\.$/i;
+    /\b(?:rs|inr|mr|mrs|ms|dr|no|nos|approx|etc|vs|sec|ss|cl|art|para|pvt|ltd|co)\.$/i;
+  const multiPeriodAbbreviationPattern = /\b(?:[a-z]\.){2,}$/i;
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  let normalizedContent = "";
+  lines.forEach((line, index) => {
+    normalizedContent += line;
+
+    if (index === lines.length - 1) {
+      return;
+    }
+
+    const nextLine = lines[index + 1] ?? "";
+    const currentIsListItem = /^\s*(?:[-*•]|\d+[.)])\s+/.test(line);
+    const nextIsListItem = /^\s*(?:[-*•]|\d+[.)])\s+/.test(nextLine);
+
+    normalizedContent +=
+      !line.trim() || !nextLine.trim() || currentIsListItem || nextIsListItem ? "\n" : " ";
+  });
+
   const segments: string[] = [];
   let start = 0;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const character = content[index];
-    if (character !== "." && character !== "!" && character !== "?" && character !== "\n") {
+  for (let index = 0; index < normalizedContent.length; index += 1) {
+    const character = normalizedContent[index];
+    if (character === "\n") {
+      segments.push(normalizedContent.slice(start, index + 1));
+      start = index + 1;
       continue;
     }
 
-    if (
+    if (character !== "." && character !== "!" && character !== "?") {
+      continue;
+    }
+
+    const nextCharacter = normalizedContent[index + 1] ?? "";
+    if (nextCharacter && !/\s/.test(nextCharacter)) {
+      continue;
+    }
+
+    const beforePeriod = normalizedContent.slice(start, index + 1).trimEnd();
+    const nextText = normalizedContent.slice(index + 1).trimStart();
+    const isDecimal =
       character === "." &&
-      ((/\d/.test(content[index - 1] ?? "") && /\d/.test(content[index + 1] ?? "")) ||
-        abbreviationPattern.test(content.slice(start, index + 1).trimEnd()))
-    ) {
+      /\d/.test(normalizedContent[index - 1] ?? "") &&
+      /\d/.test(nextCharacter);
+    const isAbbreviation =
+      character === "." &&
+      ((multiPeriodAbbreviationPattern.test(beforePeriod) && /^[a-z\d]/i.test(nextText)) ||
+        (abbreviationPattern.test(beforePeriod) && /^[a-z\d]/i.test(nextText)));
+
+    if (isDecimal || isAbbreviation) {
       continue;
     }
 
-    segments.push(content.slice(start, index + 1));
+    segments.push(normalizedContent.slice(start, index + 1));
     start = index + 1;
   }
 
-  if (start < content.length) {
-    segments.push(content.slice(start));
+  if (start < normalizedContent.length) {
+    segments.push(normalizedContent.slice(start));
   }
 
   const conditionedContent = segments
     .map((sentence) => {
-      const discussesInterest = /\b(?:interest|MSMED|statutory)\b/i.test(sentence);
-      const assertsEntitlement =
-        /\b(?:entitled|liable|payable|due|must\s+pay|shall\s+pay|will\s+pay|will\s+accrue|accrues|can\s+(?:claim|recover))\b/i.test(
-          sentence,
-        );
+      return sentence
+        .split(/(?<=;)/)
+        .map((clause) => {
+          const discussesInterest = /\b(?:interest|msmed|statutory)\b/i.test(clause);
+          const assertsEntitlement =
+            /\b(?:entitled|liable|payable|due|must\s+pay|shall\s+pay|will\s+pay|will\s+accrue|accrues|can\s+(?:claim|recover))\b/i.test(
+              clause,
+            );
+          const isConditional =
+            /\b(?:subject\s+to|conditional\s+on|only\s+if|if\s+(?:eligible|applicable|confirmed)|where\s+eligible|unless|may\s+be|could\s+be|might\s+be|potentially|not\s+(?:yet\s+)?(?:confirmed|established))\b/i.test(
+              clause,
+            );
 
-      if (!discussesInterest || !assertsEntitlement) {
-        return sentence;
-      }
+          if (!discussesInterest || !assertsEntitlement || isConditional) {
+            return clause;
+          }
 
-      changed = true;
-      const leadingWhitespace = sentence.match(/^\s*/)?.[0] ?? "";
+          changed = true;
+          const leadingWhitespace = clause.match(/^\s*/)?.[0] ?? "";
+          const trailingWhitespace = clause.match(/\s*$/)?.[0] ?? "";
+          const semicolon = /;\s*$/.test(clause) ? ";" : "";
 
-      return `${leadingWhitespace}Any statutory interest remains subject to confirmation of the supplier's eligibility, the relevant dates, and current law. Confirm these points with an adviser before relying on this route.`;
+          return `${leadingWhitespace}Any statutory interest remains subject to confirmation of the supplier's eligibility, the relevant dates, and current law. Confirm these points with an adviser before relying on this route.${semicolon}${trailingWhitespace}`;
+        })
+        .join("");
     })
     .join("");
 
   return { content: conditionedContent, changed };
+}
+
+export function conditionLegalClaimsInSection<T extends { title: string; content: string }>(
+  section: T,
+): { section: T; changed: boolean } {
+  const title = conditionLegalClaimsInText(section.title);
+  const content = conditionLegalClaimsInText(section.content);
+
+  return {
+    section: { ...section, title: title.content, content: content.content },
+    changed: title.changed || content.changed,
+  };
 }
 
 function conditionLegalClaims(draft: FollowUpDraft): { draft: FollowUpDraft; changed: boolean } {
@@ -210,7 +268,7 @@ function conditionLegalClaims(draft: FollowUpDraft): { draft: FollowUpDraft; cha
     draft: {
       ...draft,
       subject: condition(draft.subject),
-      ...(draft.salutation ? { salutation: condition(draft.salutation) } : {}),
+      ...(draft.salutation !== undefined ? { salutation: condition(draft.salutation) } : {}),
       parts: draft.parts.map((part) => ({
         ...part,
         title: condition(part.title),
@@ -709,8 +767,8 @@ export function casePreparationTaskOutput(
     }
   } else if (paymentDataAvailable) {
     for (const section of base.sections ?? []) {
-      const conditioned = conditionLegalClaimsInText(section.content);
-      sections.push({ ...section, content: conditioned.content });
+      const conditioned = conditionLegalClaimsInSection(section);
+      sections.push(conditioned.section);
 
       if (conditioned.changed) {
         openQuestions.push({
