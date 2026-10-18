@@ -102,4 +102,15 @@ describe("source connector catalog", () => {
 
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("proposes only datasets whose content fits the checklist item", () => {
+    const satisfiesOf = (connectorId: string, datasetId: string) =>
+      sourceConnectorCatalog
+        .find((connector) => connector.id === connectorId)
+        ?.datasets.find((dataset) => dataset.id === datasetId)?.satisfies;
+
+    expect(satisfiesOf("tally", "party-ledger")).toEqual([]);
+    expect(satisfiesOf("tally", "receipts")).toEqual(["statement"]);
+    expect(satisfiesOf("busy", "ledger")).toEqual(["ledger"]);
+  });
 });

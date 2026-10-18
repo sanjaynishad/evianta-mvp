@@ -95,7 +95,8 @@ export const sourceConnectorCatalog: readonly SourceConnectorDefinition[] = [
         id: "party-ledger",
         label: "Party ledger",
         description: "Ledger account for a customer or income head, with receipts and balance.",
-        satisfies: ["ledger"],
+        // Mixed sales, receipts, and balances: browsable, but never proposed for a checklist item.
+        satisfies: [],
       },
       {
         id: "receipts",
@@ -130,7 +131,7 @@ export const sourceConnectorCatalog: readonly SourceConnectorDefinition[] = [
         id: "ledger",
         label: "Ledger",
         description: "Ledger account with vouchers and running balance.",
-        satisfies: ["ledger", "statement"],
+        satisfies: ["ledger"],
       },
       {
         id: "sales-register",

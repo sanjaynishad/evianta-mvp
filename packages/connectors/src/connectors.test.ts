@@ -81,7 +81,7 @@ describe("demo source connectors", () => {
             })),
         );
 
-        expect(checks.length).toBeGreaterThan(0);
+        expect(checks.length).toBeGreaterThanOrEqual(item.satisfies.length);
 
         for (const check of checks) {
           expect({ fileName: item.fileName, matched: check.matched }).toEqual({
