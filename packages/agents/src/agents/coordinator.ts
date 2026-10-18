@@ -2,8 +2,10 @@ import { AiError, emptyUsage, type AiClient, type Cost } from "@evianta/ai";
 import {
   agentProfileSchema,
   agentRoleSchema,
+  clarificationAnswerSchema,
   openQuestionSeveritySchema,
   useCaseSchema,
+  withClarifications,
   type AgentRole,
   type Case,
   type DocumentMetadata,
@@ -22,6 +24,7 @@ export const coordinatorInputSchema = z.object({
   useCase: useCaseSchema,
   title: z.string(),
   description: z.string().optional(),
+  clarifications: z.array(clarificationAnswerSchema).optional(),
   documents: z.array(
     z.object({
       documentId: z.string(),
@@ -294,6 +297,7 @@ export async function planWithCoordinatorAsync(input: PlanCaseInput): Promise<Pl
     useCase: caseRecord.useCase,
     title: caseRecord.title,
     description: caseRecord.description,
+    ...withClarifications(caseRecord.intake),
     documents: input.documents.map(({ metadata, extraction }) => ({
       documentId: metadata.id,
       name: metadata.name,

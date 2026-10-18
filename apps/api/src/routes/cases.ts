@@ -200,10 +200,16 @@ export function createCaseRoutes(ctx: ApiContext): Router {
       const { caseId } = caseParamsSchema.parse(req.params);
       const update = updateCaseRequestSchema.parse(req.body);
 
-      await requireUnplannedCaseAsync(ctx, caseId, "changing the case");
-      await store.cases.updateCaseDetailsAsync(caseId, update);
+      // Registered as activity so a run cannot start while the edit is in flight.
+      const endUpdate = ctx.uploads.begin(caseId);
+      try {
+        await requireUnplannedCaseAsync(ctx, caseId, "changing the case");
+        await store.cases.updateCaseDetailsAsync(caseId, update);
 
-      res.json(await updateIntakeAsync(ctx, caseId, optionalVisitorId(req)));
+        res.json(await updateIntakeAsync(ctx, caseId, optionalVisitorId(req)));
+      } finally {
+        endUpdate();
+      }
     }),
   );
 
@@ -214,17 +220,22 @@ export function createCaseRoutes(ctx: ApiContext): Router {
       const visitorId = requireVisitorId(req);
       const change = updateIntakeRequestSchema.parse(req.body);
 
-      await requireUnplannedCaseAsync(ctx, caseId, "changing the case");
+      const endUpdate = ctx.uploads.begin(caseId);
+      try {
+        await requireUnplannedCaseAsync(ctx, caseId, "changing the case");
 
-      const owned = new Set(
-        (await listOwnedConnectionsAsync(ctx, visitorId)).map((connection) => connection.id),
-      );
+        const owned = new Set(
+          (await listOwnedConnectionsAsync(ctx, visitorId)).map((connection) => connection.id),
+        );
 
-      res.json(
-        await updateIntakeAsync(ctx, caseId, visitorId, (intake) =>
-          applyIntakeChange(intake, change, owned),
-        ),
-      );
+        res.json(
+          await updateIntakeAsync(ctx, caseId, visitorId, (intake) =>
+            applyIntakeChange(intake, change, owned),
+          ),
+        );
+      } finally {
+        endUpdate();
+      }
     }),
   );
   router.get(

@@ -29,8 +29,8 @@ export interface ChatThreadController {
   dismissPending: () => void;
   stop: () => void;
   applyCase: (caseRecord: Case) => void;
-  runAsync: () => Promise<void>;
-  retryRunAsync: () => Promise<void>;
+  runAsync: () => Promise<boolean>;
+  retryRunAsync: () => Promise<boolean>;
   reloadMessages: () => void;
 }
 
@@ -115,13 +115,15 @@ export function useChatThread(
   }
 
   async function runAsync() {
-    await workspace.runAsync();
+    const started = await workspace.runAsync();
     reloadMessages();
+    return started;
   }
 
   async function retryRunAsync() {
-    await workspace.retryAsync();
+    const started = await workspace.retryAsync();
     reloadMessages();
+    return started;
   }
 
   return {

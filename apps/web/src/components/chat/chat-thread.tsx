@@ -279,7 +279,10 @@ export function ChatThread({ caseId }: ChatThreadProps) {
         thread.applyCase(await dataSource.updateCaseAsync(caseId, details));
       }
 
-      await thread.runAsync();
+      if (!(await thread.runAsync())) {
+        return;
+      }
+
       trackEvent("case_submitted", { mode: intake.mode, use_case: state?.case.useCase });
       setSubmitOpen(false);
     } catch (error) {

@@ -31,6 +31,23 @@ export const intakeClarificationSchema = z.object({
 
 export type IntakeClarification = z.infer<typeof intakeClarificationSchema>;
 
+export const clarificationAnswerSchema = z.object({
+  question: z.string(),
+  answer: z.string(),
+});
+
+export type ClarificationAnswer = z.infer<typeof clarificationAnswerSchema>;
+
+export function withClarifications(intake: CaseIntake | undefined): {
+  clarifications?: ClarificationAnswer[];
+} {
+  const clarifications = (intake?.clarifications ?? []).flatMap((clarification) => {
+    const answer = clarification.answer?.trim();
+    return answer ? [{ question: clarification.text, answer }] : [];
+  });
+  return clarifications.length > 0 ? { clarifications } : {};
+}
+
 export const sourceProposalStatusSchema = z.enum(["proposed", "attached", "dismissed"]);
 
 export type SourceProposalStatus = z.infer<typeof sourceProposalStatusSchema>;

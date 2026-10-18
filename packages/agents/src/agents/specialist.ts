@@ -1,6 +1,7 @@
 import {
   agentProfileSchema,
   agentRoleSchema,
+  clarificationAnswerSchema,
   findingDateSchema,
   findingFigureSchema,
   findingSeveritySchema,
@@ -89,6 +90,7 @@ export const specialistInputSchema = z.object({
     title: z.string(),
     description: z.string().optional(),
     useCase: useCaseSchema.optional(),
+    clarifications: z.array(clarificationAnswerSchema).optional(),
   }),
   task: z.object({
     title: z.string(),

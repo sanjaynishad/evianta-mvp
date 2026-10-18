@@ -10,7 +10,25 @@ import {
   createCaseIntake,
   refreshSourceProposals,
   summarizeIntakeRequirements,
+  withClarifications,
 } from "./intake.js";
+
+describe("withClarifications", () => {
+  it("keeps only answered clarifications", () => {
+    const intake = caseIntakeSchema.parse({
+      clarifications: [
+        { id: "period", text: "Which period?", answer: "FY 2024-25" },
+        { id: "blank", text: "Anything else?", answer: "  " },
+        { id: "open", text: "Buyer GSTIN?" },
+      ],
+    });
+
+    expect(withClarifications(intake)).toEqual({
+      clarifications: [{ question: "Which period?", answer: "FY 2024-25" }],
+    });
+    expect(withClarifications(undefined)).toEqual({});
+  });
+});
 
 describe("buildIntakeRequirements", () => {
   it("marks matched documents as received and the rest as missing", () => {

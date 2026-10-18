@@ -85,8 +85,9 @@ export interface CaseWorkspaceController {
   uploadLockedReason: string | undefined;
   reload: () => void;
   mutate: (update: (current: CaseState) => CaseState) => void;
-  runAsync: () => Promise<void>;
-  retryAsync: () => Promise<void>;
+  // Resolve to true once the run has started; failures are already shown as a toast.
+  runAsync: () => Promise<boolean>;
+  retryAsync: () => Promise<boolean>;
   replay: () => void;
   // Resolves with the documents that uploaded; failures stay listed in `uploads`.
   uploadAsync: (files: File[]) => Promise<CaseDocument[]>;
@@ -284,9 +285,9 @@ export function useCaseWorkspace(
     return () => clearTimeout(timer);
   }, [hasProcessingDocuments, reload, state, caseState.error]);
 
-  async function startAsync(action: WorkspaceAction) {
+  async function startAsync(action: WorkspaceAction): Promise<boolean> {
     if (!state) {
-      return;
+      return false;
     }
 
     setBusyAction(action);
@@ -314,12 +315,15 @@ export function useCaseWorkspace(
         lastEventId: state.run.lastEventSeq,
       });
       reload();
+      return true;
     } catch (error) {
       if (!showReadOnlyToast(error)) {
         toast.error(action === "run" ? "The run did not start" : "The retry did not start", {
           description: describeError(error),
         });
       }
+
+      return false;
     } finally {
       setBusyAction(undefined);
     }
