@@ -43,6 +43,15 @@ describe("CaseWorkspace", () => {
     expect(
       await screen.findByRole("heading", { level: 1, name: /ITR intimation 143\(1\)\(a\)/ }),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("review-brief")).toHaveTextContent("Case review brief");
+    expect(screen.getByTestId("review-brief")).toHaveTextContent("Findings with sources");
+    expect(screen.getByTestId("mission-control")).toHaveTextContent("Mission Control");
+    expect(
+      screen.getByRole("region", { name: "Deliverable" }).closest("[class*='lg:min-h-96']"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("list", { name: "Specialist agents and their work" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Fixture mode.")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Read-only sample" })).toHaveTextContent(
       "Try this case to run it and edit the results in your own copy. Start a new case to use your own documents.",
@@ -54,6 +63,20 @@ describe("CaseWorkspace", () => {
     expect(screen.getByTestId("case-cost")).toHaveTextContent("$0.0688");
     expect(screen.getByText("Handwriting detected, flagged for review")).toBeInTheDocument();
     expect(screen.getByTestId("run-announcer")).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("labels sample replay events as fixture-generated", async () => {
+    renderWithDataSource(
+      <CaseWorkspace caseId="sample-tax-notice" />,
+      createTestDataSource({ replayIntervalMs: 100 }),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Replay run" }));
+
+    expect(
+      await screen.findByText("Replay of fixture-generated sample events"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("review-brief")).not.toBeInTheDocument();
   });
 
   it("opens the source viewer at the cited rows from an evidence chip", async () => {
@@ -175,7 +198,7 @@ describe("CaseWorkspace", () => {
   it(
     "runs a new case without documents and streams progress to completion",
     async () => {
-      const dataSource = createTestDataSource();
+      const dataSource = createTestDataSource({ replayIntervalMs: 50 });
       const created = await dataSource.createCaseAsync({
         title: "Sales check",
         useCase: "data-analysis",
@@ -183,7 +206,23 @@ describe("CaseWorkspace", () => {
       renderWithDataSource(<CaseWorkspace caseId={created.id} />, dataSource);
 
       fireEvent.click(await screen.findByRole("button", { name: /Run case/ }));
-      expect(screen.getByRole("region", { name: "Progress" })).not.toHaveAttribute("aria-busy");
+      expect(screen.getByRole("region", { name: "Mission Control" })).not.toHaveAttribute(
+        "aria-busy",
+      );
+      await waitFor(() => {
+        expect(
+          screen.getAllByRole("article", {
+            name: /Compute sales metrics and trends.*Depends on: Check data quality/,
+          }).length,
+        ).toBeGreaterThan(0);
+      });
+      expect(
+        screen
+          .getAllByRole("article", {
+            name: /Compute sales metrics and trends.*Depends on: Check data quality/,
+          })
+          .every((card) => card.getAttribute("data-agent-status") === "pending"),
+      ).toBe(true);
 
       await waitFor(
         () => expect(screen.getByRole("region", { name: "Summary" })).toBeInTheDocument(),

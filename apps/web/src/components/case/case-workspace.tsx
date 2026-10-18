@@ -43,7 +43,8 @@ import { ExportMenu } from "./export-menu";
 import { FailurePanel } from "./failure-panel";
 import { FindingsList } from "./findings-list";
 import { FixtureModeNotice } from "./fixture-mode-notice";
-import { RunProgressPanel } from "./run-progress-panel";
+import { MissionControl } from "./mission-control";
+import { ReviewBrief } from "../review/review-brief";
 import { SampleBanner } from "./sample-banner";
 
 export interface CaseWorkspaceProps {
@@ -122,11 +123,6 @@ function ReviewContent({
     ? state.findings.filter((finding) => streamedFindingIds.has(finding.id))
     : state.findings;
   const showDeliverables = !workspace.replaying;
-  const showProgress =
-    workspace.streaming ||
-    progress.status !== "completed" ||
-    progress.tasks.length === 0 ||
-    state.deliverables.length === 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -141,13 +137,16 @@ function ReviewContent({
         onRetry={() => void workspace.retryAsync()}
       />
 
-      {showProgress ? (
-        <RunProgressPanel
-          progress={progress}
-          replaying={workspace.replaying}
-          connection={workspace.connection}
-        />
-      ) : null}
+      <MissionControl
+        progress={progress}
+        replaying={workspace.replaying}
+        replayLabel={
+          dataSource.mode === "fixtures"
+            ? "Replay of fixture-generated sample events"
+            : "Replay of a saved run"
+        }
+        connection={workspace.connection}
+      />
 
       <section aria-labelledby="deliverables-heading" className="flex flex-col gap-4">
         <h2 id="deliverables-heading" className="text-base font-semibold print:sr-only">
@@ -316,7 +315,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
       onRevealPanel={() => layoutRef.current?.revealSide()}
       onNavigate={() => layoutRef.current?.showContent() ?? false}
     >
-      <div className="flex flex-col gap-4 lg:h-[calc(100dvh-5.5rem)] print:h-auto">
+      <div className="flex flex-col gap-4 lg:min-h-[calc(100dvh-5.5rem)] print:h-auto">
         {dataSource.mode === "fixtures" ? <FixtureModeNotice /> : null}
 
         <header className="flex flex-col gap-2">
@@ -385,6 +384,15 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
           />
         ) : null}
 
+        {!workspace.replaying ? (
+          <ReviewBrief
+            caseItem={caseItem}
+            state={state}
+            summary={approvalSummary}
+            progress={progress}
+          />
+        ) : null}
+
         <p className="sr-only" aria-live="polite" aria-atomic="true" data-testid="run-announcer">
           {progress.announcement}
         </p>
@@ -392,6 +400,7 @@ export function CaseWorkspace({ caseId }: CaseWorkspaceProps) {
         <ReviewLayout
           handleRef={layoutRef}
           sideLabel={sideLabel}
+          className="lg:min-h-96"
           outline={
             <CaseOutline
               caseItem={caseItem}

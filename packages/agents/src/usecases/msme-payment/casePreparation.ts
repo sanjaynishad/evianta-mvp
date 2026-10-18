@@ -1,4 +1,4 @@
-import { VERIFY_AGAINST_CURRENT_LAW } from "@evianta/ai";
+import { AiOutputValidationError, VERIFY_AGAINST_CURRENT_LAW } from "@evianta/ai";
 import type { Finding, OpenQuestionSeverity } from "@evianta/core";
 import { z } from "zod";
 
@@ -122,6 +122,47 @@ export function createCasePreparationAgent(): CasePreparationAgent {
 // Claims that the platform sent, filed, or escalated something. Historical facts such as "reminders
 // were sent on" or "we sent reminders" are not claims; sending or submitting this letter, a
 // complaint, a claim, or a reference is.
+function withDraftFallback(agent: CasePreparationAgent): CasePreparationAgent {
+  return {
+    ...agent,
+    async runAsync(input, ctx) {
+      try {
+        return await agent.runAsync(input, ctx);
+      } catch (error) {
+        if (!(error instanceof AiOutputValidationError)) {
+          throw error;
+        }
+
+        ctx.logger.warn("MSME case-preparation draft was omitted after invalid model output.", {
+          caseId: ctx.case.id,
+          taskId: ctx.task?.id,
+          attempts: error.attempts,
+          issues: error.issues,
+          cost: error.cost,
+        });
+
+        return {
+          output: {
+            findings: [],
+            openQuestions: [
+              {
+                text: "The proposed follow-up draft was not generated because the model returned an invalid response. The deterministic payment reconciliation, chronology, and supporting-document sections are still available. Prepare the draft manually from the verified information before contacting the buyer.",
+                severity: "high",
+              },
+            ],
+          },
+          usage: error.usage,
+          cost: error.cost,
+          modelTier: agent.modelTier,
+          attempts: error.attempts,
+          citations: [],
+          needsVerification: false,
+        };
+      }
+    },
+  };
+}
+
 const CLAIM_OBJECT =
   "(?:this|the|a|an|our)\\s+(?:letter|notice|complaint|claim|reference|application|petition|case|draft|escalation)";
 const ACTION_CLAIMS: readonly RegExp[] = [
@@ -828,7 +869,10 @@ export function createCasePreparationTaskHandler(
 
   return createPreparedHandler<EvidenceAnalysisPrepared, SpecialistInput, CasePreparationOutput>(
     "case-preparation",
-    (ctx) => resolveAgentFor(ctx, "case-preparation", agent, createCasePreparationAgent),
+    (ctx) =>
+      withDraftFallback(
+        resolveAgentFor(ctx, "case-preparation", agent, createCasePreparationAgent),
+      ),
     {
       prepareAsync(ctx) {
         return prepareEvidenceAnalysisAsync(ctx, reconcileOptions);
