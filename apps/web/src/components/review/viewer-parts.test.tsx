@@ -51,7 +51,7 @@ describe("SectionBody text formatting", () => {
           evidenceIds: [],
           reviewStatus: "pending",
         }}
-        content="**Subject:** Follow up\n\n_Prepared for review._"
+        content={"**Subject:** Follow up\n\n_Prepared for review._"}
         sources={[]}
         onOpenEvidence={vi.fn()}
       />,
@@ -60,6 +60,29 @@ describe("SectionBody text formatting", () => {
     expect(screen.getByText("Subject:", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByText("Prepared for review.", { selector: "em" })).toBeInTheDocument();
     expect(screen.queryByText(/\*\*|_/)).not.toBeInTheDocument();
+  });
+
+  it("preserves underscores embedded in source identifiers", () => {
+    render(
+      <SectionBody
+        section={{
+          id: "draft",
+          title: "Draft",
+          kind: "text",
+          content: "",
+          producedByRole: "case-preparation",
+          findingIds: [],
+          evidenceIds: [],
+          reviewStatus: "pending",
+        }}
+        content="Invoice INV_2025_001"
+        sources={[]}
+        onOpenEvidence={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Invoice INV_2025_001")).toBeInTheDocument();
+    expect(screen.queryByText("2025", { selector: "em" })).not.toBeInTheDocument();
   });
 });
 

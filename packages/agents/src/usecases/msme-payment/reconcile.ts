@@ -364,6 +364,15 @@ export function hasPaymentData(reconciliation: PaymentReconciliation): boolean {
   return reconciliation.records.invoices.length > 0;
 }
 
+/** True only when no known invoice or payment rows were omitted from the reconciliation. */
+export function hasVerifiablePaymentData(reconciliation: PaymentReconciliation): boolean {
+  return (
+    hasPaymentData(reconciliation) &&
+    reconciliation.records.unreadable.length === 0 &&
+    !reconciliation.records.unclassified.some((table) => table.recordKind !== undefined)
+  );
+}
+
 export function openLines(reconciliation: PaymentReconciliation): InvoiceLine[] {
   return reconciliation.lines.filter((line) => line.outstanding > 0);
 }

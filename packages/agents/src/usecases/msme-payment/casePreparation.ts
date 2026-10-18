@@ -51,6 +51,7 @@ import {
 import { recordTableKeys } from "./records.js";
 import {
   hasPaymentData,
+  hasVerifiablePaymentData,
   type PaymentReconcileOptions,
   type PaymentReconciliation,
 } from "./reconcile.js";
@@ -146,20 +147,51 @@ export function findEscalationClaims(text: string): string[] {
 
 function conditionLegalClaimsInText(content: string): { content: string; changed: boolean } {
   let changed = false;
-  const conditionedContent = content.replace(/[^.!?\n]+[.!?]?/g, (sentence) => {
-    const discussesInterest = /\b(?:interest|MSMED|statutory)\b/i.test(sentence);
-    const assertsEntitlement =
-      /\b(?:entitled|liable|payable|due|must\s+pay|shall\s+pay|will\s+pay|will\s+accrue|accrues|can\s+(?:claim|recover))\b/i.test(
-        sentence,
-      );
+  const abbreviationPattern =
+    /(?:\b(?:rs|inr|mr|mrs|ms|dr|no|nos|approx|etc|vs|sec|ss|cl|art|para|pvt|ltd|co)|\b(?:e\.g|i\.e))\.$/i;
+  const segments: string[] = [];
+  let start = 0;
 
-    if (!discussesInterest || !assertsEntitlement) {
-      return sentence;
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index];
+    if (character !== "." && character !== "!" && character !== "?" && character !== "\n") {
+      continue;
     }
 
-    changed = true;
-    return "Any statutory interest remains subject to confirmation of the supplier's eligibility, the relevant dates, and current law. Confirm these points with an adviser before relying on this route.";
-  });
+    if (
+      character === "." &&
+      ((/\d/.test(content[index - 1] ?? "") && /\d/.test(content[index + 1] ?? "")) ||
+        abbreviationPattern.test(content.slice(start, index + 1).trimEnd()))
+    ) {
+      continue;
+    }
+
+    segments.push(content.slice(start, index + 1));
+    start = index + 1;
+  }
+
+  if (start < content.length) {
+    segments.push(content.slice(start));
+  }
+
+  const conditionedContent = segments
+    .map((sentence) => {
+      const discussesInterest = /\b(?:interest|MSMED|statutory)\b/i.test(sentence);
+      const assertsEntitlement =
+        /\b(?:entitled|liable|payable|due|must\s+pay|shall\s+pay|will\s+pay|will\s+accrue|accrues|can\s+(?:claim|recover))\b/i.test(
+          sentence,
+        );
+
+      if (!discussesInterest || !assertsEntitlement) {
+        return sentence;
+      }
+
+      changed = true;
+      const leadingWhitespace = sentence.match(/^\s*/)?.[0] ?? "";
+
+      return `${leadingWhitespace}Any statutory interest remains subject to confirmation of the supplier's eligibility, the relevant dates, and current law. Confirm these points with an adviser before relying on this route.`;
+    })
+    .join("");
 
   return { content: conditionedContent, changed };
 }
@@ -178,7 +210,11 @@ function conditionLegalClaims(draft: FollowUpDraft): { draft: FollowUpDraft; cha
       ...draft,
       subject: condition(draft.subject),
       ...(draft.salutation ? { salutation: condition(draft.salutation) } : {}),
-      parts: draft.parts.map((part) => ({ ...part, content: condition(part.content) })),
+      parts: draft.parts.map((part) => ({
+        ...part,
+        title: condition(part.title),
+        content: condition(part.content),
+      })),
       ...(draft.closing ? { closing: condition(draft.closing) } : {}),
     },
     changed,
@@ -238,14 +274,30 @@ function outstandingPosition(reconciliation: PaymentReconciliation) {
 export const NO_PAYMENT_DATA_MESSAGE =
   "The outstanding balance could not be reconciled because no readable invoice register was found. Uploaded invoice copies may show individual amounts, but they do not establish the full balance or payments received. Confirm the complete invoice and payment records before relying on a total.";
 
+export const UNVERIFIABLE_PAYMENT_DATA_MESSAGE =
+  "The outstanding balance could not be verified because known invoice or payment records could not be read safely. Readable rows may omit invoices or receipts; resolve the record-reading issues and confirm the complete records before stating a balance or making a payment demand.";
+
+function paymentDataIssueMessage(reconciliation: PaymentReconciliation): string {
+  const hasRecordReadingFailures =
+    reconciliation.records.unreadable.length > 0 ||
+    reconciliation.records.unclassified.some((table) => table.recordKind !== undefined);
+
+  return hasRecordReadingFailures || hasPaymentData(reconciliation)
+    ? UNVERIFIABLE_PAYMENT_DATA_MESSAGE
+    : NO_PAYMENT_DATA_MESSAGE;
+}
+
 export function paymentSummaryFinding(reconciliation: PaymentReconciliation): AgentFindingInput {
-  if (!hasPaymentData(reconciliation)) {
+  if (!hasVerifiablePaymentData(reconciliation)) {
     return {
-      summary: "Outstanding amount not computed: no readable invoice register",
+      summary:
+        paymentDataIssueMessage(reconciliation) === NO_PAYMENT_DATA_MESSAGE
+          ? "Outstanding amount not computed: no readable invoice register"
+          : "Outstanding amount not computed: invoice or payment records could not be read safely",
       severity: "info",
       confidence: "high",
       evidence: [],
-      openQuestions: [{ text: NO_PAYMENT_DATA_MESSAGE, severity: "high" }],
+      openQuestions: [{ text: paymentDataIssueMessage(reconciliation), severity: "high" }],
     };
   }
 
@@ -293,8 +345,8 @@ export function paymentSummaryFinding(reconciliation: PaymentReconciliation): Ag
 }
 
 export function paymentSummaryMarkdown(reconciliation: PaymentReconciliation): string {
-  if (!hasPaymentData(reconciliation)) {
-    return NO_PAYMENT_DATA_MESSAGE;
+  if (!hasVerifiablePaymentData(reconciliation)) {
+    return paymentDataIssueMessage(reconciliation);
   }
 
   const { totals } = reconciliation;
@@ -578,7 +630,7 @@ export function casePreparationTaskOutput(
 ): TaskOutput {
   const base = specialistResultToTaskOutput(result, false);
   const { reconciliation, chronology } = prepared;
-  const paymentDataAvailable = hasPaymentData(reconciliation);
+  const paymentDataAvailable = hasVerifiablePaymentData(reconciliation);
   const sourceDraft = paymentDataAvailable ? result.output.draft : undefined;
   const conditionedDraft = sourceDraft ? conditionLegalClaims(sourceDraft) : undefined;
   const draft = conditionedDraft?.draft;
@@ -618,12 +670,11 @@ export function casePreparationTaskOutput(
     sections.push({
       title: FOLLOW_UP_DRAFT_SECTION_TITLE,
       kind: "text",
-      content:
-        "A follow-up draft has been withheld because the invoice and payment records are not sufficient to verify the outstanding balance. Reconcile those records before preparing a payment demand.",
+      content: `A follow-up draft has been withheld because the invoice and payment records are not sufficient to verify the outstanding balance. ${paymentDataIssueMessage(reconciliation)}`,
       findingIndexes: [],
     });
     openQuestions.push({
-      text: "A follow-up draft was withheld because no readable invoice register was found. Reconcile invoice and payment records before stating an outstanding balance or sending a payment demand.",
+      text: `A follow-up draft was withheld. ${paymentDataIssueMessage(reconciliation)}`,
       severity: "high",
     });
   }
@@ -732,7 +783,7 @@ export function createCasePreparationTaskHandler(
         const context: Record<string, unknown> = {
           guardrail: MSME_PAYMENT_GUARDRAIL,
           ...(figures.length > 0 ? { computedFigures: figures } : {}),
-          ...(hasPaymentData(prepared.reconciliation)
+          ...(hasVerifiablePaymentData(prepared.reconciliation)
             ? { outstandingPosition: outstandingPosition(prepared.reconciliation) }
             : {}),
           chronology: prepared.chronology.map((event) => `${event.date} ${event.title}`),

@@ -250,13 +250,51 @@ export function documentFindings(
   pages: readonly PaymentReviewPage[],
 ): AgentFindingInput[] {
   const findings: AgentFindingInput[] = [];
-  const structuredEventDocuments = new Set([
-    ...output.invoices.flatMap((invoice) => (invoice.source ? [invoice.source.documentId] : [])),
-    ...output.deliveries.flatMap((delivery) =>
-      delivery.source ? [delivery.source.documentId] : [],
-    ),
-    ...output.correspondence.flatMap((item) => (item.source ? [item.source.documentId] : [])),
-  ]);
+  const structuredEvents: {
+    kind: DocumentEventKind;
+    documentId: string;
+    date: string;
+    reference?: string;
+  }[] = [
+    ...output.invoices.flatMap((invoice) => {
+      const date = toIsoDate(invoice.date);
+      return date && invoice.source
+        ? [
+            {
+              kind: "invoice-copy" as const,
+              documentId: invoice.source.documentId,
+              date,
+              reference: invoice.invoiceNumber,
+            },
+          ]
+        : [];
+    }),
+    ...output.deliveries.flatMap((delivery) => {
+      const date = toIsoDate(delivery.date);
+      return date && delivery.source
+        ? [
+            {
+              kind: "delivery" as const,
+              documentId: delivery.source.documentId,
+              date,
+              reference: delivery.reference,
+            },
+          ]
+        : [];
+    }),
+    ...output.correspondence.flatMap((item) => {
+      const date = toIsoDate(item.date);
+      return date && item.source
+        ? [
+            {
+              kind: "correspondence" as const,
+              documentId: item.source.documentId,
+              date,
+            },
+          ]
+        : [];
+    }),
+  ];
 
   output.documents.forEach((document, index) => {
     const label = KIND_LABELS[document.kind];
@@ -269,6 +307,15 @@ export function documentFindings(
         : document.kind === "purchase-order"
           ? `${title} issued`
           : `${title} dated`;
+    const hasMatchingStructuredEvent = structuredEvents.some(
+      (event) =>
+        event.kind === eventKind &&
+        event.documentId === document.documentId &&
+        event.date === date &&
+        (!document.reference ||
+          !event.reference ||
+          normalizeInvoiceNumber(document.reference) === normalizeInvoiceNumber(event.reference)),
+    );
 
     findings.push({
       summary: `${title}${date ? ` dated ${date}` : ""}${document.summary ? `: ${truncate(document.summary, 160)}` : ""}`,
@@ -276,7 +323,7 @@ export function documentFindings(
       severity: "info",
       confidence: confidenceOf(document.source, pages),
       evidence: sourceEvidence(document.source ?? { documentId: document.documentId }, title),
-      ...(date && eventKind && !structuredEventDocuments.has(document.documentId)
+      ...(date && eventKind && !hasMatchingStructuredEvent
         ? {
             dates: [
               {

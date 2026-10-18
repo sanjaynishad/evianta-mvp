@@ -37,17 +37,19 @@ function PlainBlock({ content }: { content: string }) {
 }
 
 function InlineFormatting({ content }: { content: string }) {
-  return content.split(/(\*\*[^*\n]+\*\*|_[^_\n]+_)/g).map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
+  return content
+    .split(/(\*\*[^*\n]+\*\*|(?<![\p{L}\p{N}_])_[^_\n]+_(?![\p{L}\p{N}_]))/gu)
+    .map((part, index) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={index}>{part.slice(2, -2)}</strong>;
+      }
 
-    if (part.startsWith("_") && part.endsWith("_")) {
-      return <em key={index}>{part.slice(1, -1)}</em>;
-    }
+      if (part.startsWith("_") && part.endsWith("_")) {
+        return <em key={index}>{part.slice(1, -1)}</em>;
+      }
 
-    return part;
-  });
+      return part;
+    });
 }
 
 function Paragraphs({ content }: { content: string }) {

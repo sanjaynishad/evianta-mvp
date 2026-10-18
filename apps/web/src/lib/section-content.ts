@@ -23,6 +23,24 @@ interface Token {
 const differencePattern = /\b(difference|diff|variance|gap|mismatch|shortfall)\b/i;
 const numberPattern = /^[-+]?(?:rs\.?\s*|₹\s*)?[\d,]+(?:\.\d+)?%?$/i;
 
+function splitMarkdownTableRow(line: string): string[] {
+  const cells: string[] = [""];
+
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index]!;
+    if (character === "\\" && line[index + 1] === "|") {
+      cells[cells.length - 1] += "|";
+      index += 1;
+    } else if (character === "|") {
+      cells.push("");
+    } else {
+      cells[cells.length - 1] += character;
+    }
+  }
+
+  return cells.map((cell) => cell.trim());
+}
+
 function tokenize(line: string): Token[] {
   const tokens: Token[] = [];
   const pattern = /\S+(?: \S+)*/g;
@@ -90,13 +108,7 @@ export function parseTextTable(content: string): TextTable | undefined {
   }
 
   if (lines.every((line) => line.trim().startsWith("|") && line.trim().endsWith("|"))) {
-    const markdownRows = lines.map((line) =>
-      line
-        .trim()
-        .slice(1, -1)
-        .split("|")
-        .map((cell) => cell.trim()),
-    );
+    const markdownRows = lines.map((line) => splitMarkdownTableRow(line.trim().slice(1, -1)));
     const headers = markdownRows[0]!;
     const bodyRows = markdownRows
       .slice(1)

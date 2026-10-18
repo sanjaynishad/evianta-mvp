@@ -693,7 +693,9 @@ export interface MsmeDraftOptions {
   /** Adds a sentence claiming a reference was filed. */
   escalationClaim?: boolean;
   /** Adds a definitive statutory-interest claim for testing the legal wording guard. */
-  statutoryInterestClaim?: boolean;
+  statutoryInterestClaim?: boolean | string;
+  /** Puts a definitive interest claim in a draft-part title rather than its body. */
+  statutoryInterestTitle?: boolean;
 }
 
 function idsWhere(
@@ -717,6 +719,12 @@ export function followUpDraftOutput(
   );
   const disputeIds = idsWhere(priorFindings, (finding) => finding.summary.includes("Disputed:"));
   const total = options.wrongTotal ? "1,97,000" : "1,87,000";
+  const statutoryInterestClaim =
+    typeof options.statutoryInterestClaim === "string"
+      ? options.statutoryInterestClaim
+      : options.statutoryInterestClaim
+        ? "We are entitled to statutory interest under the MSMED Act."
+        : "";
 
   return {
     draft: {
@@ -741,8 +749,10 @@ export function followUpDraftOutput(
           findingIds: [...disputeIds, "not-a-finding"],
         },
         {
-          title: "Requested action",
-          content: `We request payment of the undisputed balance within 15 days of this letter, or a call to agree a payment schedule.${options.statutoryInterestClaim ? " We are entitled to statutory interest under the MSMED Act." : ""}`,
+          title: options.statutoryInterestTitle
+            ? "Statutory interest is payable"
+            : "Requested action",
+          content: `We request payment of the undisputed balance within 15 days of this letter, or a call to agree a payment schedule.${statutoryInterestClaim ? ` ${statutoryInterestClaim}` : ""}`,
           findingIds: [],
         },
       ],

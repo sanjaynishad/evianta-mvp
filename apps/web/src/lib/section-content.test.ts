@@ -64,6 +64,15 @@ describe("parseTextTable", () => {
     expect(parseFigure("Mehta")).toBeUndefined();
   });
 
+  it("keeps escaped pipes inside a Markdown table cell", () => {
+    const table = parseTextTable(
+      "| Document | Summary |\n| --- | --- |\n| invoice.pdf | Buyer \\| seller correspondence |",
+    );
+
+    expect(table?.headers).toEqual(["Document", "Summary"]);
+    expect(table?.rows[0]?.cells).toEqual(["invoice.pdf", "Buyer | seller correspondence"]);
+  });
+
   it("parses Markdown tables without rendering their syntax as plain text", () => {
     const table = parseTextTable(
       "| Invoice | Amount | Difference |\n| --- | ---: | ---: |\n| INV-1 | ₹12,400 | ₹400 |\n| Total | ₹12,400 | ₹400 |",
